@@ -1,0 +1,141 @@
+﻿
+Running 7 tests using 1 worker
+
+  Γ£ÿ  1 e2e-handoff.spec.ts:20:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H1: α╕¢α╕╕α╣êα╕í Handoff α╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╕òα╕¡α╕Öα╣üα╕èα╕ùα╕ºα╣êα╕▓α╕ç (30.0s)
+  Γ£ÿ  2 e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner (30.0s)
+  Γ£ÿ  3 e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message (30.0s)
+  Γ£ÿ  4 e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í (30.0s)
+  Γ£ÿ  5 e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê (30.0s)
+  Γ£ô  6 e2e-handoff.spec.ts:200:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ L1: Active session α╣äα╕íα╣êα╕íα╕╡ Admin Reply Composer (3.4s)
+  Γ£ÿ  7 e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù (30.1s)
+
+
+  1) e2e-handoff.spec.ts:20:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H1: α╕¢α╕╕α╣êα╕í Handoff α╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╕òα╕¡α╕Öα╣üα╕èα╕ùα╕ºα╣êα╕▓α╕ç 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+    ============================================================
+
+      21 |         await loginAdmin(page);
+      22 |         await page.click('nav >> text="Web Chat"');
+    > 23 |         await page.waitForURL('**/web-chat');
+         |                    ^
+      24 |         await page.waitForTimeout(1000);
+      25 |
+      26 |         // α╕¢α╕╕α╣êα╕íα╕òα╣ëα╕¡α╕çα╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╣Çα╕íα╕╖α╣êα╕¡α╕óα╕▒α╕çα╣äα╕íα╣êα╕íα╕╡α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:23:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-cf933-α╕í-Handoff-α╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╕òα╕¡α╕Öα╣üα╕èα╕ùα╕ºα╣êα╕▓α╕ç\error-context.md
+
+  2) e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+    ============================================================
+
+      31 |         await loginAdmin(page);
+      32 |         await page.click('nav >> text="Web Chat"');
+    > 33 |         await page.waitForURL('**/web-chat');
+         |                    ^
+      34 |         await page.waitForTimeout(1000);
+      35 |
+      36 |         // H2: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:33:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-92cf6-α╕╡α╣ê-ΓåÆ-α╣Çα╕½α╣çα╕Ö-system-msg-banner\error-context.md
+
+  3) e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+    ============================================================
+
+      68 |         // α╕òα╣ëα╕¡α╕çα╕¬α╕úα╣ëα╕▓α╕ç handoff session α╕üα╣êα╕¡α╕Ö ΓÇö α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╣üα╕Ñα╣ëα╕ºα╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê
+      69 |         await page.click('nav >> text="Web Chat"');
+    > 70 |         await page.waitForURL('**/web-chat');
+         |                    ^
+      71 |         await page.waitForTimeout(1000);
+      72 |
+      73 |         const textarea = page.locator('textarea[placeholder*="How can I help"]');
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:70:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-a43d8-α╕¬α╕èα╕▒α╕Ö-Handoff-system-message\error-context.md
+
+  4) e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+    ============================================================
+
+      102 |         // α╕¬α╕úα╣ëα╕▓α╕ç handoff session
+      103 |         await page.click('nav >> text="Web Chat"');
+    > 104 |         await page.waitForURL('**/web-chat');
+          |                    ^
+      105 |         await page.waitForTimeout(1000);
+      106 |
+      107 |         const chatTextarea = page.locator('textarea[placeholder*="How can I help"]');
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:104:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-494a6-n-Reply-Composer-α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í\error-context.md
+
+  5) e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+    ============================================================
+
+      150 |         // α╕¬α╕úα╣ëα╕▓α╕ç handoff session
+      151 |         await page.click('nav >> text="Web Chat"');
+    > 152 |         await page.waitForURL('**/web-chat');
+          |                    ^
+      153 |         await page.waitForTimeout(1000);
+      154 |
+      155 |         const chatTextarea = page.locator('textarea[placeholder*="How can I help"]');
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:152:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-e01a7-α╕çα╣âα╕½α╣ë-AI-ΓåÆ-α╕¢α╕┤α╕öα╣Çα╕äα╕¬-ΓåÆ-α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê\error-context.md
+
+  6) e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.waitForURL: Test timeout of 30000ms exceeded.
+    =========================== logs ===========================
+    waiting for navigation to "**/web-chat" until "load"
+      navigated to "http://localhost:5173/chat"
+    ============================================================
+
+      226 |         // α╕¬α╕úα╣ëα╕▓α╕ç handoff + admin reply
+      227 |         await page.click('nav >> text="Web Chat"');
+    > 228 |         await page.waitForURL('**/web-chat');
+          |                    ^
+      229 |         await page.waitForTimeout(1000);
+      230 |
+      231 |         const chatTextarea = page.locator('textarea[placeholder*="How can I help"]');
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:228:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-ae85a-α╕¡α╕Ü-styling-α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù\error-context.md
+
+  6 failed
+    e2e-handoff.spec.ts:20:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H1: α╕¢α╕╕α╣êα╕í Handoff α╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╕òα╕¡α╕Öα╣üα╕èα╕ùα╕ºα╣êα╕▓α╕ç ΓöÇ
+    e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner 
+    e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message 
+    e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í 
+    e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê 
+    e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù 
+  1 passed (3.4m)

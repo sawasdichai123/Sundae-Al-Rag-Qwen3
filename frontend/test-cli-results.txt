@@ -1,0 +1,117 @@
+﻿
+Running 7 tests using 1 worker
+
+  Γ£ô  1 e2e-handoff.spec.ts:20:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H1: α╕¢α╕╕α╣êα╕í Handoff α╣äα╕íα╣êα╣üα╕¬α╕öα╕çα╕òα╕¡α╕Öα╣üα╕èα╕ùα╕ºα╣êα╕▓α╕ç (2.6s)
+  Γ£ÿ  2 e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner (17.9s)
+  Γ£ÿ  3 e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message (30.0s)
+  Γ£ÿ  4 e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í (30.0s)
+  Γ£ÿ  5 e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê (30.0s)
+  Γ£ô  6 e2e-handoff.spec.ts:200:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ L1: Active session α╣äα╕íα╣êα╕íα╕╡ Admin Reply Composer (3.6s)
+  Γ£ÿ  7 e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù (30.0s)
+
+
+  1) e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner 
+
+    TimeoutError: page.waitForSelector: Timeout 10000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('text="α╕éα╕¡α╕₧α╕╣α╕öα╕äα╕╕α╕óα╕üα╕▒α╕Üα╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê"') to be visible[22m
+
+
+      43 |
+      44 |         // α╕úα╕¡ loading α╣Çα╕¬α╕úα╣çα╕ê (α╕¢α╕╕α╣êα╕í Handoff α╕êα╕░α╕¢α╕úα╕▓α╕üα╕Åα╣Çα╕íα╕╖α╣êα╕¡ !isLoading)
+    > 45 |         await page.waitForSelector('text="α╕éα╕¡α╕₧α╕╣α╕öα╕äα╕╕α╕óα╕üα╕▒α╕Üα╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê"', { timeout: 10000 });
+         |                    ^
+      46 |         await expect(page.locator('text="α╕éα╕¡α╕₧α╕╣α╕öα╕äα╕╕α╕óα╕üα╕▒α╕Üα╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê"')).toBeVisible();
+      47 |
+      48 |         // H3: α╕üα╕öα╕¢α╕╕α╣êα╕íα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:45:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-92cf6-α╕╡α╣ê-ΓåÆ-α╣Çα╕½α╣çα╕Ö-system-msg-banner\error-context.md
+
+  2) e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('nav').locator('text="Inbox"')[22m
+
+
+      81 |
+      82 |         // α╣äα╕¢α╕½α╕Öα╣ëα╕▓ Inbox
+    > 83 |         await page.click('nav >> text="Inbox"');
+         |                    ^
+      84 |         await page.waitForURL('**/inbox');
+      85 |         await page.waitForTimeout(2000);
+      86 |
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:83:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-a43d8-α╕¬α╕èα╕▒α╕Ö-Handoff-system-message\error-context.md
+
+  3) e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('nav').locator('text="Inbox"')[22m
+
+
+      114 |
+      115 |         // α╣äα╕¢α╕½α╕Öα╣ëα╕▓ Inbox
+    > 116 |         await page.click('nav >> text="Inbox"');
+          |                    ^
+      117 |         await page.waitForURL('**/inbox');
+      118 |         await page.waitForTimeout(2000);
+      119 |
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:116:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-494a6-n-Reply-Composer-α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í\error-context.md
+
+  4) e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('nav').locator('text="Inbox"')[22m
+
+
+      162 |
+      163 |         // α╣äα╕¢ Inbox
+    > 164 |         await page.click('nav >> text="Inbox"');
+          |                    ^
+      165 |         await page.waitForURL('**/inbox');
+      166 |         await page.waitForTimeout(2000);
+      167 |
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:164:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-e01a7-α╕çα╣âα╕½α╣ë-AI-ΓåÆ-α╕¢α╕┤α╕öα╣Çα╕äα╕¬-ΓåÆ-α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê\error-context.md
+
+  5) e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù 
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('nav').locator('text="Inbox"')[22m
+
+
+      238 |
+      239 |         // α╣äα╕¢ Inbox α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í Admin
+    > 240 |         await page.click('nav >> text="Inbox"');
+          |                    ^
+      241 |         await page.waitForURL('**/inbox');
+      242 |         await page.waitForTimeout(2000);
+      243 |
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e-handoff.spec.ts:240:20
+
+    Error Context: test-results\e2e-handoff-SUNDAE-Human-H-ae85a-α╕¡α╕Ü-styling-α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù\error-context.md
+
+  5 failed
+    e2e-handoff.spec.ts:30:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ H2-H3: α╕₧α╕┤α╕íα╕₧α╣îα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í ΓåÆ α╕üα╕öα╕éα╕¡α╣Çα╕êα╣ëα╕▓α╕½α╕Öα╣ëα╕▓α╕ùα╕╡α╣ê ΓåÆ α╣Çα╕½α╣çα╕Ö system msg + banner 
+    e2e-handoff.spec.ts:65:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I1-I2: Inbox α╣Çα╕½α╣çα╕Öα╣Çα╕ïα╕¬α╕èα╕▒α╕Ö Handoff + system message 
+    e2e-handoff.spec.ts:99:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ I3-I4: Admin Reply Composer + α╕¬α╣êα╕çα╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕í 
+    e2e-handoff.spec.ts:147:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ K1-K3: α╣Çα╕¢α╕Ñα╕╡α╣êα╕óα╕Ö status ΓÇö α╕äα╕╖α╕Öα╕úα╣êα╕▓α╕çα╣âα╕½α╣ë AI ΓåÆ α╕¢α╕┤α╕öα╣Çα╕äα╕¬ ΓåÆ α╣Çα╕¢α╕┤α╕öα╣âα╕½α╕íα╣ê 
+    e2e-handoff.spec.ts:223:5 ΓÇ║ SUNDAE Human Handoff E2E Tests ΓÇ║ M1: α╕òα╕úα╕ºα╕êα╕¬α╕¡α╕Ü styling α╕éα╣ëα╕¡α╕äα╕ºα╕▓α╕íα╕ùα╕╕α╕üα╕¢α╕úα╕░α╣Çα╕áα╕ù 
+  2 passed (2.7m)

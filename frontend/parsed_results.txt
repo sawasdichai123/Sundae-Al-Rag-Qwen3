@@ -1,0 +1,109 @@
+﻿
+Running 6 tests using 1 worker
+
+  Γ£ÿ  1 e2e.spec.ts:17:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 7. Knowledge Base Page (30.0s)
+  Γ£ô  2 e2e.spec.ts:33:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 8. Bots Page (1.9s)
+  Γ£ÿ  3 e2e.spec.ts:47:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 11. Approvals Page (6.2s)
+  Γ£ÿ  4 e2e.spec.ts:56:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 12. Integration Page (1.5s)
+  Γ£ÿ  5 e2e.spec.ts:70:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 13. Sidebar Navigation Role - Admin (6.2s)
+  Γ£ô  6 e2e.spec.ts:82:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 14. Security Unapproved User Bypass (2.8s)
+
+
+  1) e2e.spec.ts:17:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 7. Knowledge Base Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    [31mTest timeout of 30000ms exceeded.[39m
+
+    Error: page.click: Test timeout of 30000ms exceeded.
+    Call log:
+    [2m  - waiting for locator('text="Knowledge"')[22m
+
+
+      17 |     test('7. Knowledge Base Page', async ({ page }) => {
+      18 |         await loginAdmin(page);
+    > 19 |         await page.click('text="Knowledge"');
+         |                    ^
+      20 |         await page.waitForURL('**/knowledge-base');
+      21 |
+      22 |         // 7.1 Load document list
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e.spec.ts:19:20
+
+    Error Context: test-results\e2e-SUNDAE-Frontend-E2E-Tests-7-Knowledge-Base-Page\error-context.md
+
+  2) e2e.spec.ts:47:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 11. Approvals Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoContainText[2m([22m[32mexpected[39m[2m)[22m failed
+
+    Locator: locator('h1')
+    Expected substring: [32m"Approvals"[39m
+    Received string:    [31m"α╕¡α╕Öα╕╕α╕íα╕▒α╕òα╕┤α╕£α╕╣α╣ëα╣âα╕èα╣ëα╕çα╕▓α╕Ö"[39m
+    Timeout: 5000ms
+
+    Call log:
+    [2m  - Expect "toContainText" with timeout 5000ms[22m
+    [2m  - waiting for locator('h1')[22m
+    [2m    2 ├ù locator resolved to <h1 class="text-2xl font-bold text-steel-900 tracking-tight">Dashboard</h1>[22m
+    [2m      - unexpected value "Dashboard"[22m
+    [2m    7 ├ù locator resolved to <h1 class="text-2xl font-bold text-steel-900 tracking-tight">α╕¡α╕Öα╕╕α╕íα╕▒α╕òα╕┤α╕£α╕╣α╣ëα╣âα╕èα╣ëα╕çα╕▓α╕Ö</h1>[22m
+    [2m      - unexpected value "α╕¡α╕Öα╕╕α╕íα╕▒α╕òα╕┤α╕£α╕╣α╣ëα╣âα╕èα╣ëα╕çα╕▓α╕Ö"[22m
+
+
+      51 |
+      52 |         // 11.1 Load pending users
+    > 53 |         await expect(page.locator('h1')).toContainText('Approvals');
+         |                                          ^
+      54 |     });
+      55 |
+      56 |     test('12. Integration Page', async ({ page }) => {
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e.spec.ts:53:42
+
+    Error Context: test-results\e2e-SUNDAE-Frontend-E2E-Tests-11-Approvals-Page\error-context.md
+
+  3) e2e.spec.ts:56:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 12. Integration Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThanOrEqual[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: >= [32m1[39m
+    Received:    [31m0[39m
+
+      65 |         const toggles = page.locator('button[role="switch"]');
+      66 |         // Expect at least 2 toggles
+    > 67 |         expect(await toggles.count()).toBeGreaterThanOrEqual(1); // Ensure at least one renders
+         |                                       ^
+      68 |     });
+      69 |
+      70 |     test('13. Sidebar Navigation Role - Admin', async ({ page }) => {
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e.spec.ts:67:39
+
+    Error Context: test-results\e2e-SUNDAE-Frontend-E2E-Tests-12-Integration-Page\error-context.md
+
+  4) e2e.spec.ts:70:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 13. Sidebar Navigation Role - Admin ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('nav').locator('text="Home"')
+    Expected: visible
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 5000ms[22m
+    [2m  - waiting for locator('nav').locator('text="Home"')[22m
+
+
+      72 |
+      73 |         // 13.1 admin sees specific menus
+    > 74 |         await expect(page.locator('nav').locator('text="Home"')).toBeVisible();
+         |                                                                  ^
+      75 |         await expect(page.locator('nav').locator('text="Bots"')).toBeVisible();
+      76 |         await expect(page.locator('nav').locator('text="Knowledge"')).toBeVisible();
+      77 |         await expect(page.locator('nav').locator('text="Inbox"')).toBeVisible();
+        at D:\TEST Project\Ai rag\Sundae\frontend\e2e.spec.ts:74:66
+
+    Error Context: test-results\e2e-SUNDAE-Frontend-E2E-Te-e5fd9-bar-Navigation-Role---Admin\error-context.md
+
+  4 failed
+    e2e.spec.ts:17:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 7. Knowledge Base Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    e2e.spec.ts:47:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 11. Approvals Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    e2e.spec.ts:56:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 12. Integration Page ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    e2e.spec.ts:70:5 ΓÇ║ SUNDAE Frontend E2E Tests ΓÇ║ 13. Sidebar Navigation Role - Admin ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+  2 passed (58.1s)
