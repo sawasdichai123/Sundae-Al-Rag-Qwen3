@@ -9,6 +9,7 @@ python-multipart>=0.0.20
 # ── Database (Supabase client) ───────────────────────────────────
 supabase>=2.11.0
 httpx>=0.28.0
+PyJWT>=2.9.0
 
 # ── AI / RAG ─────────────────────────────────────────────────────
 llama-index-core>=0.12.0

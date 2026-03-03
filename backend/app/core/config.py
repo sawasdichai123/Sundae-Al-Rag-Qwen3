@@ -20,9 +20,17 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = Field(
         ..., description="Service-role key (bypasses RLS — use with caution)"
     )
+    supabase_jwt_secret: str = Field(
+        ..., description="JWT secret for local token verification (Dashboard → Settings → API)"
+    )
     supabase_db_url: str = Field(
         default="postgresql://postgres:postgres@localhost:5432/postgres",
         description="Direct PostgreSQL connection string (for migrations)",
+    )
+
+    # ── LINE Platform ────────────────────────────────────────────
+    line_channel_secret: str = Field(
+        default="", description="LINE Channel Secret for webhook signature verification"
     )
 
     # ── Ollama / LLM ────────────────────────────────────────────
