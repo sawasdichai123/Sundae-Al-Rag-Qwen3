@@ -62,6 +62,7 @@ async def search_child_chunks(
     query_embedding: List[float],
     organization_id: str,
     *,
+    bot_id: Optional[str] = None,
     top_k: int = 20,
     supabase: Optional[AsyncClient] = None,
 ) -> List[MatchedChildChunk]:
@@ -70,11 +71,13 @@ async def search_child_chunks(
     Calls the ``match_child_chunks`` PostgreSQL RPC function which:
     - Uses the HNSW index for fast approximate cosine search
     - Filters by ``organization_id`` (mandatory)
+    - Optionally filters by ``bot_id`` (only returns chunks from that bot's documents)
     - Returns the top-K most similar child chunks
 
     Args:
         query_embedding:  The query vector (1024 dimensions for bge-m3).
         organization_id:  Tenant ID — **required** for data isolation.
+        bot_id:           Optional bot ID — filters to only that bot's documents.
         top_k:            Number of results to return (default 20).
         supabase:         Optional client override (for testing).
 
@@ -83,15 +86,20 @@ async def search_child_chunks(
     """
     client = supabase or get_supabase()
 
-    query = client.rpc(
-        "match_child_chunks",
-        {
-            "query_embedding": query_embedding,
-            "target_org_id": organization_id,
-            "match_count": top_k,
-        },
-    )
-    response = await query.execute()
+    rpc_params: dict = {
+        "query_embedding": query_embedding,
+        "target_org_id": organization_id,
+        "match_count": top_k,
+    }
+    if bot_id:
+        rpc_params["target_bot_id"] = bot_id
+
+    try:
+        query = client.rpc("match_child_chunks", rpc_params)
+        response = await query.execute()
+    except Exception as exc:
+        logger.error("Vector search RPC failed (org=%s): %s", organization_id, exc)
+        raise RuntimeError(f"Vector search failed: {exc}") from exc
 
     if not response.data:
         logger.info(
@@ -151,12 +159,13 @@ async def search_parent_chunks(
     query_embedding: List[float],
     organization_id: str,
     *,
+    bot_id: Optional[str] = None,
     top_k: int = 20,
     supabase: Optional[AsyncClient] = None,
 ) -> List[RetrievedParentChunk]:
     """Full Parent-Child retrieval pipeline.
 
-    1. Vector search on child chunks → Top-K children
+    1. Vector search on child chunks → Top-K children (filtered by bot_id)
     2. Extract unique parent_ids from matched children
     3. Fetch full parent chunk text (with org_id filter)
     4. Aggregate children under their parents, keep best similarity score
@@ -164,6 +173,7 @@ async def search_parent_chunks(
     Args:
         query_embedding:  The query vector (1024-dim).
         organization_id:  Tenant ID — **required** for data isolation.
+        bot_id:           Optional bot ID — only search that bot's documents.
         top_k:            Number of child chunks to retrieve (default 20).
         supabase:         Optional client override (for testing).
 
@@ -175,6 +185,7 @@ async def search_parent_chunks(
     matched_children = await search_child_chunks(
         query_embedding=query_embedding,
         organization_id=organization_id,
+        bot_id=bot_id,
         top_k=top_k,
         supabase=supabase,
     )
@@ -268,8 +279,12 @@ async def store_parent_chunks(
         for chunk in parent_chunks
     ]
 
-    query = client.table("document_parent_chunks").insert(rows)
-    await query.execute()
+    try:
+        query = client.table("document_parent_chunks").insert(rows)
+        await query.execute()
+    except Exception as exc:
+        logger.error("Failed to store %d parent chunks (org=%s): %s", len(rows), organization_id, exc)
+        raise RuntimeError(f"Failed to store parent chunks: {exc}") from exc
     logger.info("Inserted %d parent chunks (org=%s)", len(rows), organization_id)
 
 
@@ -305,6 +320,10 @@ async def store_child_chunks(
         for chunk in child_chunks
     ]
 
-    query = client.table("document_child_chunks").insert(rows)
-    await query.execute()
+    try:
+        query = client.table("document_child_chunks").insert(rows)
+        await query.execute()
+    except Exception as exc:
+        logger.error("Failed to store %d child chunks (org=%s): %s", len(rows), organization_id, exc)
+        raise RuntimeError(f"Failed to store child chunks: {exc}") from exc
     logger.info("Inserted %d child chunks (org=%s)", len(rows), organization_id)

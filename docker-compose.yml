@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# SUNDAE — Docker Compose (Backend + Ollama)
+# SUNDAE — Docker Compose (Frontend + Backend + Ollama)
 #
 # Usage:
 #   docker compose up -d          # Start all services
@@ -13,6 +13,26 @@
 # ═══════════════════════════════════════════════════════════════════
 
 services:
+  # ── React Frontend (Nginx) ────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Backend URL — points to the Docker backend service (host-mapped port)
+        VITE_API_BASE_URL: http://localhost:8001
+        # Supabase — set these in your shell or .env before building
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    container_name: sundae-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sundae-network
+
   # ── FastAPI Backend ──────────────────────────────────────────────
   backend:
     build:
@@ -20,7 +40,7 @@ services:
       dockerfile: Dockerfile
     container_name: sundae-backend
     ports:
-      - "8000:8000"
+      - "8001:8000"
     env_file:
       - ./backend/.env
     environment:

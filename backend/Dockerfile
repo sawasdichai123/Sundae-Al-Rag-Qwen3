@@ -34,6 +34,11 @@ COPY . .
 
 EXPOSE 8000
 
+# CPU threading optimization for PyTorch & Tokenizers
+ENV OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    TOKENIZERS_PARALLELISM=true
+
 # Health check — verify the API is responding
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" || exit 1

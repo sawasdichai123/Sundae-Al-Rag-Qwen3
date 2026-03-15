@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+test-results
+test-results/
+e2e-results.txt
+test-*.txt
+*.spec.ts
+playwright.config.ts
+playwright-report

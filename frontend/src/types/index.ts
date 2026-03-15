@@ -33,8 +33,10 @@ export interface Bot {
     id: string;
     organization_id: string;
     name: string;
+    description: string | null;
     prompt: string;                     // renamed from system_prompt
-    line_access_token: string | null;   // renamed from line_channel_token/secret
+    system_prompt: string | null;       // backend alias
+    line_access_token: string | null;
     is_active: boolean;
     is_web_enabled: boolean;
     created_at: string;
@@ -60,7 +62,7 @@ export interface Document {
 // ── Chat ────────────────────────────────────────────────────────
 
 export type PlatformSource = "line" | "web" | "other";
-export type SessionStatus = "active" | "human_takeover" | "resolved";
+export type SessionStatus = "active" | "human_takeover" | "helped" | "resolved";
 
 export interface ChatSession {
     id: string;
@@ -73,7 +75,7 @@ export interface ChatSession {
     last_message_at: string;
 }
 
-export type MessageRole = "user" | "assistant" | "system";
+export type MessageRole = "user" | "assistant" | "system" | "admin";
 
 export interface ChatMessage {
     id: string;
@@ -100,6 +102,7 @@ export interface ChatAskResponse {
 export interface DocumentUploadResponse {
     document_id: string;
     filename: string;
-    status: DocumentStatus;
-    message: string;
+    total_parent_chunks: number;
+    total_child_chunks: number;
+    status: string;
 }

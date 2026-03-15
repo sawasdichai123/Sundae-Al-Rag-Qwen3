@@ -9,7 +9,8 @@ This module provides:
   2. A strictly-grounded generation function that refuses to answer
      if the context does not contain the relevant information.
 
-Model: qwen3:14b via Ollama REST API (http://localhost:11434/api/chat)
+Model: qwen2.5:3b via Ollama REST API (http://localhost:11434/api/chat)
+       (configurable via LLM_MODEL env var — เปลี่ยนได้ตามสเปค RAM)
 
 SECURITY:
     The system prompt explicitly instructs the LLM to:
@@ -20,8 +21,9 @@ SECURITY:
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import List, Optional
+from typing import AsyncIterator, List, Optional
 
 import httpx
 
@@ -118,7 +120,7 @@ async def generate_response(
     model: Optional[str] = None,
     temperature: float = 0.1,
     ollama_base_url: Optional[str] = None,
-    timeout: float = 120.0,
+    timeout: float = 300.0,
     system_prompt: Optional[str] = None,
 ) -> str:
     """Generate a grounded response using a local Ollama LLM.
@@ -160,6 +162,7 @@ async def generate_response(
         "options": {
             "temperature": temperature,
         },
+        "keep_alive": "4h",  # Keep model in RAM for 4 hours
     }
 
     try:
@@ -214,3 +217,82 @@ async def generate_response(
     except Exception as exc:
         logger.error("Unexpected error during LLM generation: %s", exc)
         return FALLBACK_MESSAGE
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Streaming LLM Generation
+# ═══════════════════════════════════════════════════════════════════
+
+
+async def generate_response_stream(
+    user_query: str,
+    retrieved_contexts: List[str],
+    *,
+    model: Optional[str] = None,
+    temperature: float = 0.1,
+    ollama_base_url: Optional[str] = None,
+    timeout: float = 300.0,
+    system_prompt: Optional[str] = None,
+) -> AsyncIterator[str]:
+    """Stream tokens from Ollama as they are generated.
+
+    Yields each token (word/character) immediately, so the frontend
+    can display the response in real-time (like ChatGPT).
+    """
+    settings = get_settings()
+    target_model = model or settings.llm_model
+    base_url = ollama_base_url or settings.ollama_base_url
+    prompt = system_prompt or SYSTEM_PROMPT
+
+    context = assemble_context(retrieved_contexts)
+    user_message = _build_user_message(user_query, context)
+
+    payload = {
+        "model": target_model,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+        },
+        "keep_alive": "4h",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/api/chat",
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            yield token
+                        if data.get("done", False):
+                            return
+                    except json.JSONDecodeError:
+                        continue
+
+    except httpx.ConnectError as exc:
+        logger.error("Streaming LLM ConnectError: Cannot connect to Ollama at %s: %s", base_url, exc)
+        yield FALLBACK_MESSAGE
+
+    except httpx.TimeoutException as exc:
+        logger.error("Streaming LLM TimeoutException after %.0fs: %s", timeout, exc)
+        yield FALLBACK_MESSAGE
+
+    except httpx.HTTPStatusError as exc:
+        logger.error("Streaming LLM HTTPStatusError %d: %s", exc.response.status_code, exc.response.text[:500])
+        yield FALLBACK_MESSAGE
+
+    except Exception as exc:
+        logger.error("Streaming LLM generation failed: %s", exc)
+        yield FALLBACK_MESSAGE

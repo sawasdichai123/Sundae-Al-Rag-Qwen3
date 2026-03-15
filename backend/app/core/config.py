@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         description="Ollama HTTP API base URL",
     )
     llm_model: str = Field(
-        default="qwen3:14b",
+        default="qwen2.5:3b",
         description="Ollama model tag for generation",
     )
 

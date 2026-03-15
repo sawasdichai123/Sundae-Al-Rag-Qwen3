@@ -40,40 +40,62 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     // ── Sign In ─────────────────────────────────────────────────
     signIn: async (email, password) => {
-        set({ authError: null, isLoading: true });
+        set({ authError: null, isLoading: true, user: null, organization: null });
 
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
-
-        if (error) {
-            set({
-                authError: error.message === "Invalid login credentials"
-                    ? "อีเมลหรือรหัสผ่านไม่ถูกต้อง"
-                    : error.message,
-                isLoading: false,
+        try {
+            const { data, error } = await supabase.auth.signInWithPassword({
+                email,
+                password,
             });
-            return;
-        }
 
-        if (data.session) {
-            set({ session: data.session, isAuthenticated: true });
-            await get().fetchProfile(data.session.user.id);
-        }
+            if (error) {
+                const errMsg = error.message;
+                set({
+                    authError: errMsg === "Invalid login credentials"
+                        ? "อีเมลหรือรหัสผ่านไม่ถูกต้อง"
+                        : errMsg.toLowerCase().includes("email not confirmed")
+                            ? "กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ (ตรวจสอบในกล่องอีเมลของท่าน)"
+                            : errMsg.includes("Failed to fetch")
+                                ? "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง"
+                                : errMsg,
+                });
+                return;
+            }
 
-        set({ isLoading: false });
+            if (data.session) {
+                set({ session: data.session, isAuthenticated: true });
+                await get().fetchProfile(data.session.user.id);
+            }
+        } catch (err) {
+            console.error("[Auth] signIn error:", err);
+            set({
+                authError: "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง",
+            });
+        } finally {
+            set({ isLoading: false });
+        }
     },
 
     // ── Sign Out ────────────────────────────────────────────────
     signOut: async () => {
-        await supabase.auth.signOut();
+        // Clear local state FIRST — never block the user waiting for the API.
+        // This ensures logout works even if Supabase is slow or unreachable.
         set({
             user: null,
             organization: null,
             session: null,
             isAuthenticated: false,
             authError: null,
+        });
+        // Clear stale Supabase tokens from localStorage
+        try {
+            Object.keys(localStorage).forEach((key) => {
+                if (key.startsWith("sb-")) localStorage.removeItem(key);
+            });
+        } catch { /* ignore storage errors */ }
+        // Fire-and-forget: invalidate token on the server
+        supabase.auth.signOut().catch((err) => {
+            console.warn("[Auth] signOut API error (local state already cleared):", err);
         });
     },
 
@@ -134,20 +156,26 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         // Fetch organization if user has one
         if (profile.organization_id) {
-            const { data: org } = await supabase
-                .from("organizations")
-                .select("*")
-                .eq("id", profile.organization_id)
-                .single();
+            try {
+                const { data: org, error: orgError } = await supabase
+                    .from("organizations")
+                    .select("id,name,created_at")
+                    .eq("id", profile.organization_id)
+                    .single();
 
-            if (org) {
-                set({
-                    organization: {
-                        id: org.id,
-                        name: org.name,
-                        created_at: org.created_at,
-                    },
-                });
+                if (orgError) {
+                    console.warn("[Auth] Failed to fetch organization:", orgError.message);
+                } else if (org) {
+                    set({
+                        organization: {
+                            id: org.id,
+                            name: org.name,
+                            created_at: org.created_at,
+                        },
+                    });
+                }
+            } catch (err) {
+                console.warn("[Auth] Organization fetch error:", err);
             }
         }
     },

@@ -17,6 +17,9 @@ import AuthLayout from "./layouts/AuthLayout";
 // Route Guard
 import ProtectedRoute from "./components/ProtectedRoute";
 
+// Global UI
+import ToastContainer from "./components/ToastContainer";
+
 // Pages
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
@@ -25,6 +28,7 @@ import BotsPage from "./pages/BotsPage";
 import InboxPage from "./pages/InboxPage";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import WebChatPage from "./pages/WebChatPage";
+import IntegrationPage from "./pages/IntegrationPage";
 
 // ── Auth Lifecycle Provider ─────────────────────────────────────
 
@@ -34,40 +38,33 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const setLoading = useAuthStore((s) => s.setLoading);
 
     useEffect(() => {
-        // Safety timeout — never block longer than 5 seconds
+        // Safety timeout — never block longer than 3 seconds
         const timeout = setTimeout(() => {
             console.warn("[Auth] Session check timed out — proceeding without auth");
             setLoading(false);
-        }, 5000);
+        }, 3000);
 
-        // 1. Restore existing session on mount
-        supabase.auth.getSession()
-            .then(({ data: { session } }) => {
-                console.log("[Auth] getSession:", session ? "found" : "none");
-                setSession(session);
-                if (session?.user) {
-                    return fetchProfile(session.user.id);
-                }
-            })
-            .catch((err) => {
-                console.error("[Auth] getSession error:", err);
-            })
-            .finally(() => {
-                clearTimeout(timeout);
-                setLoading(false);
-            });
-
-        // 2. Listen to auth state changes (login, logout, token refresh)
+        // Use onAuthStateChange exclusively (Supabase v2 recommended pattern).
+        // INITIAL_SESSION fires immediately on registration with the stored session,
+        // avoiding the race condition between getSession() and onAuthStateChange.
+        let initialized = false;
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event, session) => {
                 setSession(session);
                 if (session?.user) {
                     await fetchProfile(session.user.id);
                 }
+                // Finalize loading only once (after initial session is known)
+                if (!initialized) {
+                    initialized = true;
+                    clearTimeout(timeout);
+                    setLoading(false);
+                }
             }
         );
 
         return () => {
+            clearTimeout(timeout);
             subscription.unsubscribe();
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -93,31 +90,34 @@ function LoadingScreen() {
 export default function App() {
     const isLoading = useAuthStore((s) => s.isLoading);
 
+    // BrowserRouter is ALWAYS mounted so React Router context is never lost.
+    // Only the Routes (and LoadingScreen) are conditionally rendered.
     return (
-        <AuthProvider>
-            {isLoading ? (
-                <LoadingScreen />
-            ) : (
-                <BrowserRouter>
+        <BrowserRouter>
+            <AuthProvider>
+                {isLoading ? (
+                    <LoadingScreen />
+                ) : (
                     <Routes>
                         {/* ── Public Routes ──────────────────────────── */}
                         <Route element={<AuthLayout />}>
                             <Route path="/login" element={<LoginPage />} />
                         </Route>
 
-                        {/* ── Public Web Chat (no auth) ──────────────── */}
-                        <Route path="/chat" element={<WebChatPage />} />
-
                         {/* ── Protected Routes (all roles) ───────────── */}
                         <Route element={<ProtectedRoute />}>
                             <Route element={<DashboardLayout />}>
                                 <Route path="/" element={<DashboardPage />} />
 
-                                {/* User + Admin only */}
-                                <Route element={<ProtectedRoute allowedRoles={["user", "admin"]} />}>
+                                {/* Web Chat — all roles */}
+                                <Route path="/chat" element={<WebChatPage />} />
+
+                                {/* Admin only */}
+                                <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
                                     <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
                                     <Route path="/bots" element={<BotsPage />} />
                                     <Route path="/inbox" element={<InboxPage />} />
+                                    <Route path="/integration" element={<IntegrationPage />} />
                                 </Route>
 
                                 {/* Support + Admin only */}
@@ -127,8 +127,9 @@ export default function App() {
                             </Route>
                         </Route>
                     </Routes>
-                </BrowserRouter>
-            )}
-        </AuthProvider>
+                )}
+                <ToastContainer />
+            </AuthProvider>
+        </BrowserRouter>
     );
 }

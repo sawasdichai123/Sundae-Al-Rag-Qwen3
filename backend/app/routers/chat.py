@@ -21,17 +21,20 @@ OMNICHANNEL:
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 import uuid
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, require_approved
 from app.core.database import get_supabase
 from app.services.ai_models import get_embedding_service, get_reranker_service
-from app.services.llm_generator import generate_response
+from app.services.llm_generator import generate_response, generate_response_stream
 from app.services.vector_search import search_parent_chunks
 
 logger = logging.getLogger(__name__)
@@ -163,33 +166,35 @@ async def ask_question(
     await _validate_bot(bot_id, organization_id, platform_source)
 
     try:
+        t0 = time.time()
+
         # ── Step 1: Encode query ────────────────────────────────
         embedder = get_embedding_service()
         query_embedding = await embedder.embed_query(user_query)
 
-        logger.info("Query embedded (org=%s, query_len=%d)", organization_id, len(user_query))
+        t1 = time.time()
+        logger.info("Step 1 Embed: %.1fs (org=%s, query_len=%d)", t1 - t0, organization_id, len(user_query))
 
         # ── Step 2: Vector search (child → parent mapping) ──────
         parent_results = await search_parent_chunks(
             query_embedding=query_embedding,
             organization_id=organization_id,
+            bot_id=bot_id,
+            top_k=3,  # Reduced for faster CPU reranking
         )
 
-        logger.info(
-            "Vector search returned %d parent chunks (org=%s)",
-            len(parent_results),
-            organization_id,
-        )
+        t2 = time.time()
+        logger.info("Step 2 Search: %.1fs — %d parent chunks (org=%s)", t2 - t1, len(parent_results), organization_id)
 
         # ── Step 3: Rerank parent chunks ────────────────────────
-        if parent_results:
+        # OPTIMIZATION: Skip reranker for ≤2 results (use vector similarity)
+        if parent_results and len(parent_results) > 2:
             reranker = get_reranker_service()
             parent_texts = [p.text for p in parent_results]
 
             rerank_results = await reranker.rerank(
                 query=user_query,
                 passages=parent_texts,
-                score_threshold=0.3,
             )
 
             surviving_texts = [r.text for r in rerank_results]
@@ -206,15 +211,25 @@ async def ask_question(
                     )
                 )
 
-            logger.info(
-                "Reranking: %d → %d survived (org=%s)",
-                len(parent_results),
-                len(rerank_results),
-                organization_id,
-            )
+            t3 = time.time()
+            logger.info("Step 3 Rerank: %.1fs — %d → %d survived (org=%s)", t3 - t2, len(parent_results), len(rerank_results), organization_id)
+        elif parent_results:
+            # ≤2 results: skip reranker, use vector similarity ranking
+            surviving_texts = [p.text for p in parent_results]
+            sources = [
+                SourceChunk(
+                    document_id=p.document_id,
+                    chunk_index=p.chunk_index,
+                    score=round(p.best_child_similarity, 4),
+                )
+                for p in parent_results
+            ]
+            t3 = time.time()
+            logger.info("Step 3 Rerank: SKIPPED (≤2 results) — keeping %d chunks (org=%s)", len(parent_results), organization_id)
         else:
             surviving_texts = []
             sources = []
+            t3 = time.time()
 
         # ── Step 4: Generate response via LLM ───────────────────
         answer = await generate_response(
@@ -222,11 +237,9 @@ async def ask_question(
             retrieved_contexts=surviving_texts,
         )
 
-        logger.info(
-            "LLM response generated (org=%s, answer_len=%d)",
-            organization_id,
-            len(answer),
-        )
+        t4 = time.time()
+        logger.info("Step 4 LLM: %.1fs (org=%s, answer_len=%d)", t4 - t3, organization_id, len(answer))
+        logger.info("Total RAG pipeline: %.1fs", t4 - t0)
 
         # ── Step 5: Log conversation ────────────────────────────
         if session_id:
@@ -294,3 +307,343 @@ async def ask_question(
             status_code=500,
             detail=f"RAG pipeline processing failed: {exc}",
         )
+
+
+# ── Streaming Endpoint ──────────────────────────────────────────
+
+
+@router.post("/ask/stream")
+async def ask_question_stream(
+    request: ChatRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> StreamingResponse:
+    """SSE streaming version of the RAG chat endpoint.
+
+    Steps 0-3 run normally, then Step 4 streams tokens via SSE.
+    The frontend receives tokens in real-time (like ChatGPT).
+
+    SSE format:
+      data: {"type":"token","content":"..."}
+      data: {"type":"sources","sources":[...]}
+      data: {"type":"done"}
+    """
+    user_query = request.user_query.strip()
+    organization_id = request.organization_id
+    bot_id = request.bot_id
+    platform_user_id = request.platform_user_id
+    platform_source = request.platform_source
+    session_id = request.session_id
+
+    if not user_query:
+        raise HTTPException(status_code=400, detail="user_query must not be empty.")
+
+    await _validate_bot(bot_id, organization_id, platform_source)
+
+    # Steps 1-3 run before streaming starts
+    t0 = time.time()
+
+    try:
+        embedder = get_embedding_service()
+        query_embedding = await embedder.embed_query(user_query)
+
+        parent_results = await search_parent_chunks(
+            query_embedding=query_embedding,
+            organization_id=organization_id,
+            bot_id=bot_id,
+            top_k=3,  # Reduced for faster CPU reranking
+        )
+
+        # OPTIMIZATION: Skip reranker for ≤2 results (use vector similarity)
+        if parent_results and len(parent_results) > 2:
+            reranker = get_reranker_service()
+            parent_texts = [p.text for p in parent_results]
+            rerank_results = await reranker.rerank(
+                query=user_query,
+                passages=parent_texts,
+            )
+            surviving_texts = [r.text for r in rerank_results]
+            sources: list[SourceChunk] = []
+            for rr in rerank_results:
+                if rr.original_index < len(parent_results):
+                    original_parent = parent_results[rr.original_index]
+                    sources.append(
+                        SourceChunk(
+                            document_id=original_parent.document_id,
+                            chunk_index=original_parent.chunk_index,
+                            score=round(rr.score, 4),
+                        )
+                    )
+        elif parent_results:
+            # ≤2 results: skip reranker, use vector similarity ranking
+            surviving_texts = [p.text for p in parent_results]
+            sources = [
+                SourceChunk(
+                    document_id=p.document_id,
+                    chunk_index=p.chunk_index,
+                    score=round(p.best_child_similarity, 4),
+                )
+                for p in parent_results
+            ]
+        else:
+            surviving_texts = []
+            sources = []
+    except Exception as exc:
+        logger.error("Stream pre-processing failed (org=%s): %s", organization_id, exc)
+        raise HTTPException(status_code=500, detail=f"RAG pre-processing failed: {exc}")
+
+    t_pre = time.time()
+    logger.info("Stream pre-processing: %.1fs (org=%s)", t_pre - t0, organization_id)
+
+    # Upsert session BEFORE streaming starts so that:
+    # 1) The session row exists when user clicks "Request Human"
+    # 2) If the frontend closes SSE early, the session is still persisted
+    if session_id:
+        try:
+            supabase_pre = get_supabase()
+            session_row = {
+                "id": session_id,
+                "organization_id": organization_id,
+                "bot_id": bot_id,
+                "platform_user_id": platform_user_id,
+                "platform_source": platform_source,
+                "last_message_at": "now()",
+            }
+            await (
+                supabase_pre.table("chat_sessions")
+                .upsert(session_row, on_conflict="id")
+            ).execute()
+        except Exception as pre_exc:
+            logger.warning("Pre-stream session upsert failed (session=%s): %s", session_id, pre_exc)
+
+    async def event_stream():
+        # Send sources first so frontend can display them
+        sources_data = json.dumps(
+            {"type": "sources", "sources": [s.model_dump() for s in sources]},
+            ensure_ascii=False,
+        )
+        yield f"data: {sources_data}\n\n"
+
+        # Stream LLM tokens
+        full_answer = []
+        try:
+            async for token in generate_response_stream(
+                user_query=user_query,
+                retrieved_contexts=surviving_texts,
+            ):
+                full_answer.append(token)
+                token_data = json.dumps(
+                    {"type": "token", "content": token},
+                    ensure_ascii=False,
+                )
+                yield f"data: {token_data}\n\n"
+        except Exception as stream_exc:
+            logger.error("LLM streaming failed: %s", stream_exc)
+            error_data = json.dumps(
+                {"type": "token", "content": "\n\n(ขออภัย เกิดข้อผิดพลาดขณะประมวลผล)"},
+                ensure_ascii=False,
+            )
+            yield f"data: {error_data}\n\n"
+
+        # ALWAYS send done signal — even if streaming errored
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        # Log messages (session row already created before streaming)
+        answer_text = "".join(full_answer)
+        if session_id:
+            try:
+                supabase = get_supabase()
+
+                # Update last_message_at after streaming completes
+                await (
+                    supabase.table("chat_sessions")
+                    .update({"last_message_at": "now()"})
+                    .eq("id", session_id)
+                ).execute()
+
+                user_msg = {
+                    "id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "organization_id": organization_id,
+                    "role": "user",
+                    "content": user_query,
+                }
+                await (supabase.table("chat_messages").insert(user_msg)).execute()
+
+                assistant_msg = {
+                    "id": str(uuid.uuid4()),
+                    "session_id": session_id,
+                    "organization_id": organization_id,
+                    "role": "assistant",
+                    "content": answer_text,
+                    "metadata": {
+                        "sources": [s.model_dump() for s in sources],
+                        "reranked_count": len(sources),
+                    },
+                }
+                await (supabase.table("chat_messages").insert(assistant_msg)).execute()
+            except Exception as log_exc:
+                logger.warning("Failed to log chat (session=%s): %s", session_id, log_exc)
+
+        logger.info("Stream complete: %.1fs total (org=%s)", time.time() - t0, organization_id)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Human Handoff ─────────────────────────────────────────────
+
+
+class HandoffRequest(BaseModel):
+    """Request body for user requesting human agent."""
+
+    session_id: str
+    organization_id: str
+    bot_id: str
+
+
+class HandoffResponse(BaseModel):
+    """Response confirming handoff request."""
+
+    message: str
+    session_id: str
+    new_status: str
+
+
+@router.post("/request-human", response_model=HandoffResponse)
+async def request_human(
+    body: HandoffRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> HandoffResponse:
+    """User requests a human agent to take over the chat session.
+
+    Sets session status to 'human_takeover' and inserts a system message
+    so the admin sees the escalation in the Inbox.
+    """
+    supabase = get_supabase()
+
+    try:
+        # Verify session exists
+        session_result = await (
+            supabase.table("chat_sessions")
+            .select("id, status")
+            .eq("id", body.session_id)
+            .eq("organization_id", body.organization_id)
+            .limit(1)
+        ).execute()
+
+        if not session_result.data:
+            raise HTTPException(status_code=404, detail="Session not found.")
+
+        # Update status to human_takeover
+        await (
+            supabase.table("chat_sessions")
+            .update({"status": "human_takeover", "last_message_at": "now()"})
+            .eq("id", body.session_id)
+            .eq("organization_id", body.organization_id)
+        ).execute()
+
+        # Insert system message for visibility in Inbox
+        system_msg = {
+            "id": str(uuid.uuid4()),
+            "session_id": body.session_id,
+            "organization_id": body.organization_id,
+            "role": "system",
+            "content": "ผู้ใช้ขอพูดคุยกับเจ้าหน้าที่",
+            "metadata": {"handoff_requested_by": user.id},
+        }
+        await (supabase.table("chat_messages").insert(system_msg)).execute()
+
+        logger.info(
+            "Human handoff requested: session=%s, user=%s",
+            body.session_id,
+            user.id,
+        )
+
+        return HandoffResponse(
+            message="Handoff requested successfully.",
+            session_id=body.session_id,
+            new_status="human_takeover",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Handoff request failed (session=%s): %s", body.session_id, exc)
+        raise HTTPException(status_code=500, detail=f"Handoff request failed: {exc}")
+
+
+# ── Send Plain Message (during handoff) ──────────────────────
+
+
+class SendMessageRequest(BaseModel):
+    """Request body for sending a plain user message (no RAG)."""
+
+    session_id: str
+    organization_id: str
+    content: str
+
+
+class SendMessageResponse(BaseModel):
+    """Response after inserting a plain message."""
+
+    id: str
+    content: str
+    role: str
+
+
+@router.post("/send-message", response_model=SendMessageResponse)
+async def send_user_message(
+    body: SendMessageRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> SendMessageResponse:
+    """Send a plain user message into an existing session (no RAG pipeline).
+
+    Used when the session is in human_takeover mode — the user can keep
+    sending messages that the admin will see in the Inbox.
+    """
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Message content must not be empty.")
+
+    supabase = get_supabase()
+
+    # Verify session exists
+    session_result = await (
+        supabase.table("chat_sessions")
+        .select("id, status")
+        .eq("id", body.session_id)
+        .eq("organization_id", body.organization_id)
+        .limit(1)
+    ).execute()
+
+    if not session_result.data:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    # Insert user message
+    msg_id = str(uuid.uuid4())
+    msg_row = {
+        "id": msg_id,
+        "session_id": body.session_id,
+        "organization_id": body.organization_id,
+        "role": "user",
+        "content": content,
+    }
+    await (supabase.table("chat_messages").insert(msg_row)).execute()
+
+    # Update last_message_at
+    await (
+        supabase.table("chat_sessions")
+        .update({"last_message_at": "now()"})
+        .eq("id", body.session_id)
+    ).execute()
+
+    logger.info("Plain message sent: session=%s, user=%s", body.session_id, user.id)
+
+    return SendMessageResponse(id=msg_id, content=content, role="user")

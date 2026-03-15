@@ -49,7 +49,7 @@ export default function LoginPage() {
         clearError();
 
         // 1. Create auth user
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password: password.trim(),
             options: {
@@ -58,31 +58,24 @@ export default function LoginPage() {
         });
 
         if (error) {
-            setRegisterMsg(`❌ ${error.message}`);
+            const msg = error.message.includes("already registered") || error.message.includes("User already registered")
+                ? "อีเมลนี้มีผู้ใช้งานแล้ว กรุณาใช้อีเมลอื่น"
+                : error.message.includes("Password should be")
+                    ? "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร"
+                    : `❌ ${error.message}`;
+            setRegisterMsg(msg);
             setRegisterLoading(false);
             return;
         }
 
-        // 2. Create user_profiles row (default: role='user', is_approved=false)
-        if (data.user) {
-            const { error: profileErr } = await supabase
-                .from("user_profiles")
-                .insert({
-                    id: data.user.id,
-                    email: email.trim(),
-                    full_name: fullName.trim() || null,
-                    role: "user",
-                    is_approved: false,
-                });
+        // user_profiles row ถูกสร้างอัตโนมัติโดย DB trigger (handle_new_auth_user)
+        // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
 
-            if (profileErr) {
-                console.error("[Register] Profile insert error:", profileErr);
-            }
-        }
-
-        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบ (รอ Admin อนุมัติเพื่อใช้ฟีเจอร์ทั้งหมด)");
+        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Admin อนุมัติก่อนใช้งาน)");
         setRegisterLoading(false);
         setPassword("");
+        // Auto-switch to login tab after 1.5s
+        setTimeout(() => { setTab("login"); setRegisterMsg(""); }, 1500);
     };
 
     return (

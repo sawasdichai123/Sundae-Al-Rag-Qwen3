@@ -7,7 +7,7 @@
  *   (all child routes are blocked at layout level)
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 
@@ -54,6 +54,15 @@ function ApprovalIcon() {
     );
 }
 
+function IntegrationIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M4.606 12.97a.75.75 0 0 1-.134 1.051 2.494 2.494 0 0 0-.93 2.437 2.494 2.494 0 0 0 2.437-.93.75.75 0 1 1 1.186.918 3.995 3.995 0 0 1-4.482 1.332.75.75 0 0 1-.461-.461 3.994 3.994 0 0 1 1.332-4.482.75.75 0 0 1 1.052.134Z" clipRule="evenodd" />
+            <path fillRule="evenodd" d="M13.703 4.469a3.25 3.25 0 0 1 2.828 2.828c.137.09.265.193.382.308l.964.964a3.25 3.25 0 0 1 0 4.596l-4.243 4.243a3.25 3.25 0 0 1-4.596 0l-.964-.964a3.25 3.25 0 0 1-.308-.382 3.25 3.25 0 0 1-2.828-2.828 3.248 3.248 0 0 1-.382-.308l-.964-.964a3.25 3.25 0 0 1 0-4.596L8.12 3.123a3.25 3.25 0 0 1 4.596 0l.964.964c.115.115.218.243.308.382h-.285ZM14.5 6.25a1.75 1.75 0 0 0-2.474 0L7.783 10.5l1.717 1.717 4.243-4.243a1.75 1.75 0 0 0 0-2.474l-.964-.964a1.75 1.75 0 0 1-.279-.286Z" clipRule="evenodd" />
+        </svg>
+    );
+}
+
 function WebChatIcon() {
     return (
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
@@ -91,10 +100,11 @@ interface NavItem {
 }
 
 const allNavItems: NavItem[] = [
-    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["user", "support", "admin"] },
-    { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["user", "admin"] },
-    { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["user", "admin"] },
-    { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["user", "admin"] },
+    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin"] },
+    { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin"] },
+    { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin"] },
+    { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin"] },
+    { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin"] },
     { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
 ];
@@ -104,6 +114,7 @@ const routeLabels: Record<string, string> = {
     "/knowledge-base": "Knowledge Base",
     "/bots": "Bots",
     "/inbox": "Inbox",
+    "/integration": "Integration",
     "/approvals": "Approvals",
     "/chat": "Web Chat",
 };
@@ -119,18 +130,29 @@ export default function DashboardLayout() {
 
     const role = user?.role ?? "user";
 
-    // ⚠️ STRICT approval check
-    const isUnapproved = role === "user" && !user?.is_approved;
+    // ⚠️ STRICT approval check — only flag as unapproved when user profile
+    // is loaded (user !== null) AND role is "user" AND not approved.
+    // This prevents showing lockout before profile finishes loading.
+    const isUnapproved = !!user && role === "user" && !user.is_approved;
 
     const currentLabel = routeLabels[location.pathname] || "Dashboard";
+
+    // Auto-redirect: user role → go straight to /chat
+    useEffect(() => {
+        if (role === "user" && !isUnapproved && location.pathname === "/") {
+            navigate("/chat", { replace: true });
+        }
+    }, [role, isUnapproved, location.pathname, navigate]);
 
     // Unapproved users see NO navigation links at all
     const visibleNav = isUnapproved
         ? []
         : allNavItems.filter((item) => item.visibleTo.includes(role));
 
-    const handleLogout = async () => {
-        await signOut();
+    const handleLogout = () => {
+        // signOut clears local state synchronously, then fires Supabase API in background.
+        // Navigate immediately — ProtectedRoute will also redirect via isAuthenticated: false.
+        signOut();
         navigate("/login");
     };
 
@@ -209,7 +231,7 @@ export default function DashboardLayout() {
                                 <p className="text-[10px] text-steel-400 truncate">{user?.email || "—"}</p>
                             </div>
                         )}
-                        {!collapsed && (
+                        {(!collapsed || isUnapproved) && (
                             <button onClick={handleLogout} className="text-steel-400 hover:text-red-400 transition-colors cursor-pointer" title="Logout">
                                 <LogoutIcon />
                             </button>

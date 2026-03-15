@@ -63,10 +63,14 @@ class EmbeddingService:
         """Load the model on first access and cache it."""
         if self._model is None:
             logger.info("Loading embedding model: %s ...", self.model_name)
-            self._model = SentenceTransformer(
-                self.model_name,
-                device=self._device,
-            )
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    device=self._device,
+                )
+            except Exception as exc:
+                logger.error("Failed to load embedding model '%s': %s", self.model_name, exc)
+                raise RuntimeError(f"Embedding model failed to load: {exc}") from exc
             logger.info(
                 "Embedding model loaded (dim=%d, device=%s)",
                 self._model.get_sentence_embedding_dimension(),
@@ -185,10 +189,14 @@ class RerankerService:
         """Load the cross-encoder model on first access and cache it."""
         if self._model is None:
             logger.info("Loading reranker model: %s ...", self.model_name)
-            self._model = CrossEncoder(
-                self.model_name,
-                device=self._device,
-            )
+            try:
+                self._model = CrossEncoder(
+                    self.model_name,
+                    device=self._device,
+                )
+            except Exception as exc:
+                logger.error("Failed to load reranker model '%s': %s", self.model_name, exc)
+                raise RuntimeError(f"Reranker model failed to load: {exc}") from exc
             logger.info("Reranker model loaded (device=%s)", self._device or "auto")
         return self._model
 
