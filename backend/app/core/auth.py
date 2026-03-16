@@ -40,8 +40,9 @@ class CurrentUser:
     email: str
     role: str               # "user" | "support" | "admin"
     is_approved: bool
-    organization_id: str | None
+    organization_id: str | None   # DEPRECATED — use org_members table
     full_name: str | None
+    active_org_id: str | None = None  # from X-Active-Org header
 
 
 # ── Core Dependency: Extract & Verify JWT ────────────────────────
@@ -115,6 +116,10 @@ async def get_current_user(request: Request) -> CurrentUser:
             detail="User profile not found. Contact your administrator.",
         )
 
+    # Read active org from X-Active-Org header (multi-org support)
+    active_org_header = request.headers.get("X-Active-Org")
+    active_org_id = active_org_header or profile.get("organization_id")
+
     current_user = CurrentUser(
         id=profile["id"],
         email=profile.get("email") or auth_user.email or "",
@@ -122,6 +127,7 @@ async def get_current_user(request: Request) -> CurrentUser:
         is_approved=profile.get("is_approved", False),
         organization_id=profile.get("organization_id"),
         full_name=profile.get("full_name"),
+        active_org_id=active_org_id,
     )
 
     logger.debug(
@@ -180,6 +186,46 @@ def require_role(*allowed_roles: str) -> Callable:
     return _check_role
 
 
+async def require_org_owner(
+    user: CurrentUser = Depends(require_approved),
+) -> CurrentUser:
+    """Ensure the user is an owner of their active org (via org_members table).
+
+    Admin role bypasses this check.
+
+    Usage::
+
+        @router.post("/bots")
+        async def create_bot(user = Depends(require_org_owner)):
+            ...
+    """
+    if user.role == "admin":
+        return user
+
+    if not user.active_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active organization selected.",
+        )
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", user.active_org_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data or result.data[0].get("org_role") != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Org owner role required.",
+        )
+
+    return user
+
+
 async def verify_session_access(
     user: CurrentUser,
     session_id: str,
@@ -223,8 +269,11 @@ async def verify_session_access(
         )
 
 
-def verify_organization(user: CurrentUser, organization_id: str) -> None:
-    """Verify the authenticated user belongs to the given organization.
+async def verify_organization(user: CurrentUser, organization_id: str) -> None:
+    """Verify the authenticated user belongs to the given organization
+    via the org_members table (many-to-many).
+
+    Admin role bypasses this check.
 
     This is the primary multi-tenant isolation check. Every endpoint that
     accepts organization_id MUST call this before proceeding.
@@ -232,12 +281,19 @@ def verify_organization(user: CurrentUser, organization_id: str) -> None:
     Raises:
         HTTPException 403: User does not belong to the organization.
     """
-    if not user.organization_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is not assigned to any organization.",
-        )
-    if user.organization_id != organization_id:
+    if user.role == "admin":
+        return
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("org_members")
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("organization_id", organization_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. You do not belong to this organization.",

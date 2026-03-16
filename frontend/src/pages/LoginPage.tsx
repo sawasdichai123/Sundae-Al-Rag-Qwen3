@@ -52,13 +52,11 @@ export default function LoginPage() {
         setRegisterMsg("");
         clearError();
 
-        // 1. Create auth user
+        // 1. Create auth user — org is created later via CreateOrgPage
         const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password: password.trim(),
-            options: {
-                data: { full_name: fullName.trim() || null },
-            },
+            options: { data: { full_name: fullName.trim() || null } },
         });
 
         if (error) {
@@ -75,7 +73,7 @@ export default function LoginPage() {
         // user_profiles row ถูกสร้างอัตโนมัติโดย DB trigger (handle_new_auth_user)
         // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
 
-        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Admin อนุมัติก่อนใช้งาน)");
+        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Support อนุมัติก่อนใช้งาน)");
         setRegisterLoading(false);
         setPassword("");
         // Auto-switch to login tab after 1.5s
@@ -231,7 +229,7 @@ export default function LoginPage() {
                         )}
                     </button>
                     <p className="text-[10px] text-steel-400 text-center">
-                        สมัครแล้วต้องรอ Admin อนุมัติก่อนจึงจะใช้ฟีเจอร์ทั้งหมดได้
+                        สมัครแล้วต้องรอ Support อนุมัติก่อนจึงจะใช้ฟีเจอร์ทั้งหมดได้
                     </p>
                 </form>
             )}

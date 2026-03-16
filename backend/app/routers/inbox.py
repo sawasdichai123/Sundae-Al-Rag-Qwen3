@@ -106,7 +106,7 @@ async def list_sessions(
     Only support and admin roles can access this endpoint.
     Sessions are ordered by last_message_at (newest first).
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -167,7 +167,7 @@ async def list_my_sessions(
     Any approved user can call this endpoint — returns only their own sessions
     (filtered by platform_user_id = user.id).
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -221,7 +221,7 @@ async def get_session_messages(
     user: CurrentUser = Depends(require_approved),
 ) -> list[MessageResponse]:
     """Get all messages in a chat session, ordered by creation time."""
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     await verify_session_access(user, session_id, organization_id)
     supabase = get_supabase()
 
@@ -255,7 +255,7 @@ async def update_session_status(
         - human_takeover: A human agent has taken over
         - resolved: The session is closed
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     valid_statuses = {"active", "human_takeover", "helped", "resolved"}
     if body.status not in valid_statuses:
         raise HTTPException(
@@ -304,7 +304,7 @@ async def send_admin_message(
     Automatically sets the session status to 'human_takeover' if currently 'active'.
     Updates the session's last_message_at timestamp.
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     content = body.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content must not be empty.")
@@ -386,7 +386,7 @@ async def get_new_messages(
     Args:
         after: ISO-8601 timestamp. Only messages with created_at > after are returned.
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     await verify_session_access(user, session_id, organization_id)
     supabase = get_supabase()
 

@@ -16,13 +16,59 @@ export interface Organization {
 
 /** Maps to user_profiles table — extends Supabase auth.users */
 export type UserRole = "user" | "support" | "admin";
+export type OrgRole = "owner" | "member";
 
 export interface UserProfile {
     id: string;                         // maps to auth.users.id
-    organization_id: string | null;     // nullable until assigned
+    organization_id: string | null;     // DEPRECATED — use org_members
     email: string;                      // also in user_profiles table
     full_name: string | null;
     role: UserRole;
+    is_approved: boolean;
+    created_at: string;
+}
+
+// ── Organization Membership (many-to-many) ──────────────────────
+
+export interface OrgMembership {
+    id: string;
+    name: string;
+    slug?: string | null;
+    org_role: OrgRole;
+    created_at: string;
+}
+
+export interface OrgMember {
+    user_id: string;
+    email: string;
+    full_name: string | null;
+    org_role: OrgRole;
+    joined_at: string;
+}
+
+export interface OrgInvitation {
+    id: string;
+    organization_id: string;
+    invited_email: string;
+    invited_by: string;
+    status: "pending" | "accepted" | "revoked";
+    created_at: string;
+}
+
+export interface MyInvitation {
+    id: string;
+    organization_id: string;
+    org_name: string;
+    invited_email: string;
+    status: "pending" | "accepted" | "revoked";
+    created_at: string;
+}
+
+export interface PendingUser {
+    id: string;
+    email: string;
+    full_name: string | null;
+    role: string;
     is_approved: boolean;
     created_at: string;
 }

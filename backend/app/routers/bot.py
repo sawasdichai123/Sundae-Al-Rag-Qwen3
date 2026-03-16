@@ -25,7 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, verify_organization
+from app.core.auth import CurrentUser, require_approved, require_org_owner, verify_organization
 from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -91,13 +91,13 @@ class BotDeleteResponse(BaseModel):
 @router.post("", response_model=BotResponse, status_code=201)
 async def create_bot(
     body: BotCreateRequest,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> BotResponse:
     """Create a new bot for an organization.
 
     If no system_prompt is provided, a sensible Thai-language default is used.
     """
-    verify_organization(user, body.organization_id)
+    await verify_organization(user, body.organization_id)
     supabase = get_supabase()
 
     row = {
@@ -135,7 +135,7 @@ async def list_bots(
     user: CurrentUser = Depends(require_approved),
 ) -> list[BotResponse]:
     """List all bots for an organization, ordered by creation date."""
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -160,7 +160,7 @@ async def get_bot(
     user: CurrentUser = Depends(require_approved),
 ) -> BotResponse:
     """Get a single bot by ID (with org isolation)."""
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -189,10 +189,10 @@ async def update_bot(
     bot_id: str,
     body: BotUpdateRequest,
     organization_id: str,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> BotResponse:
     """Update bot fields. Only non-null fields are applied."""
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     # Build update payload (only provided fields)
@@ -241,14 +241,14 @@ async def update_bot(
 async def delete_bot(
     bot_id: str,
     organization_id: str,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> BotDeleteResponse:
     """Delete a bot.
 
     Documents linked to the bot will have bot_id set to NULL
     (ON DELETE SET NULL).
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     # Verify existence

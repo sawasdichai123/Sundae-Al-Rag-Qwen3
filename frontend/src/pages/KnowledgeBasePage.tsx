@@ -11,6 +11,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { documentsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Document } from "../types";
 
@@ -102,7 +103,8 @@ export default function KnowledgeBasePage() {
 
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
-    const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load documents ──────────────────────────────────────────
     const loadDocuments = useCallback(async () => {

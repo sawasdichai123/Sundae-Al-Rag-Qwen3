@@ -63,6 +63,13 @@ apiClient.interceptors.request.use(
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
+        // Attach active org header for multi-tenant isolation
+        try {
+            const activeOrgId = localStorage.getItem("sundae_active_org_id");
+            if (activeOrgId) {
+                config.headers["X-Active-Org"] = activeOrgId;
+            }
+        } catch { /* ignore storage errors */ }
         return config;
     },
     (error) => Promise.reject(error)

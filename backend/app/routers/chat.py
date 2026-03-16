@@ -166,7 +166,7 @@ async def ask_question(
     session_id = request.session_id
 
     # ── Security: verify user belongs to this org ────────────
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
 
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
@@ -360,7 +360,7 @@ async def ask_question_stream(
     session_id = request.session_id
 
     # ── Security: verify user belongs to this org ────────────
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
 
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
@@ -574,7 +574,7 @@ async def request_human(
     Sets session status to 'human_takeover' and inserts a system message
     so the admin sees the escalation in the Inbox.
     """
-    verify_organization(user, body.organization_id)
+    await verify_organization(user, body.organization_id)
     await verify_session_access(user, body.session_id, body.organization_id)
     supabase = get_supabase()
 
@@ -658,7 +658,7 @@ async def send_user_message(
     Used when the session is in human_takeover mode — the user can keep
     sending messages that the admin will see in the Inbox.
     """
-    verify_organization(user, body.organization_id)
+    await verify_organization(user, body.organization_id)
     await verify_session_access(user, body.session_id, body.organization_id)
     content = body.content.strip()
     if not content:

@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 14 มีนาคม 2569
+> **อัพเดทล่าสุด**: 16 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -19,6 +19,8 @@ flowchart TB
         IX[Inbox]
         WC[Web Chat]
         AP[Approvals]
+        CO[Create Org]
+        ORG_P[Organization]
     end
 
     subgraph Auth ["Supabase Auth"]
@@ -32,6 +34,8 @@ flowchart TB
         CR[Chat Router]
         IR[Inbox Router]
         BR[Bot Router]
+        APR[Approval Router]
+        OGR[Organization Router]
         CS[Chunking Service]
         AI[AI Models - BGE-M3 + Reranker]
         VS[Vector Search]
@@ -46,6 +50,8 @@ flowchart TB
         CC["child_chunks (pgvector)"]
         CSS[chat_sessions]
         CM[chat_messages]
+        OM[org_members]
+        OI[org_invitations]
     end
 
     Frontend -->|JWT| Auth
@@ -69,13 +75,15 @@ backend/
 │   ├── main.py              # FastAPI app + CORS
 │   ├── core/
 │   │   ├── config.py         # Settings from .env
-│   │   ├── auth.py           # JWT middleware (get_current_user, require_approved, require_role)
+│   │   ├── auth.py           # JWT middleware (get_current_user, require_approved, require_role, require_org_owner)
 │   │   └── database.py       # Supabase async client (service role)
 │   ├── routers/
-│   │   ├── document.py       # Upload, list, delete
+│   │   ├── document.py       # Upload, list, delete (owner-only writes)
 │   │   ├── chat.py           # Omnichannel (Web + LINE) + streaming SSE
 │   │   ├── inbox.py          # Session management + human handoff
-│   │   ├── bot.py            # Bot CRUD
+│   │   ├── bot.py            # Bot CRUD (owner-only writes)
+│   │   ├── approval.py       # Pending user approval (support/admin)
+│   │   ├── organization.py   # Org CRUD, members, invitations, deletion
 │   │   └── health.py
 │   ├── services/
 │   │   ├── chunking.py       # Thai text splitter
@@ -92,7 +100,10 @@ backend/
 │   ├── 006_match_chunks_bot_filter.sql
 │   ├── 007_admin_role.sql
 │   ├── 008_fix_organizations_rls.sql
-│   └── 009_fix_user_profiles_rls_update.sql
+│   ├── 009_fix_user_profiles_rls_update.sql
+│   ├── 010_add_helped_status.sql
+│   ├── 011_multi_tenant_migration.sql
+│   └── 012_simplify_auth_trigger.sql
 └── requirements.txt
 ```
 
@@ -101,13 +112,15 @@ backend/
 | Table | Primary Key | สำคัญ |
 |-------|------------|-------|
 | `organizations` | UUID | Multi-tenant root |
-| `user_profiles` | UUID (FK → auth.users) | role, is_approved, email, full_name |
+| `user_profiles` | UUID (FK → auth.users) | role, is_approved, email, full_name, organization_id |
+| `org_members` | UUID | **user_id, organization_id, org_role** (owner/member) — many-to-many |
 | `bots` | UUID | prompt, line_access_token, is_web_enabled |
 | `documents` | UUID | file_path, status, FK → bots |
 | `document_parent_chunks` | UUID | content, metadata |
 | `document_child_chunks` | UUID | **embedding vector(1024)**, FK → parent |
 | `chat_sessions` | UUID | platform_source, status |
 | `chat_messages` | UUID | role, content, FK → session |
+| `org_invitations` | UUID | **organization_id, invited_email, invited_by, status** (pending/accepted/revoked) |
 
 RPC Function: `match_child_chunks` — cosine similarity search บน pgvector
 
@@ -123,9 +136,12 @@ RPC Function: `match_child_chunks` — cosine similarity search บน pgvector
 ### 2.4 Auth Middleware (core/auth.py)
 
 ```
-get_current_user  → ตรวจ Bearer token → ดึง user_profiles จาก DB (service role)
-require_approved  → เช็ค is_approved = true → 403 ถ้าไม่ผ่าน
-require_role(...) → เช็ค role + is_approved → 403 ถ้าไม่ผ่าน
+get_current_user      → ตรวจ Bearer token → ดึง user_profiles จาก DB (service role)
+                      → อ่าน X-Active-Org header → validate via org_members → set active_org_id
+require_approved      → เช็ค is_approved = true → 403 ถ้าไม่ผ่าน
+require_role(...)     → เช็ค platform role + is_approved → 403 ถ้าไม่ผ่าน
+require_org_owner     → เช็ค org_members.org_role = 'owner' สำหรับ active_org → 403 ถ้าไม่ผ่าน (admin bypass)
+verify_organization() → async — ตรวจว่า user เป็นสมาชิก org ใน org_members (admin bypass)
 ```
 
 Backend ใช้ **Service Role Key** — bypass RLS ทั้งหมด ทำให้อ่านค่า `is_approved` จริงจาก DB เสมอ
@@ -141,14 +157,16 @@ frontend/src/
 ├── api/
 │   ├── supabaseClient.ts    # Singleton Supabase client (custom lock, periodic refresh)
 │   ├── axios.ts             # JWT interceptor (3 layers)
-│   └── endpoints.ts         # API calls (documents, chat, inbox, bots)
+│   └── endpoints.ts         # API calls (documents, chat, inbox, bots, admin, org)
 ├── store/
 │   ├── authStore.ts         # Zustand (signIn/signOut/fetchProfile)
+│   ├── orgStore.ts          # Zustand (multi-org state, activeOrgId, fetchOrgs)
 │   └── toastStore.ts        # Toast notification state
 ├── types/
 │   └── index.ts             # TypeScript interfaces (synced DB)
 ├── components/
 │   ├── ProtectedRoute.tsx   # Role guard
+│   ├── OrgSwitcher.tsx      # Sidebar org dropdown for multi-org
 │   ├── Spinner.tsx          # Shared loading spinner
 │   └── ToastContainer.tsx   # Global toast UI
 ├── layouts/
@@ -160,7 +178,9 @@ frontend/src/
 │   ├── ResetPasswordPage.tsx   # ตั้งรหัสผ่านใหม่จากลิงก์ email
 │   ├── DashboardPage.tsx       # 3 role-based states
 │   ├── WebChatPage.tsx         # Chat interface + streaming + cancel button
-│   ├── ApprovalsPage.tsx       # Admin/Support approval list (real DB)
+│   ├── ApprovalsPage.tsx       # Admin/Support approval list (backend API)
+│   ├── CreateOrgPage.tsx       # Create org + accept invitations (post-approval)
+│   ├── OrganizationPage.tsx    # Org settings, members, invites, deletion
 │   ├── KnowledgeBasePage.tsx
 │   ├── BotsPage.tsx
 │   ├── InboxPage.tsx           # Human handoff inbox (admin perspective)
@@ -312,22 +332,25 @@ sequenceDiagram
     end
 ```
 
-### 4.2 Registration Flow
+### 4.2 Registration Flow (Multi-tenant)
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant FE as Frontend
     participant SB as Supabase Auth
+    participant TR as DB Trigger
     participant DB as user_profiles
 
-    U->>FE: Register (email/password/name)
-    FE->>SB: signUp()
-    SB-->>FE: New auth user
-    FE->>DB: INSERT { id, email, full_name, role='user', is_approved=false }
-    FE-->>U: "สมัครสำเร็จ! กรุณาเข้าสู่ระบบ"
-    Note over U: ต้อง login ใหม่ + รอ Admin/Support approve
+    U->>FE: Register (email/password/name/org_name)
+    FE->>SB: signUp({ data: { full_name, desired_org_name } })
+    SB-->>TR: AFTER INSERT on auth.users
+    TR->>DB: INSERT { id, email, full_name, role='user', is_approved=false, desired_org_name, org=NULL }
+    FE-->>U: "สมัครสำเร็จ! รอ Support อนุมัติ"
+    Note over U: Support approve → สร้าง org + assign owner
 ```
+
+**กรณี Invite Link**: ถ้า URL มี `?invite_org=<uuid>` → trigger จะ set `invite_org_id` แทน `desired_org_name` → Support approve → assign เป็น member ขององค์กรนั้น
 
 ---
 
@@ -664,6 +687,8 @@ WHERE email = 'sawasdichai.amor@bumail.net' AND is_approved = false;
 | 008 | Fix organizations RLS | ✅ รันแล้ว | แก้ 406 error บน organizations |
 | 009 | Fix UPDATE RLS + approve | ✅ รันแล้ว | แก้ approve ไม่ทำงาน |
 | 010 | Add helped status | ✅ ทำแล้ว | เพิ่มสถานะ `helped` (ช่วยเหลือเรียบร้อย) ให้ chat_sessions.status |
+| 011 | Org roles & invitations | ⚠️ ยังไม่รัน | เพิ่ม `org_role`, `desired_org_name`, `invite_org_id` + สร้าง `org_invitations` table |
+| 012 | Update auth trigger | ⚠️ ยังไม่รัน | trigger ใหม่ไม่ auto-assign org — เก็บ desired_org_name / invite_org_id แทน |
 
 ---
 
@@ -743,7 +768,7 @@ LLM_MODEL=qwen3:14b    # ถ้ามี RAM 16 GB
 
 ## 11. สิ่งที่ต้องทำก่อน Push ไป GitHub
 
-### SQL ที่ต้องรันใน Supabase SQL Editor 
+### SQL ที่ต้องรันใน Supabase SQL Editor
 
 ```sql
 -- Migration 009: แก้ RLS UPDATE + approve user
@@ -751,6 +776,12 @@ LLM_MODEL=qwen3:14b    # ถ้ามี RAM 16 GB
 
 -- Migration 010: เพิ่มสถานะ helped (ช่วยเหลือเรียบร้อย)
 -- ไฟล์: backend/sql/010_add_helped_status.sql
+
+-- Migration 011: Org roles & invitations (เพิ่ม org_role, org_invitations)
+-- ไฟล์: backend/sql/011_org_roles_and_invitations.sql
+
+-- Migration 012: Update auth trigger (multi-tenant)
+-- ไฟล์: backend/sql/012_update_auth_trigger.sql
 ```
 
 ### คำสั่ง Run Development
@@ -1325,22 +1356,261 @@ JWT expiry ใน Supabase Cloud Free Plan fix ไว้ที่ **3600 วิ�
 
 ---
 
-## 15. Next Steps
+## 15. Multi-Tenant Migration — org_members (16 มีนาคม 2569) ✅
 
-### 🟡 งานที่เหลือ (อัพเดท 14 มี.ค. 2569)
+### 15.1 ภาพรวม
 
-| # | งาน | รายละเอียด |
-|---|------|-----------|
-| 1 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
-| 2 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
-| 3 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 16) |
-| 4 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 5 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
-| 6 | **Dark mode** | เพิ่ม theme switcher |
+ย้ายจากระบบ Organization แบบ 1:1 (`user_profiles.organization_id` + `org_role`) ไปเป็น **many-to-many** ผ่าน `org_members` table:
+
+- User สร้าง Org เอง (หลัง approve) ผ่าน `/create-org` แทน Support สร้างตอน approve
+- รองรับ multi-org ด้วย `X-Active-Org` header + OrgSwitcher component
+- Org CRUD + Deletion flow + Member management อยู่ใน `organization.py` router
+- ลบ `invitation.py` router เก่า + `InviteMembersPage.tsx`
+
+### 15.2 Two-Tier Role System (ปรับปรุง)
+
+| ระดับ | ค่า | เก็บที่ | ใช้ตรวจสอบด้วย |
+|-------|-----|---------|----------------|
+| **Platform role** (`user_profiles.role`) | `user`, `support`, `admin` | user_profiles | `require_role(...)` |
+| **Org role** (`org_members.org_role`) | `owner`, `member` | org_members | `require_org_owner` |
+
+**เปลี่ยนแปลง**: org_role ย้ายจาก `user_profiles` ไป `org_members` table — user สามารถมี role ต่างกันในแต่ละ org
+
+### 15.3 Business Flow (ใหม่)
+
+```
+1. User สมัครสมาชิก → กรอกแค่ชื่อ + email + password (ไม่ต้องกรอกชื่อ org)
+2. DB trigger สร้าง user_profiles (role=user, is_approved=false, organization_id=NULL)
+3. Support/Admin เห็น pending user ใน ApprovalsPage → กด Approve (แค่ set is_approved=true)
+4. User ล็อกอิน → ไม่มี org → redirect ไป /create-org
+5. User สร้าง org เอง → org_members row (org_role=owner) สร้างอัตโนมัติ
+6. Owner เชิญ member ผ่าน OrganizationPage → invited user accept → org_members row (member)
+7. User สามารถเป็นสมาชิกหลาย org → สลับด้วย OrgSwitcher
+```
+
+### 15.4 SQL Migrations
+
+#### 011 — Multi-Tenant Migration ✅ รันแล้ว
+
+```sql
+-- 1. Create org_members table + Indexes + RLS
+CREATE TABLE IF NOT EXISTS org_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_role TEXT NOT NULL DEFAULT 'member' CHECK (org_role IN ('owner', 'member')),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'pending_deletion'));
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS deletion_requested_by UUID REFERENCES auth.users(id);
+
+CREATE INDEX IF NOT EXISTS idx_org_members_user_id ON org_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_org_id ON org_members(organization_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_user_org ON org_members(user_id, organization_id);
+ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own memberships" ON org_members FOR SELECT USING (user_id = auth.uid());
+
+-- 2. Migrate existing user_profiles → org_members
+INSERT INTO org_members (user_id, organization_id, org_role)
+SELECT id, organization_id, COALESCE(org_role, 'member')
+FROM user_profiles WHERE organization_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- 3. Adapt org_invitations: email → invited_email, expired → revoked
+ALTER TABLE org_invitations RENAME COLUMN email TO invited_email;
+ALTER TABLE org_invitations DROP CONSTRAINT IF EXISTS org_invitations_status_check;
+ALTER TABLE org_invitations ADD CONSTRAINT org_invitations_status_check
+    CHECK (status IN ('pending', 'accepted', 'revoked'));
+UPDATE org_invitations SET status = 'revoked' WHERE status = 'expired';
+ALTER TABLE org_invitations DROP CONSTRAINT IF EXISTS org_invitations_organization_id_email_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_invitations_org_email
+    ON org_invitations(organization_id, invited_email);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON org_invitations(invited_email);
+
+-- 4. Drop deprecated columns from user_profiles
+ALTER TABLE user_profiles DROP COLUMN IF EXISTS org_role;
+ALTER TABLE user_profiles DROP COLUMN IF EXISTS desired_org_name;
+ALTER TABLE user_profiles DROP COLUMN IF EXISTS invite_org_id;
+```
+
+#### 012 — Simplify Auth Trigger ✅ รันแล้ว
+
+```sql
+CREATE OR REPLACE FUNCTION handle_new_auth_user()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+AS $$
+BEGIN
+    INSERT INTO public.user_profiles (id, email, full_name, role, is_approved, organization_id)
+    VALUES (NEW.id, NEW.email, NEW.raw_user_meta_data ->> 'full_name', 'user', false, NULL)
+    ON CONFLICT (id) DO NOTHING;
+    RETURN NEW;
+END; $$;
+```
+
+### 15.5 Backend — Organization Router (`organization.py`) — สร้างใหม่
+
+| Endpoint | Method | สิทธิ์ | รายละเอียด |
+|----------|--------|--------|-----------|
+| `/api/orgs` | POST | require_approved | สร้าง Org (user = owner) + org_members row |
+| `/api/orgs` | GET | require_approved | List user's orgs (join org_members) |
+| `/api/orgs/{id}` | GET | require_approved + verify_org | Org details |
+| `/api/orgs/{id}` | PUT | require_org_owner | แก้ไขชื่อ |
+| `/api/orgs/{id}/request-deletion` | POST | owner or support | ขอลบ (pending) |
+| `/api/orgs/{id}/confirm-deletion` | POST | อีกฝ่าย confirm | ลบจริง (cascade) |
+| `/api/orgs/{id}/members` | GET | require_approved + verify_org | List members |
+| `/api/orgs/{id}/invite` | POST | require_org_owner | เชิญ email |
+| `/api/orgs/{id}/members/{uid}` | DELETE | require_org_owner | ลบ member |
+| `/api/orgs/invitations` | GET | require_approved | ดู invitations ของฉัน |
+| `/api/orgs/invitations/{id}/accept` | POST | invited user | Accept → org_members |
+
+### 15.6 Backend — Approval Router (Simplified)
+
+| Endpoint | Method | สิทธิ์ | รายละเอียด |
+|----------|--------|--------|-----------|
+| `/api/admin/pending-users` | GET | support/admin | แสดง user ที่ `is_approved=false` |
+| `/api/admin/approve/{user_id}` | POST | support/admin | แค่ `is_approved=true` (ไม่สร้าง org) |
+| `/api/admin/reject/{user_id}` | POST | support/admin | ลบ user profile |
+
+### 15.7 Backend — Write Permission Gates
+
+| Router | Endpoints ที่เปลี่ยน | เดิม | ใหม่ |
+|--------|---------------------|------|------|
+| `bot.py` | create, update, delete | `require_org_role("owner")` | `require_org_owner` |
+| `document.py` | upload, delete, link_bot | `require_org_role("owner")` | `require_org_owner` |
+
+ทุก router ที่ใช้ `verify_organization()` เปลี่ยนเป็น `await verify_organization()` (async):
+- `bot.py` (5 call sites), `document.py` (5), `inbox.py` (6), `chat.py` (6)
+
+### 15.8 Frontend — orgStore.ts (สร้างใหม่)
+
+```typescript
+interface OrgState {
+    orgs: OrgMembership[];
+    activeOrgId: string | null;     // persist to localStorage (sundae_active_org_id)
+    activeOrgRole: OrgRole | null;
+    fetchOrgs: () => Promise<void>;
+    setActiveOrg: (id: string) => void;
+    clearOrgs: () => void;
+}
+```
+
+- authStore.fetchProfile() → trigger orgStore.fetchOrgs()
+- authStore.signOut() → trigger orgStore.clearOrgs()
+- axios interceptor + askStream fetch → ส่ง `X-Active-Org` header
+
+### 15.9 Frontend — New Pages
+
+| หน้า | รายละเอียด |
+|------|-----------|
+| `CreateOrgPage.tsx` | Form สร้าง org + แสดง pending invitations (accept ได้) |
+| `OrganizationPage.tsx` | Org settings (name edit), Members list, Invite form, Danger zone (deletion) |
+| `OrgSwitcher.tsx` | Sidebar dropdown สลับ org + link สร้าง org ใหม่ |
+
+### 15.10 Frontend — Modified Pages
+
+| หน้า | การเปลี่ยนแปลง |
+|------|---------------|
+| `LoginPage.tsx` | ลบ orgName, inviteOrgId → signup แค่ name + email + password |
+| `ApprovalsPage.tsx` | ลบ desired_org_name, invite_org_name display |
+| `BotsPage.tsx` | ใช้ `orgStore.activeOrgId` แทน `user.organization_id` |
+| `KnowledgeBasePage.tsx` | เหมือน BotsPage |
+| `DashboardPage.tsx` | ใช้ `orgStore.activeOrgId` |
+| `InboxPage.tsx` | ใช้ `orgStore.activeOrgId` |
+| `WebChatPage.tsx` | ใช้ `orgStore.activeOrgId` |
+| `DashboardLayout.tsx` | OrgSwitcher, `requireOwner` boolean, auto-redirect `/create-org` |
+| `App.tsx` | ลบ InviteMembersPage, เพิ่ม CreateOrgPage + OrganizationPage routes |
+
+### 15.11 Frontend — API Endpoints
+
+```typescript
+// orgApi — org management (replaces invitationApi)
+orgApi.create(name)                        // POST /api/orgs
+orgApi.list()                              // GET /api/orgs
+orgApi.get(orgId)                          // GET /api/orgs/{id}
+orgApi.update(orgId, name)                 // PUT /api/orgs/{id}
+orgApi.requestDeletion(orgId)              // POST /api/orgs/{id}/request-deletion
+orgApi.confirmDeletion(orgId)              // POST /api/orgs/{id}/confirm-deletion
+orgApi.listMembers(orgId)                  // GET /api/orgs/{id}/members
+orgApi.invite(orgId, email)                // POST /api/orgs/{id}/invite
+orgApi.removeMember(orgId, userId)         // DELETE /api/orgs/{id}/members/{uid}
+orgApi.myInvitations()                     // GET /api/orgs/invitations
+orgApi.acceptInvitation(invitationId)      // POST /api/orgs/invitations/{id}/accept
+```
+
+### 15.12 ไฟล์ที่แก้ไข/สร้างใหม่
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| **SQL** | |
+| `backend/sql/011_multi_tenant_migration.sql` | **สร้างใหม่** — indexes, migrate data, rename columns, drop old columns |
+| `backend/sql/012_simplify_auth_trigger.sql` | **สร้างใหม่** — simplified trigger (no org assignment) |
+| **Backend** | |
+| `backend/app/core/auth.py` | ลบ `org_role`, เพิ่ม `active_org_id`, `require_org_owner`, async `verify_organization` |
+| `backend/app/routers/organization.py` | **สร้างใหม่** — 11 endpoints for org CRUD, members, invitations, deletion |
+| `backend/app/routers/approval.py` | Simplified — approve แค่ set is_approved=true |
+| `backend/app/routers/bot.py` | `require_org_owner` + `await verify_organization` |
+| `backend/app/routers/document.py` | `require_org_owner` + `await verify_organization` |
+| `backend/app/routers/inbox.py` | `await verify_organization` (6 sites) |
+| `backend/app/routers/chat.py` | `await verify_organization` (6 sites) |
+| `backend/app/main.py` | invitation → organization router |
+| `backend/app/routers/invitation.py` | **ลบ** |
+| **Frontend** | |
+| `frontend/src/types/index.ts` | ลบ org_role จาก UserProfile, เพิ่ม OrgMembership, OrgMember, MyInvitation |
+| `frontend/src/store/orgStore.ts` | **สร้างใหม่** — multi-org Zustand store |
+| `frontend/src/api/endpoints.ts` | ลบ invitationApi, เพิ่ม orgApi (11 methods) |
+| `frontend/src/api/axios.ts` | เพิ่ม X-Active-Org header |
+| `frontend/src/store/authStore.ts` | ลบ org_role, integrate orgStore |
+| `frontend/src/components/OrgSwitcher.tsx` | **สร้างใหม่** — sidebar org dropdown |
+| `frontend/src/pages/CreateOrgPage.tsx` | **สร้างใหม่** — create org + accept invitations |
+| `frontend/src/pages/OrganizationPage.tsx` | **สร้างใหม่** — org management (settings, members, invites, deletion) |
+| `frontend/src/pages/LoginPage.tsx` | ลบ orgName, inviteOrgId → simplified signup |
+| `frontend/src/pages/ApprovalsPage.tsx` | ลบ desired_org_name, invite_org_name |
+| `frontend/src/pages/BotsPage.tsx` | ใช้ orgStore.activeOrgId |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | ใช้ orgStore.activeOrgId |
+| `frontend/src/pages/DashboardPage.tsx` | ใช้ orgStore.activeOrgId |
+| `frontend/src/pages/InboxPage.tsx` | ใช้ orgStore.activeOrgId |
+| `frontend/src/pages/WebChatPage.tsx` | ใช้ orgStore.activeOrgId |
+| `frontend/src/layouts/DashboardLayout.tsx` | OrgSwitcher, requireOwner, auto-redirect |
+| `frontend/src/App.tsx` | ลบ InviteMembersPage, เพิ่ม CreateOrgPage + OrganizationPage |
+| `frontend/src/pages/InviteMembersPage.tsx` | **ลบ** |
+
+### 15.13 ผล Build
+
+```
+✅ TypeScript check  — ไม่มี error
+✅ Vite build        — สำเร็จ (157 modules)
+```
 
 ---
 
-## 16. LINE Webhook — งานที่เหลือ
+## 16. Next Steps
+
+### 🟡 งานที่เหลือ (อัพเดท 16 มี.ค. 2569)
+
+| # | งาน | รายละเอียด |
+|---|------|-----------|
+| ~~1~~ | ~~รัน SQL Migration 011 + 012~~ | ✅ รันแล้ว |
+| 2 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve → create org → invite member → accept → switch orgs |
+| 3 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 4 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
+| 5 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
+| 6 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 17) |
+| 7 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 8 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
+| 9 | **Dark mode** | เพิ่ม theme switcher |
+
+### SQL Migrations — สถานะปัจจุบัน
+
+| Migration | สถานะ |
+|-----------|--------|
+| 001-010 | ✅ รันแล้ว |
+| 011 — Multi-tenant migration (org_members, org_invitations rename, drop old columns) | ✅ รันแล้ว |
+| 012 — Simplify auth trigger (no org assignment on signup) | ✅ รันแล้ว |
+
+---
+
+## 17. LINE Webhook — งานที่เหลือ
 
 ### สถานะปัจจุบัน
 

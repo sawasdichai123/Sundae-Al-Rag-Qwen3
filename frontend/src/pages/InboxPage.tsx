@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -102,7 +103,8 @@ export default function InboxPage() {
     const hasLoadedSessionsOnceRef = useRef(false);
 
     const user = useAuthStore((s) => s.user);
-    const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load sessions ───────────────────────────────────────────
     const loadSessions = useCallback(async (opts?: { silent?: boolean }) => {

@@ -17,6 +17,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { chatApi, botsApi, inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 import type { Bot, SessionStatus } from "../types";
 
 // ── Types ───────────────────────────────────────────────────────
@@ -84,7 +85,8 @@ export default function WebChatPage() {
 
     // Auth store
     const user = useAuthStore((s) => s.user);
-    const orgId = user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = activeOrgId || user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
     const [platformUserId] = useState(() => user?.id || `web-${crypto.randomUUID().slice(0, 8)}`);
 
     // Bot selector

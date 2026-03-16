@@ -5,10 +5,12 @@
  *   - signIn / signOut via Supabase
  *   - onAuthStateChange listener (called from AuthProvider)
  *   - Fetches user_profiles row for role & is_approved
+ *   - Triggers orgStore.fetchOrgs() after profile load
  */
 
 import { create } from "zustand";
 import { supabase } from "../api/supabaseClient";
+import { useOrgStore } from "./orgStore";
 import type { UserProfile, Organization, UserRole } from "../types";
 import type { Session } from "@supabase/supabase-js";
 
@@ -79,7 +81,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // ── Sign Out ────────────────────────────────────────────────
     signOut: async () => {
         // Clear local state FIRST — never block the user waiting for the API.
-        // This ensures logout works even if Supabase is slow or unreachable.
         set({
             user: null,
             organization: null,
@@ -87,6 +88,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             isAuthenticated: false,
             authError: null,
         });
+        // Clear org store
+        useOrgStore.getState().clearOrgs();
         // Clear stale Supabase tokens from localStorage
         try {
             Object.keys(localStorage).forEach((key) => {
@@ -147,7 +150,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         set({ user: userProfile });
 
-        // Fetch organization if user has one
+        // Fetch organization if user has one (backward compat)
         if (profile.organization_id) {
             try {
                 const { data: org, error: orgError } = await supabase
@@ -170,6 +173,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             } catch (err) {
                 console.warn("[Auth] Organization fetch error:", err);
             }
+        }
+
+        // Fetch user's orgs from org_members (multi-tenant)
+        if (userProfile.is_approved) {
+            useOrgStore.getState().fetchOrgs();
         }
     },
 

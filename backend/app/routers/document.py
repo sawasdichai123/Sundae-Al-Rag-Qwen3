@@ -26,7 +26,7 @@ import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, verify_organization
+from app.core.auth import CurrentUser, require_approved, require_org_owner, verify_organization
 from app.core.config import get_settings
 from app.core.database import get_supabase
 from app.services.ai_models import get_embedding_service
@@ -88,7 +88,7 @@ async def list_documents(
     Returns:
         List of documents ordered by creation date (newest first).
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
     try:
         result = await (
@@ -123,7 +123,7 @@ async def get_document(
     Raises:
         HTTPException 404: Document not found.
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
     try:
         result = await (
@@ -150,7 +150,7 @@ async def get_document(
 async def delete_document(
     document_id: str,
     organization_id: str,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> DeleteResponse:
     """Delete a document and all associated chunks.
 
@@ -167,7 +167,7 @@ async def delete_document(
         HTTPException 404: Document not found.
         HTTPException 500: Deletion failure.
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     # Verify document exists and belongs to the organization
@@ -213,13 +213,13 @@ async def link_document_to_bot(
     document_id: str,
     organization_id: str,
     bot_id: Optional[str] = None,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ):
     """Link or unlink a document to/from a bot.
 
     Pass bot_id to link, or null/omit to unlink.
     """
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -306,7 +306,7 @@ async def upload_document(
     file: UploadFile = File(...),
     organization_id: str = Form(...),
     bot_id: Optional[str] = Form(None),
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> UploadResponse:
     """Upload a PDF document and process it through the RAG pipeline.
 
@@ -327,7 +327,7 @@ async def upload_document(
         HTTPException 500: Processing or storage failure.
     """
     # ── Security: verify user belongs to this org ────────────
-    verify_organization(user, organization_id)
+    await verify_organization(user, organization_id)
 
     # ── 1. Validate file type ────────────────────────────────────
     if file.content_type not in ("application/pdf",):

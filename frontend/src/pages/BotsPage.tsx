@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { botsApi, documentsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Bot, Document } from "../types";
 
@@ -85,7 +86,8 @@ export default function BotsPage() {
 
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
-    const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load bots ───────────────────────────────────────────────
     const loadBots = useCallback(async () => {

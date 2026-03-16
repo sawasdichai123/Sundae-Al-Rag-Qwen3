@@ -9,6 +9,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore, selectIsSupport } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 import { documentsApi, botsApi, inboxApi } from "../api/endpoints";
 import { supabase } from "../api/supabaseClient";
 import apiClient from "../api/axios";
@@ -107,7 +108,8 @@ export default function DashboardPage() {
     const [services, setServices] = useState<HealthServices | null>(null);
 
     useEffect(() => {
-        const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+        const activeOrgId = useOrgStore.getState().activeOrgId;
+        const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
         if (!orgId) return;
 
         // Fetch documents, bots, sessions, and health in parallel

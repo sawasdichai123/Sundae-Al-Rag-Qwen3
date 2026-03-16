@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_supabase, close_supabase
 from app.core.config import get_settings
-from app.routers import health, document, chat, bot, inbox
+from app.routers import health, document, chat, bot, inbox, approval, organization
 from app.services.ai_models import get_embedding_service, get_reranker_service
 
 logger = logging.getLogger(__name__)
@@ -100,3 +100,5 @@ app.include_router(document.router)
 app.include_router(chat.router)
 app.include_router(bot.router)
 app.include_router(inbox.router)
+app.include_router(approval.router)
+app.include_router(organization.router)

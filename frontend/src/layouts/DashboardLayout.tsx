@@ -10,6 +10,8 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore, selectIsOrgOwner, selectHasOrgs } from "../store/orgStore";
+import OrgSwitcher from "../components/OrgSwitcher";
 
 // ── SVG Icons ───────────────────────────────────────────────────
 
@@ -91,20 +93,32 @@ function LogoutIcon() {
 
 // ── Nav Config ──────────────────────────────────────────────────
 
+function OrgSettingsIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+            <path d="M11 5a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM2.046 15.253c-.058.468.172.92.57 1.175A9.953 9.953 0 0 0 8 18c1.982 0 3.83-.578 5.384-1.573.398-.254.628-.707.57-1.175a6.001 6.001 0 0 0-11.908 0ZM15.75 8.5a.75.75 0 0 0-1.5 0v2h-2a.75.75 0 0 0 0 1.5h2v2a.75.75 0 0 0 1.5 0v-2h2a.75.75 0 0 0 0-1.5h-2v-2Z" />
+        </svg>
+    );
+}
+
 interface NavItem {
     to: string;
     label: string;
     icon: React.FC;
     end?: boolean;
+    /** Platform roles that can see this item */
     visibleTo: ("user" | "support" | "admin")[];
+    /** If true, requires org owner role (or admin) */
+    requireOwner?: boolean;
 }
 
 const allNavItems: NavItem[] = [
-    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin"] },
-    { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin"] },
-    { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin"] },
-    { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin"] },
-    { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin"] },
+    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["user"], requireOwner: true },
     { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
 ];
@@ -115,6 +129,8 @@ const routeLabels: Record<string, string> = {
     "/bots": "Bots",
     "/inbox": "Inbox",
     "/integration": "Integration",
+    "/organization": "Organization",
+    "/create-org": "Create Organization",
     "/approvals": "Approvals",
     "/chat": "Web Chat",
 };
@@ -129,6 +145,8 @@ export default function DashboardLayout() {
     const signOut = useAuthStore((s) => s.signOut);
 
     const role = user?.role ?? "user";
+    const isOrgOwner = useOrgStore(selectIsOrgOwner);
+    const hasOrgs = useOrgStore(selectHasOrgs);
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
@@ -137,17 +155,30 @@ export default function DashboardLayout() {
 
     const currentLabel = routeLabels[location.pathname] || "Dashboard";
 
-    // Auto-redirect: user role → go straight to /chat
+    // Auto-redirect: approved user with no orgs → create org page
     useEffect(() => {
-        if (role === "user" && !isUnapproved && location.pathname === "/") {
+        if (user && user.is_approved && !hasOrgs && (role === "support" || role === "admin") && location.pathname !== "/create-org") {
+            navigate("/create-org", { replace: true });
+        }
+    }, [user, hasOrgs, role, location.pathname, navigate]);
+
+    // Auto-redirect: members (non-owner) → go straight to /chat
+    useEffect(() => {
+        if (role === "user" && !isOrgOwner && hasOrgs && !isUnapproved && location.pathname === "/") {
             navigate("/chat", { replace: true });
         }
-    }, [role, isUnapproved, location.pathname, navigate]);
+    }, [role, isOrgOwner, hasOrgs, isUnapproved, location.pathname, navigate]);
 
     // Unapproved users see NO navigation links at all
     const visibleNav = isUnapproved
         ? []
-        : allNavItems.filter((item) => item.visibleTo.includes(role));
+        : allNavItems.filter((item) => {
+            // Check platform role
+            if (!item.visibleTo.includes(role)) return false;
+            // Check owner requirement
+            if (item.requireOwner && !isOrgOwner && role !== "admin") return false;
+            return true;
+        });
 
     const handleLogout = () => {
         // signOut clears local state synchronously, then fires Supabase API in background.
@@ -156,12 +187,14 @@ export default function DashboardLayout() {
         navigate("/login");
     };
 
-    // Role badge
-    const roleBadge = {
-        admin: { label: "Admin", color: "bg-brand-400 text-steel-900" },
-        support: { label: "Support", color: "bg-violet-100 text-violet-700" },
-        user: { label: "User", color: "bg-steel-100 text-steel-600" },
-    }[role];
+    // Role badge — show org role for regular users
+    const roleBadge = role === "admin"
+        ? { label: "Admin", color: "bg-brand-400 text-steel-900" }
+        : role === "support"
+            ? { label: "Support", color: "bg-violet-100 text-violet-700" }
+            : isOrgOwner
+                ? { label: "Owner", color: "bg-brand-100 text-brand-700" }
+                : { label: "Member", color: "bg-steel-100 text-steel-600" };
 
     return (
         <div className="flex h-screen bg-steel-50">
@@ -177,6 +210,11 @@ export default function DashboardLayout() {
                         </div>
                     )}
                 </div>
+
+                {/* Org Switcher */}
+                {!isUnapproved && hasOrgs && (
+                    <OrgSwitcher collapsed={collapsed} />
+                )}
 
                 {/* Navigation — EMPTY for unapproved users */}
                 <nav className="flex-1 px-3 py-4 space-y-1">

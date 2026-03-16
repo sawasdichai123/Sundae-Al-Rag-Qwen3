@@ -31,6 +31,8 @@ import WebChatPage from "./pages/WebChatPage";
 import IntegrationPage from "./pages/IntegrationPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import CreateOrgPage from "./pages/CreateOrgPage";
+import OrganizationPage from "./pages/OrganizationPage";
 
 // ── Auth Lifecycle Provider ─────────────────────────────────────
 
@@ -116,12 +118,16 @@ export default function App() {
                                 {/* Web Chat — all roles */}
                                 <Route path="/chat" element={<WebChatPage />} />
 
-                                {/* Admin only */}
-                                <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
+                                {/* Create org — for approved users with no orgs */}
+                                <Route path="/create-org" element={<CreateOrgPage />} />
+
+                                {/* Owner + Admin — org management pages */}
+                                <Route element={<ProtectedRoute allowedRoles={["user", "admin"]} />}>
                                     <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
                                     <Route path="/bots" element={<BotsPage />} />
                                     <Route path="/inbox" element={<InboxPage />} />
                                     <Route path="/integration" element={<IntegrationPage />} />
+                                    <Route path="/organization" element={<OrganizationPage />} />
                                 </Route>
 
                                 {/* Support + Admin only */}
