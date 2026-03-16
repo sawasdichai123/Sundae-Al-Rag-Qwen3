@@ -13,7 +13,8 @@
   - parent = chunk ใหญ่สำหรับ context
   - child = chunk เล็ก + vector embedding สำหรับ similarity search
 - **chat_sessions / chat_messages**: บันทึกบทสนทนา (inbox)
-- **org_invitations**: คำเชิญเข้าร่วมองค์กร (email invite)
+- **org_members**: ความสัมพันธ์ many-to-many ระหว่าง user กับ org (org_role: owner/member)
+- **org_invitations**: คำเชิญเข้าร่วมองค์กร (invited_email, status: pending/accepted/revoked)
 
 ### จุดเชื่อมสำคัญ (Functions/Trigger)
 - **`match_child_chunks(...)`** (RPC): ค้นหา chunk ด้วย vector similarity
@@ -22,7 +23,7 @@
 - **`get_my_role()`**: helper สำหรับ RLS policy ของ `user_profiles` (อยู่ใน `003_user_profiles_rls.sql`)
 - **Trigger `on_auth_user_created` บน `auth.users`**
   - function `handle_new_auth_user()` สร้างแถวใน `public.user_profiles` อัตโนมัติเมื่อมีผู้ใช้สมัครใหม่
-  - เริ่มใน `004_auth_trigger.sql` และปรับพฤติกรรมแบบ multi-tenant ใน `012_update_auth_trigger.sql`
+  - เริ่มใน `004_auth_trigger.sql` และถูก simplify ใน `012_simplify_auth_trigger.sql` (ไม่ assign org ตอน signup)
 
 ### เรื่องสิทธิ์ (Row Level Security - RLS)
 - `001_schema.sql` เปิด RLS หลายตารางและตั้ง policy แบบ “อ่านตาม `organization_id` ใน JWT”
@@ -101,23 +102,25 @@
 - เพิ่มค่า `helped` ในสถานะของ session
 - ใช้ block `DO $$ ... $$` เพื่อหา constraint name แบบ dynamic แล้ว drop ก่อนค่อย add ใหม่ (กันชื่อ constraint ไม่ตรง)
 
-### 011_org_roles_and_invitations.sql
-- เพิ่มความสามารถ multi-tenant/การชวนเข้าทีม
-- เพิ่มคอลัมน์ใน `user_profiles`:
-  - `org_role` (owner/member)
-  - `desired_org_name` (ผู้ใช้กรอกตอนสมัคร)
-  - `invite_org_id` (org ที่มากับ invite link)
-- สร้างตาราง **`org_invitations`** (สถานะ pending/accepted/expired) + เปิด RLS
-- ตั้ง policy ให้ support/admin หรือคนที่เชิญ (invited_by) จัดการ invitations ได้
-- อัปเดต user ที่เป็น admin ให้เป็น `org_role='owner'` (ถ้ายังไม่ได้ตั้ง)
+### 011_multi_tenant_migration.sql
+- **ย้ายจาก 1:1 org เป็น many-to-many ผ่าน `org_members`**
+- สร้างตาราง **`org_members`** (user_id, organization_id, org_role: owner/member, joined_at) + เปิด RLS
+- เพิ่มคอลัมน์ใน `organizations`: `status` (active/pending_deletion), `deletion_requested_by`
+- สร้าง indexes: `idx_org_members_user_id`, `idx_org_members_org_id`, `idx_org_members_user_org` (unique)
+- RLS policy: "Users read own memberships" (SELECT where user_id = auth.uid())
+- **Migrate data**: คัดลอก user_profiles (organization_id + org_role) → org_members (ใช้ DO block เช็คว่า org_role column มีอยู่ไหม)
+- **ปรับ `org_invitations`**:
+  - Rename `email` → `invited_email` (ใช้ DO block เช็คก่อน rename)
+  - เปลี่ยน status constraint: `expired` → `revoked`
+  - สร้าง unique index ใหม่บน `(organization_id, invited_email)`
+- **ลบคอลัมน์เก่า** จาก `user_profiles`: `org_role`, `desired_org_name`, `invite_org_id`
 
-### 012_update_auth_trigger.sql
-- อัปเดต function **`handle_new_auth_user()`** (trigger ยังใช้ตัวเดิมจาก 004)
+### 012_simplify_auth_trigger.sql
+- อัปเดต function **`handle_new_auth_user()`** ให้เรียบง่าย
 - พฤติกรรมใหม่:
-  - ตรวจ `org_invitations` ว่ามี email นี้ที่ pending ไหม → ถ้ามี set `invite_org_id`
-  - ดึง `desired_org_name` จาก `raw_user_meta_data`
-  - **ไม่ auto-assign `organization_id`** (ปล่อย `NULL` รอ Support approve)
-  - ถ้าพบ invitation ให้ mark เป็น `accepted`
+  - สร้าง `user_profiles` row: role='user', is_approved=false, organization_id=NULL
+  - **ไม่ assign org, ไม่เช็ค invitation, ไม่เก็บ desired_org_name** — user สร้าง org เองหลัง approve ผ่าน `/create-org`
+  - ใช้ `ON CONFLICT (id) DO NOTHING` กัน duplicate
 
 ## Dependency / ลำดับการรันที่แนะนำ
 
@@ -131,10 +134,12 @@
 7. `008_fix_organizations_rls.sql`
 8. `009_fix_user_profiles_rls_update.sql`
 9. `010_add_helped_status.sql`
-10. `011_org_roles_and_invitations.sql`
-11. `012_update_auth_trigger.sql`
+10. `011_multi_tenant_migration.sql`
+11. `012_simplify_auth_trigger.sql`
 
 ### จุดที่ต้องระวัง
 - `003_user_profiles_rls.sql` มี seed admin UUID ที่ต้องตรงกับ `auth.users` ของโปรเจกต์จริง
-- `012_update_auth_trigger.sql` ต้องรันหลัง `011_org_roles_and_invitations.sql` เพราะอ้างถึง `org_invitations` และคอลัมน์ใหม่ใน `user_profiles`
+- `011_multi_tenant_migration.sql` สร้าง `org_members` table และ migrate data จาก `user_profiles` → ต้องรันก่อน 012
+- `012_simplify_auth_trigger.sql` ต้องรันหลัง 011 — trigger ใหม่ไม่อ้างถึง `org_invitations` หรือคอลัมน์เก่าแล้ว
 - `006_match_chunks_bot_filter.sql` เปลี่ยน signature ของ `match_child_chunks` → ฝั่ง backend/frontend ที่เรียก RPC ต้องส่งพารามิเตอร์ให้ตรง (หรือปล่อย `target_bot_id` เป็น `NULL`)
+- หลังรัน 011 คอลัมน์ `org_role`, `desired_org_name`, `invite_org_id` จะถูกลบจาก `user_profiles` — backend code ต้องอ่าน org_role จาก `org_members` แทน
