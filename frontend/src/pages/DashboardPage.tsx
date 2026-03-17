@@ -170,10 +170,17 @@ export default function DashboardPage() {
         return <PendingApprovalState />;
     }
 
+    const activeOrg = useOrgStore((s) => {
+        const id = s.activeOrgId;
+        return s.orgs.find((o) => o.id === id);
+    });
+
     return (
         <div className="animate-fade-in">
             <div className="mb-8">
-                <h1 className="text-2xl font-bold text-steel-900 tracking-tight">Dashboard</h1>
+                <h1 className="text-2xl font-bold text-steel-900 tracking-tight">
+                    {activeOrg ? activeOrg.name : "Dashboard"}
+                </h1>
                 <p className="text-sm text-steel-500 mt-1">
                     {isSupport ? "ภาพรวมระบบ — โหมดเจ้าหน้าที่ Support" : "ภาพรวมระบบ SUNDAE — ข้อมูลอัปเดตล่าสุด"}
                 </p>

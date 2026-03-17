@@ -514,15 +514,31 @@ async def list_members(
     await verify_organization(user, org_id)
 
     supabase = get_supabase()
+
+    # Fetch members (no FK join — org_members.user_id references auth.users, not user_profiles)
     result = await (
         supabase.table("org_members")
-        .select("user_id, org_role, joined_at, user_profiles(email, full_name)")
+        .select("user_id, org_role, joined_at")
         .eq("organization_id", org_id)
     ).execute()
 
+    if not result.data:
+        return []
+
+    # Fetch profiles for all member user_ids
+    user_ids = [row["user_id"] for row in result.data]
+    profiles_result = await (
+        supabase.table("user_profiles")
+        .select("id, email, full_name")
+        .in_("id", user_ids)
+    ).execute()
+
+    # Build lookup map
+    profile_map = {p["id"]: p for p in (profiles_result.data or [])}
+
     members: list[OrgMemberResponse] = []
-    for row in result.data or []:
-        profile = row.get("user_profiles") or {}
+    for row in result.data:
+        profile = profile_map.get(row["user_id"], {})
         members.append(OrgMemberResponse(
             user_id=row["user_id"],
             email=profile.get("email", ""),
@@ -552,14 +568,20 @@ async def invite_member(
     # Check not already a member
     existing_member = await (
         supabase.table("org_members")
-        .select("user_id, user_profiles(email)")
+        .select("user_id")
         .eq("organization_id", org_id)
     ).execute()
 
-    for m in existing_member.data or []:
-        profile = m.get("user_profiles") or {}
-        if profile.get("email", "").lower() == email:
-            raise HTTPException(400, f"{email} is already a member of this organization.")
+    if existing_member.data:
+        member_ids = [m["user_id"] for m in existing_member.data]
+        profiles_check = await (
+            supabase.table("user_profiles")
+            .select("id, email")
+            .in_("id", member_ids)
+        ).execute()
+        for p in profiles_check.data or []:
+            if (p.get("email") or "").lower() == email:
+                raise HTTPException(400, f"{email} is already a member of this organization.")
 
     # Check not already invited (pending)
     existing_inv = await (

@@ -17,6 +17,8 @@ interface OrgState {
     activeOrgId: string | null;
     activeOrgRole: OrgRole | null;
     isLoading: boolean;
+    /** true after fetchOrgs has completed at least once */
+    hasFetched: boolean;
 
     fetchOrgs: () => Promise<void>;
     setActiveOrg: (id: string) => void;
@@ -28,6 +30,7 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     activeOrgId: localStorage.getItem(ACTIVE_ORG_KEY),
     activeOrgRole: null,
     isLoading: false,
+    hasFetched: false,
 
     fetchOrgs: async () => {
         set({ isLoading: true });
@@ -63,10 +66,10 @@ export const useOrgStore = create<OrgState>((set, get) => ({
                 localStorage.removeItem(ACTIVE_ORG_KEY);
             }
 
-            set({ orgs, activeOrgId: activeId, activeOrgRole: activeRole, isLoading: false });
+            set({ orgs, activeOrgId: activeId, activeOrgRole: activeRole, isLoading: false, hasFetched: true });
         } catch (err) {
             console.error("[OrgStore] Failed to fetch orgs:", err);
-            set({ isLoading: false });
+            set({ isLoading: false, hasFetched: true });
         }
     },
 

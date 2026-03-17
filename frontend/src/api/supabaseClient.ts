@@ -25,17 +25,53 @@ if (!supabaseUrl || !supabaseAnonKey) {
     );
 }
 
+// In-memory mutex lock — replaces navigator.locks to avoid Bug B17 deadlock,
+// while still serializing concurrent calls (prevents auth-js _acquireLock deadlock).
+// Includes a timeout to prevent permanent deadlock when tab is suspended/resumed.
+const lockQueues = new Map<string, Promise<void>>();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function inMemoryLock(_name: string, acquireTimeout: number, fn: () => Promise<any>): Promise<any> {
+    const queue = lockQueues.get(_name) ?? Promise.resolve();
+    let resolve: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    lockQueues.set(_name, next);
+
+    // Wait for the previous holder to finish, but with a timeout
+    // to recover from stale locks (e.g. tab was suspended mid-operation)
+    const timeout = Math.max(acquireTimeout || 5000, 5000);
+    await Promise.race([
+        queue,
+        new Promise<void>((r) => setTimeout(r, timeout)),
+    ]);
+
+    try {
+        return await fn();
+    } finally {
+        resolve!();
+        if (lockQueues.get(_name) === next) {
+            lockQueues.delete(_name);
+        }
+    }
+}
+
+// Reset stale locks when tab becomes visible again (after sleep/suspend)
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        // Clear all lock queues — any pending lock from before suspend is stale
+        lockQueues.clear();
+    }
+});
+
 export const supabase = createClient(
     supabaseUrl || "http://localhost:54321",
     supabaseAnonKey || "placeholder-key",
     {
         auth: {
-            // No-op lock function — prevents "Acquiring an exclusive Navigator Lock… timed out"
-            // deadlock that blocks the entire app (Bug B17).
+            // In-memory mutex lock — avoids navigator.locks deadlock (Bug B17)
+            // while properly serializing concurrent auth operations.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            lock: (async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
-                return await fn();
-            }) as any,
+            lock: inMemoryLock as any,
             autoRefreshToken: true,
             persistSession: true,
             detectSessionInUrl: true,

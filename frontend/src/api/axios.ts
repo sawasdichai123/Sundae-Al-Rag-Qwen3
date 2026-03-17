@@ -36,9 +36,34 @@ export async function refreshTokenOnce(): Promise<string | null> {
 
 // ── Layer 1: Get a valid (non-expired) access token ─────────────
 // Exported so askStream (raw fetch) can reuse the same refresh logic.
+// Includes a timeout to prevent hanging when auth locks are stale (tab resume).
 export async function getValidToken(): Promise<string | null> {
     try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("getSession timeout")), 8000)
+        );
+
+        let session;
+        try {
+            const result = await Promise.race([sessionPromise, timeoutPromise]);
+            session = result.data.session;
+        } catch {
+            // getSession hung (stale lock) — try reading token from localStorage
+            console.warn("[Auth] getSession timed out, reading from localStorage");
+            try {
+                const storageKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+                if (storageKey) {
+                    const raw = localStorage.getItem(storageKey);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        return parsed?.access_token ?? null;
+                    }
+                }
+            } catch { /* ignore */ }
+            return null;
+        }
+
         if (!session) return null;
 
         const expiresAt = session.expires_at ?? 0;

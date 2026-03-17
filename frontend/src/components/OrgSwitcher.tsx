@@ -62,8 +62,8 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                             onClick={() => {
                                 setActiveOrg(org.id);
                                 setOpen(false);
-                                // Reload page data after org switch
-                                window.location.reload();
+                                // Navigate to dashboard and reload to refresh all org data
+                                window.location.href = "/";
                             }}
                             className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors cursor-pointer ${
                                 org.id === activeOrgId

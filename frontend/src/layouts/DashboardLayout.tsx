@@ -118,7 +118,7 @@ const allNavItems: NavItem[] = [
     { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["user"], requireOwner: true },
+    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["user", "admin"], requireOwner: true },
     { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
 ];
@@ -147,6 +147,7 @@ export default function DashboardLayout() {
     const role = user?.role ?? "user";
     const isOrgOwner = useOrgStore(selectIsOrgOwner);
     const hasOrgs = useOrgStore(selectHasOrgs);
+    const orgsFetched = useOrgStore((s) => s.hasFetched);
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
@@ -156,11 +157,14 @@ export default function DashboardLayout() {
     const currentLabel = routeLabels[location.pathname] || "Dashboard";
 
     // Auto-redirect: approved user with no orgs → create org page
+    // Wait for orgStore to finish initial fetch before deciding (prevents false redirect)
+    // Applies to ALL roles (user, support, admin) — not just support/admin
     useEffect(() => {
-        if (user && user.is_approved && !hasOrgs && (role === "support" || role === "admin") && location.pathname !== "/create-org") {
+        if (!orgsFetched) return;
+        if (user && user.is_approved && !hasOrgs && location.pathname !== "/create-org") {
             navigate("/create-org", { replace: true });
         }
-    }, [user, hasOrgs, role, location.pathname, navigate]);
+    }, [user, hasOrgs, orgsFetched, location.pathname, navigate]);
 
     // Auto-redirect: members (non-owner) → go straight to /chat
     useEffect(() => {
@@ -313,8 +317,34 @@ export default function DashboardLayout() {
 }
 
 // ── Lockout Screen (replaces ALL child routes for unapproved users) ─
+// Polls every 10s to check if admin has approved the account.
 
 function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
+    const session = useAuthStore((s) => s.session);
+    const fetchProfile = useAuthStore((s) => s.fetchProfile);
+
+    useEffect(() => {
+        if (!session?.user?.id) return;
+        const userId = session.user.id;
+
+        const interval = setInterval(() => {
+            fetchProfile(userId);
+        }, 10_000); // poll every 10 seconds
+
+        // Also refetch on tab focus (user may have switched to ask admin)
+        const handleVisibility = () => {
+            if (document.visibilityState === "visible") {
+                fetchProfile(userId);
+            }
+        };
+        document.addEventListener("visibilitychange", handleVisibility);
+
+        return () => {
+            clearInterval(interval);
+            document.removeEventListener("visibilitychange", handleVisibility);
+        };
+    }, [session?.user?.id, fetchProfile]);
+
     return (
         <div className="flex items-center justify-center min-h-[60vh] animate-fade-in">
             <div className="text-center max-w-md">

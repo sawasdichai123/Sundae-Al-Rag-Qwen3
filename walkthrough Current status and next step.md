@@ -1584,21 +1584,159 @@ orgApi.acceptInvitation(invitationId)      // POST /api/orgs/invitations/{id}/ac
 
 ---
 
-## 16. Next Steps
+## 16. Org Invitation Bugfix — 3 Critical Bugs (16 มีนาคม 2569) ✅
+
+### 16.1 พบ 3 bugs จากการทดสอบ Org Invitation Flow ด้วย Antigravity AI Agent
+
+| # | Bug | ระดับ | อาการ |
+|---|------|-------|-------|
+| 1 | **Approval Sync** | Critical | Admin กดอนุมัติ user ที่ถูกเชิญ → user ไม่ปรากฏในหน้าสมาชิกขององค์กร |
+| 2 | **Pending State Lockout** | Critical | User หลัง approve แล้วยังค้างที่หน้า "รออนุมัติ" ตลอด ต้อง refresh/re-login |
+| 3 | **State Bypass / Redirect** | Critical | User ที่ไม่มี org (role=user) ไม่ถูก redirect ไป /create-org เพราะ condition check เฉพาะ support/admin |
+
+### 16.2 Root Cause Analysis
+
+**Bug 1 — Approval Sync**:
+- `approval.py` แค่ set `is_approved=true` แต่ไม่ได้ accept pending invitation
+- User ต้อง login → ไป /create-org → กด Accept เอง → ขั้นตอนมากเกินจำเป็น
+- ส่งผลให้ user ที่ถูกเชิญไม่ปรากฏในรายชื่อสมาชิก
+
+**Bug 2 — Pending State Lockout**:
+- `PendingApprovalLockout` component ไม่มี polling/refetch mechanism
+- เมื่อ user login ก่อน approve → profile cache `is_approved=false`
+- Admin approve → DB เปลี่ยนแล้ว แต่ frontend ไม่ refetch → ค้างที่ lockout
+
+**Bug 3 — State Bypass / Redirect**:
+- DashboardLayout auto-redirect ไป `/create-org` มี condition: `(role === "support" || role === "admin")`
+- Regular `user` role ที่ approved + ไม่มี org จะไม่ถูก redirect → ค้างที่ Dashboard เปล่าๆ
+
+### 16.3 การแก้ไข
+
+#### Fix 1: Auto-accept invitations on approval (Backend)
+
+**ไฟล์**: `backend/app/routers/approval.py`
+
+เพิ่ม Step 3 หลัง set `is_approved=true`:
+1. Query `org_invitations` ที่ `invited_email` ตรงกับ email ของ user + `status=pending`
+2. แต่ละ invitation → สร้าง `org_members` row (`org_role=member`)
+3. Mark invitation `status=accepted`
+4. Set `user_profiles.organization_id` ให้ org แรก (ถ้ายังไม่มี)
+
+```python
+# 3. Auto-accept pending org invitations for this user's email
+user_email = (profile.get("email") or "").strip().lower()
+if user_email:
+    inv_result = await (
+        supabase.table("org_invitations")
+        .select("id, organization_id")
+        .eq("invited_email", user_email)
+        .eq("status", "pending")
+    ).execute()
+
+    for inv in inv_result.data or []:
+        org_id = inv["organization_id"]
+        # Check not already a member → insert org_members → mark accepted
+        ...
+```
+
+**ผลลัพธ์**: Admin กดอนุมัติ → user ปรากฏในสมาชิก org ทันที
+
+#### Fix 2: Lockout screen polling (Frontend)
+
+**ไฟล์**: `frontend/src/layouts/DashboardLayout.tsx`
+
+เพิ่ม `useEffect` ใน `PendingApprovalLockout` component:
+- Poll `fetchProfile(userId)` ทุก 10 วินาที
+- Refetch เมื่อ tab กลับมา visible (visibilitychange event)
+
+```typescript
+useEffect(() => {
+    if (!session?.user?.id) return;
+    const userId = session.user.id;
+
+    const interval = setInterval(() => {
+        fetchProfile(userId);
+    }, 10_000);
+
+    const handleVisibility = () => {
+        if (document.visibilityState === "visible") fetchProfile(userId);
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+        clearInterval(interval);
+        document.removeEventListener("visibilitychange", handleVisibility);
+    };
+}, [session?.user?.id, fetchProfile]);
+```
+
+**ผลลัพธ์**: Admin approve → ภายใน ~10 วินาที lockout หายไป → user เข้าระบบได้อัตโนมัติ
+
+#### Fix 3: Redirect applies to ALL roles (Frontend)
+
+**ไฟล์**: `frontend/src/layouts/DashboardLayout.tsx`
+
+เปลี่ยน condition redirect ไป `/create-org`:
+
+```diff
+- if (user && user.is_approved && !hasOrgs && (role === "support" || role === "admin") && location.pathname !== "/create-org") {
++ if (user && user.is_approved && !hasOrgs && location.pathname !== "/create-org") {
+```
+
+**ผลลัพธ์**: ทุก role ที่ approved + ไม่มี org จะถูก redirect ไป `/create-org` ถูกต้อง
+
+### 16.4 Business Flow ใหม่ (หลังแก้ไข)
+
+```
+1. Admin เชิญ email → สร้าง org_invitations (status=pending)
+2. User สมัคร → user_profiles (is_approved=false)
+3. User login → เห็นหน้า Lockout "รออนุมัติ" (มี auto-polling 10s)
+4. Admin กดอนุมัติ →
+   a. is_approved=true
+   b. Auto-accept pending invitations → org_members (member)
+   c. Set organization_id
+5. ภายใน ~10s → Lockout หายไป → user เห็น org ทันที → redirect /chat (member)
+
+สำหรับ user ที่ไม่ได้ถูกเชิญ:
+4. Admin กดอนุมัติ → is_approved=true (ไม่มี invitation)
+5. User login → ไม่มี org → redirect ไป /create-org → สร้าง org เอง
+```
+
+### 16.5 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `backend/app/routers/approval.py` | เพิ่ม auto-accept pending invitations หลัง approve |
+| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม lockout polling (10s) + fix redirect condition ให้ทุก role |
+| `frontend/tests/org-invitation-tests.md` | อัปเดต test expectations ตาม flow ใหม่ |
+
+### 16.6 ผล Build
+
+```
+✅ Python compile   — ผ่าน
+✅ TypeScript check  — ไม่มี error
+✅ Vite build        — สำเร็จ
+```
+
+---
+
+## 17. Next Steps
 
 ### 🟡 งานที่เหลือ (อัพเดท 16 มี.ค. 2569)
 
 | # | งาน | รายละเอียด |
 |---|------|-----------|
 | ~~1~~ | ~~รัน SQL Migration 011 + 012~~ | ✅ รันแล้ว |
-| 2 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve → create org → invite member → accept → switch orgs |
-| 3 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
-| 4 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
-| 5 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
-| 6 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 17) |
-| 7 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 8 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
-| 9 | **Dark mode** | เพิ่ม theme switcher |
+| ~~2~~ | ~~แก้ Critical Bugs (Approval Sync, Lockout, Redirect)~~ | ✅ แก้แล้ว (Section 16) |
+| 3 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve (auto-accept) → login → member view → switch orgs |
+| 4 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 5 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
+| 6 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
+| 7 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 18) |
+| 8 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 9 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
+| 10 | **Dark mode** | เพิ่ม theme switcher |
+| 11 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
 
 ### SQL Migrations — สถานะปัจจุบัน
 
@@ -1610,7 +1748,7 @@ orgApi.acceptInvitation(invitationId)      // POST /api/orgs/invitations/{id}/ac
 
 ---
 
-## 17. LINE Webhook — งานที่เหลือ
+## 18. LINE Webhook — งานที่เหลือ
 
 ### สถานะปัจจุบัน
 
