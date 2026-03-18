@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 16 มีนาคม 2569
+> **อัพเดทล่าสุด**: 17 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -516,6 +516,7 @@ frontend/test-results/
 | Table | หน้าที่ |
 |-------|--------|
 | `organizations` | Multi-tenant root — เก็บข้อมูลองค์กร |
+| ~~`users`~~ | **⚠️ Dropped (17 มี.ค. 2569)** — ไม่เคยถูกใช้จริง ถูกแทนที่โดย `user_profiles` + `org_members` ตั้งแต่ migration 003 |
 | `bots` | Bot แต่ละตัวขององค์กร |
 | `documents` | เอกสารที่อัพโหลด (PDF ฯลฯ) |
 | `document_parent_chunks` | Chunk ขนาดใหญ่สำหรับส่งให้ LLM |
@@ -524,6 +525,8 @@ frontend/test-results/
 | `chat_messages` | ข้อความทุกข้อในแต่ละ session |
 
 สร้าง RPC function `match_child_chunks` สำหรับ cosine similarity search ด้วย pgvector
+
+> **หมายเหตุ**: table `public.users` ถูก drop ออกแล้ว (17 มี.ค. 2569) เนื่องจากไม่มี backend/frontend code ใดใช้งาน — ทุก query ใช้ `user_profiles` + `org_members` แทน table นี้ไม่ใช่ `auth.users` ของ Supabase (ซึ่งยังคงอยู่ตามปกติ)
 
 ---
 
@@ -1720,23 +1723,65 @@ useEffect(() => {
 
 ---
 
-## 17. Next Steps
+## 17. Drop Legacy `public.users` Table (17 มีนาคม 2569) ✅
 
-### 🟡 งานที่เหลือ (อัพเดท 16 มี.ค. 2569)
+### 17.1 ปัญหา
+
+Table `public.users` ถูกสร้างใน `001_schema.sql` แต่ไม่เคยถูกใช้จริงโดย backend หรือ frontend code:
+
+| ปัญหา | รายละเอียด |
+|--------|-----------|
+| **Split Brain** | มี 2 ตาราง user (`public.users` + `user_profiles`) ทำให้สับสน |
+| **NOT NULL constraint** | `public.users.organization_id NOT NULL` — ขัดกับ flow ใหม่ที่ user สร้าง org ทีหลัง |
+| **Role confusion** | `public.users.role` CHECK `('owner','admin','member')` ≠ `user_profiles.role` CHECK `('user','support','admin')` |
+| **ไม่มี code ใช้** | ค้นหา `.table("users")`, `FROM users`, `JOIN users` ทั้ง backend + frontend = **0 results** |
+
+### 17.2 การแก้ไข
+
+รัน SQL ใน Supabase SQL Editor:
+
+```sql
+DROP POLICY IF EXISTS "org_isolation" ON public.users;
+DROP TABLE IF EXISTS public.users;
+```
+
+### 17.3 สิ่งที่ไม่กระทบ
+
+- `auth.users` (Supabase internal) **ยังอยู่ปกติ** — เป็นคนละ table
+- `user_profiles` ที่ FK → `auth.users(id)` ยังทำงานปกติ
+- `org_members` ที่ FK → `auth.users(id)` ยังทำงานปกติ
+
+### 17.4 Database Tables หลังแก้ไข
+
+| Layer | Tables |
+|-------|--------|
+| **Supabase Auth** | `auth.users` (managed by Supabase) |
+| **Identity** | `user_profiles` (1:1 กับ auth.users) |
+| **Multi-tenant** | `organizations`, `org_members` (M:N), `org_invitations` |
+| **Bot Management** | `bots` |
+| **Knowledge Base** | `documents`, `document_parent_chunks`, `document_child_chunks` |
+| **Chat** | `chat_sessions`, `chat_messages` |
+
+---
+
+## 18. Next Steps
+
+### 🟡 งานที่เหลือ (อัพเดท 17 มี.ค. 2569)
 
 | # | งาน | รายละเอียด |
 |---|------|-----------|
 | ~~1~~ | ~~รัน SQL Migration 011 + 012~~ | ✅ รันแล้ว |
 | ~~2~~ | ~~แก้ Critical Bugs (Approval Sync, Lockout, Redirect)~~ | ✅ แก้แล้ว (Section 16) |
-| 3 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve (auto-accept) → login → member view → switch orgs |
-| 4 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
-| 5 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
-| 6 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
-| 7 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 18) |
-| 8 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 9 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
-| 10 | **Dark mode** | เพิ่ม theme switcher |
-| 11 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
+| ~~3~~ | ~~Drop legacy `public.users` table~~ | ✅ ลบแล้ว (Section 17) |
+| 4 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve (auto-accept) → login → member view → switch orgs |
+| 5 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 6 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
+| 7 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
+| 8 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 19) |
+| 9 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 10 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
+| 11 | **Dark mode** | เพิ่ม theme switcher |
+| 12 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
 
 ### SQL Migrations — สถานะปัจจุบัน
 
@@ -1745,10 +1790,11 @@ useEffect(() => {
 | 001-010 | ✅ รันแล้ว |
 | 011 — Multi-tenant migration (org_members, org_invitations rename, drop old columns) | ✅ รันแล้ว |
 | 012 — Simplify auth trigger (no org assignment on signup) | ✅ รันแล้ว |
+| Manual — Drop `public.users` table (ไม่ใช่ migration file — รัน SQL ตรง) | ✅ ลบแล้ว |
 
 ---
 
-## 18. LINE Webhook — งานที่เหลือ
+## 19. LINE Webhook — งานที่เหลือ
 
 ### สถานะปัจจุบัน
 
