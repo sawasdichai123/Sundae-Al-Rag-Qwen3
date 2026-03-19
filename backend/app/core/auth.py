@@ -281,7 +281,8 @@ async def verify_organization(user: CurrentUser, organization_id: str) -> None:
     Raises:
         HTTPException 403: User does not belong to the organization.
     """
-    if user.role == "admin":
+    # Support and Admin can access any organization
+    if user.role in ("support", "admin"):
         return
 
     supabase = get_supabase()

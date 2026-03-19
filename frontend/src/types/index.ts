@@ -16,7 +16,7 @@ export interface Organization {
 
 /** Maps to user_profiles table — extends Supabase auth.users */
 export type UserRole = "user" | "support" | "admin";
-export type OrgRole = "owner" | "member";
+export type OrgRole = "owner" | "member" | "support" | "admin";
 
 export interface UserProfile {
     id: string;                         // maps to auth.users.id

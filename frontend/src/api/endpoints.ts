@@ -417,4 +417,12 @@ export const orgApi = {
     /** Accept an invitation. */
     acceptInvitation: (invitationId: string) =>
         apiClient.post(`/api/orgs/invitations/${invitationId}/accept`),
+
+    /** Decline an invitation. */
+    declineInvitation: (invitationId: string) =>
+        apiClient.post(`/api/orgs/invitations/${invitationId}/decline`),
+
+    /** Leave an organization (member only, not owner). */
+    leave: (orgId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/leave`),
 };

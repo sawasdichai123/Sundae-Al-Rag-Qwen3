@@ -4,19 +4,22 @@ SUNDAE Backend — Organization Router
 Full CRUD for organizations, member management, and invitations.
 
 Endpoints:
-    POST   /api/orgs                              → Create org (user = owner)
+    POST   /api/orgs                              → Create org (support/admin only)
     GET    /api/orgs                              → List user's orgs
     GET    /api/orgs/{org_id}                     → Org details
     PUT    /api/orgs/{org_id}                     → Edit org (owner)
     POST   /api/orgs/{org_id}/request-deletion    → Request deletion
     POST   /api/orgs/{org_id}/confirm-deletion    → Confirm deletion
+    POST   /api/orgs/{org_id}/leave               → Leave org (member only)
     GET    /api/orgs/{org_id}/members             → List members
     POST   /api/orgs/{org_id}/invite              → Invite by email
     DELETE /api/orgs/{org_id}/members/{user_id}   → Remove member
     GET    /api/orgs/invitations                  → My pending invitations
     POST   /api/orgs/invitations/{inv_id}/accept  → Accept invitation
+    POST   /api/orgs/invitations/{inv_id}/decline → Decline invitation
 
 SECURITY:
+    Org creation restricted to support/admin roles.
     Write ops require org owner role (via org_members).
     Read ops require org membership (via verify_organization).
 """
@@ -119,9 +122,9 @@ def _slugify(name: str) -> str:
 @router.post("", response_model=OrgResponse)
 async def create_org(
     body: CreateOrgRequest,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_role("support", "admin")),
 ):
-    """Create a new organization. Any approved user can create; the creator becomes the owner."""
+    """Create a new organization. Support/Admin only; the creator becomes the owner."""
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Organization name is required.")
@@ -229,16 +232,40 @@ async def create_org(
 async def list_orgs(
     user: CurrentUser = Depends(require_approved),
 ):
-    """List all organizations the user belongs to."""
+    """List organizations.
+
+    Support/Admin see ALL organizations so they can manage any org.
+    Regular users see only orgs they are a member of.
+    """
     supabase = get_supabase()
 
+    if user.role in ("support", "admin"):
+        # Support/Admin see every org
+        all_orgs_result = await (
+            supabase.table("organizations")
+            .select("id, name, slug, created_at")
+            .order("created_at", desc=False)
+        ).execute()
+
+        items: list[OrgListItem] = []
+        for org in all_orgs_result.data or []:
+            items.append(OrgListItem(
+                id=org["id"],
+                name=org["name"],
+                slug=org.get("slug"),
+                org_role=user.role,
+                created_at=org.get("created_at", ""),
+            ))
+        return items
+
+    # Regular users — only their memberships
     result = await (
         supabase.table("org_members")
         .select("organization_id, org_role, joined_at, organizations(id, name, slug, created_at)")
         .eq("user_id", user.id)
     ).execute()
 
-    items: list[OrgListItem] = []
+    items = []
     for row in result.data or []:
         org = row.get("organizations")
         if not org:
@@ -352,6 +379,38 @@ async def accept_invitation(
 
     logger.info("User %s accepted invitation to org %s", user.email, org_id)
     return MessageResponse(message="Invitation accepted. You are now a member.")
+
+
+@router.post("/invitations/{inv_id}/decline", response_model=MessageResponse)
+async def decline_invitation(
+    inv_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Decline a pending invitation."""
+    supabase = get_supabase()
+
+    # Fetch invitation — must match user's email and be pending
+    inv_result = await (
+        supabase.table("org_invitations")
+        .select("*")
+        .eq("id", inv_id)
+        .eq("invited_email", user.email)
+        .eq("status", "pending")
+        .limit(1)
+    ).execute()
+
+    if not inv_result.data:
+        raise HTTPException(404, "Invitation not found or already used.")
+
+    # Mark as revoked
+    await (
+        supabase.table("org_invitations")
+        .update({"status": "revoked"})
+        .eq("id", inv_id)
+    ).execute()
+
+    logger.info("User %s declined invitation %s", user.email, inv_id)
+    return MessageResponse(message="Invitation declined.")
 
 
 @router.get("/{org_id}", response_model=OrgResponse)
@@ -501,6 +560,51 @@ async def confirm_deletion(
 
     logger.info("Org %s deleted, confirmed by %s", org_id, user.email)
     return MessageResponse(message="Organization deleted successfully.")
+
+
+# ── Leave Organization ────────────────────────────────────────────
+
+@router.post("/{org_id}/leave", response_model=MessageResponse)
+async def leave_organization(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Leave an organization. Members only — owners cannot leave (must transfer or delete)."""
+    supabase = get_supabase()
+
+    # Verify user is a member of this org
+    member_result = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not member_result.data:
+        raise HTTPException(404, "You are not a member of this organization.")
+
+    if member_result.data[0]["org_role"] == "owner":
+        raise HTTPException(400, "Owners cannot leave. Transfer ownership or delete the organization first.")
+
+    # Remove from org_members
+    await (
+        supabase.table("org_members")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("organization_id", org_id)
+    ).execute()
+
+    # If this was user's active org, clear user_profiles.organization_id
+    if user.organization_id == org_id:
+        await (
+            supabase.table("user_profiles")
+            .update({"organization_id": None})
+            .eq("id", user.id)
+        ).execute()
+
+    logger.info("User %s left org %s", user.email, org_id)
+    return MessageResponse(message="You have left the organization.")
 
 
 # ── Members ──────────────────────────────────────────────────────

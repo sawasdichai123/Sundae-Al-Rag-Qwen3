@@ -27,7 +27,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import List, Optional
 
-from sentence_transformers import SentenceTransformer, CrossEncoder
+# NOTE: sentence_transformers is imported lazily inside _ensure_loaded()
+# to avoid blocking the server startup with heavy PyTorch imports.
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +55,17 @@ class EmbeddingService:
         device: Optional[str] = None,
     ) -> None:
         self.model_name = model_name
-        self._model: Optional[SentenceTransformer] = None
+        self._model = None  # SentenceTransformer (lazy)
         self._device = device
 
     # ── Lazy model loading ───────────────────────────────────────
 
-    def _ensure_loaded(self) -> SentenceTransformer:
+    def _ensure_loaded(self):
         """Load the model on first access and cache it."""
         if self._model is None:
             logger.info("Loading embedding model: %s ...", self.model_name)
             try:
+                from sentence_transformers import SentenceTransformer
                 self._model = SentenceTransformer(
                     self.model_name,
                     device=self._device,
@@ -180,16 +182,17 @@ class RerankerService:
     ) -> None:
         self.model_name = model_name
         self.score_threshold = score_threshold
-        self._model: Optional[CrossEncoder] = None
+        self._model = None  # CrossEncoder (lazy)
         self._device = device
 
     # ── Lazy model loading ───────────────────────────────────────
 
-    def _ensure_loaded(self) -> CrossEncoder:
+    def _ensure_loaded(self):
         """Load the cross-encoder model on first access and cache it."""
         if self._model is None:
             logger.info("Loading reranker model: %s ...", self.model_name)
             try:
+                from sentence_transformers import CrossEncoder
                 self._model = CrossEncoder(
                     self.model_name,
                     device=self._device,

@@ -37,11 +37,22 @@ async def init_supabase() -> AsyncClient:
         logger.warning("Supabase client already initialised — skipping.")
         return _client
 
+    import asyncio
+
     s = get_settings()
-    _client = await acreate_client(
-        supabase_url=s.supabase_url,
-        supabase_key=s.supabase_service_role_key,
-    )
+    try:
+        _client = await asyncio.wait_for(
+            acreate_client(
+                supabase_url=s.supabase_url,
+                supabase_key=s.supabase_service_role_key,
+            ),
+            timeout=30,
+        )
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            "Supabase async client creation timed out after 30s. "
+            "Check network connectivity to: " + s.supabase_url
+        )
     logger.info("Supabase async client initialised (URL: %s)", s.supabase_url)
     return _client
 

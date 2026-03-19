@@ -33,6 +33,7 @@ import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import CreateOrgPage from "./pages/CreateOrgPage";
 import OrganizationPage from "./pages/OrganizationPage";
+import ProfilePage from "./pages/ProfilePage";
 
 // ── Auth Lifecycle Provider ─────────────────────────────────────
 
@@ -89,6 +90,17 @@ function LoadingScreen() {
     );
 }
 
+// ── Role-based Home Redirect ─────────────────────────────────────
+
+function HomeRedirect() {
+    const role = useAuthStore((s) => s.user?.role);
+    // Regular users go straight to chatbot; support/admin go to dashboard
+    if (role === "user") {
+        return <Navigate to="/chat" replace />;
+    }
+    return <DashboardPage />;
+}
+
 // ── App ─────────────────────────────────────────────────────────
 
 export default function App() {
@@ -113,7 +125,7 @@ export default function App() {
                         {/* ── Protected Routes (all roles) ───────────── */}
                         <Route element={<ProtectedRoute />}>
                             <Route element={<DashboardLayout />}>
-                                <Route path="/" element={<DashboardPage />} />
+                                <Route path="/" element={<HomeRedirect />} />
 
                                 {/* Web Chat — all roles */}
                                 <Route path="/chat" element={<WebChatPage />} />
@@ -121,12 +133,19 @@ export default function App() {
                                 {/* Create org — for approved users with no orgs */}
                                 <Route path="/create-org" element={<CreateOrgPage />} />
 
-                                {/* Owner + Admin — org management pages */}
+                                {/* Profile — all roles */}
+                                <Route path="/profile" element={<ProfilePage />} />
+
+                                {/* Admin + User (owner) — content management pages */}
                                 <Route element={<ProtectedRoute allowedRoles={["user", "admin"]} />}>
                                     <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
                                     <Route path="/bots" element={<BotsPage />} />
                                     <Route path="/inbox" element={<InboxPage />} />
                                     <Route path="/integration" element={<IntegrationPage />} />
+                                </Route>
+
+                                {/* Organization settings — all roles */}
+                                <Route element={<ProtectedRoute allowedRoles={["user", "support", "admin"]} />}>
                                     <Route path="/organization" element={<OrganizationPage />} />
                                 </Route>
 

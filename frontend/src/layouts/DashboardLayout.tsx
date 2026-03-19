@@ -101,6 +101,14 @@ function OrgSettingsIcon() {
     );
 }
 
+function ProfileIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+            <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-5.5-2.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0ZM10 12a5.99 5.99 0 0 0-4.793 2.39A6.483 6.483 0 0 0 10 16.5a6.483 6.483 0 0 0 4.793-2.11A5.99 5.99 0 0 0 10 12Z" clipRule="evenodd" />
+        </svg>
+    );
+}
+
 interface NavItem {
     to: string;
     label: string;
@@ -113,14 +121,15 @@ interface NavItem {
 }
 
 const allNavItems: NavItem[] = [
-    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support"] },
     { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["user", "admin"], requireOwner: true },
+    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOwner: true },
     { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
+    { to: "/profile", label: "Profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
 ];
 
 const routeLabels: Record<string, string> = {
@@ -133,6 +142,7 @@ const routeLabels: Record<string, string> = {
     "/create-org": "Create Organization",
     "/approvals": "Approvals",
     "/chat": "Web Chat",
+    "/profile": "Profile",
 };
 
 // ── Component ───────────────────────────────────────────────────
@@ -166,13 +176,6 @@ export default function DashboardLayout() {
         }
     }, [user, hasOrgs, orgsFetched, location.pathname, navigate]);
 
-    // Auto-redirect: members (non-owner) → go straight to /chat
-    useEffect(() => {
-        if (role === "user" && !isOrgOwner && hasOrgs && !isUnapproved && location.pathname === "/") {
-            navigate("/chat", { replace: true });
-        }
-    }, [role, isOrgOwner, hasOrgs, isUnapproved, location.pathname, navigate]);
-
     // Unapproved users see NO navigation links at all
     const visibleNav = isUnapproved
         ? []
@@ -180,7 +183,7 @@ export default function DashboardLayout() {
             // Check platform role
             if (!item.visibleTo.includes(role)) return false;
             // Check owner requirement
-            if (item.requireOwner && !isOrgOwner && role !== "admin") return false;
+            if (item.requireOwner && !isOrgOwner && role !== "admin" && role !== "support") return false;
             return true;
         });
 

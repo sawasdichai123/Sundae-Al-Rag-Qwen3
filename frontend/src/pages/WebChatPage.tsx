@@ -32,8 +32,9 @@ interface ChatBubble {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/** localStorage key per bot for session persistence */
-const sessionKey = (botId: string) => `sundae_chat_session_${botId}`;
+/** localStorage key per bot+org for session persistence */
+const sessionKey = (botId: string, orgId?: string) =>
+    orgId ? `sundae_chat_session_${orgId}_${botId}` : `sundae_chat_session_${botId}`;
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -111,11 +112,35 @@ export default function WebChatPage() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
     // Load chat history
+    const historyLoadedRef = useRef(false);
     const loadHistory = useCallback(async () => {
         if (!orgId) return;
         try {
             const res = await inboxApi.mySessions(orgId);
-            setHistorySessions(res.data || []);
+            const sessions: HistorySession[] = res.data || [];
+            setHistorySessions(sessions);
+
+            // On first load, auto-select the most recent session for the current bot
+            // so the user sees their last conversation instead of the welcome screen
+            if (!historyLoadedRef.current && sessions.length > 0) {
+                historyLoadedRef.current = true;
+                setSelectedBotId((currentBotId) => {
+                    const botId = currentBotId || null;
+                    const lastSession = botId
+                        ? sessions.find((s) => s.bot_id === botId)
+                        : sessions[0];
+                    if (lastSession) {
+                        if (lastSession.bot_id) {
+                            localStorage.setItem(sessionKey(lastSession.bot_id, orgId), lastSession.id);
+                        }
+                        setSessionId(lastSession.id);
+                        setMessages([]);
+                        setSessionStatus((lastSession.status || "active") as SessionStatus);
+                        lastPollTimestampRef.current = null;
+                    }
+                    return lastSession?.bot_id || currentBotId;
+                });
+            }
         } catch (err) {
             console.error("[Chat] Failed to load history:", err);
         }
@@ -149,22 +174,22 @@ export default function WebChatPage() {
 
     const selectedBot = bots.find((b) => b.id === selectedBotId);
 
-    // ── Fix 2: Session persistence — load or create sessionId per bot ──
+    // ── Fix 2: Session persistence — load or create sessionId per bot+org ──
     useEffect(() => {
         if (!selectedBotId) return;
-        const stored = localStorage.getItem(sessionKey(selectedBotId));
+        const stored = localStorage.getItem(sessionKey(selectedBotId, orgId));
         if (stored) {
             setSessionId(stored);
         } else {
             const newId = crypto.randomUUID();
-            localStorage.setItem(sessionKey(selectedBotId), newId);
+            localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
             setSessionId(newId);
         }
         // Reset messages — will be loaded from DB by the next useEffect
         setMessages([]);
         setSessionStatus("active");
         lastPollTimestampRef.current = null;
-    }, [selectedBotId]);
+    }, [selectedBotId, orgId]);
 
     // ── Fix 2: Reload messages + session status from DB on mount ────────
     useEffect(() => {
@@ -198,8 +223,9 @@ export default function WebChatPage() {
                         lastPollTimestampRef.current = msgs[msgs.length - 1].created_at;
                     }
                 }
-            } catch {
+            } catch (err) {
                 // Session doesn't exist in DB yet — that's fine, first message will create it
+                console.warn("[Chat] Failed to restore session messages:", err);
             }
         };
         restore();
@@ -366,7 +392,7 @@ export default function WebChatPage() {
     const handleNewChat = () => {
         if (!selectedBotId) return;
         const newId = crypto.randomUUID();
-        localStorage.setItem(sessionKey(selectedBotId), newId);
+        localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
         setSessionId(newId);
         setMessages([]);
         setSessionStatus("active");
@@ -379,7 +405,7 @@ export default function WebChatPage() {
     const handleSelectSession = (hist: HistorySession) => {
         if (hist.bot_id) {
             setSelectedBotId(hist.bot_id);
-            localStorage.setItem(sessionKey(hist.bot_id), hist.id);
+            localStorage.setItem(sessionKey(hist.bot_id, orgId), hist.id);
         }
         setSessionId(hist.id);
         setMessages([]);

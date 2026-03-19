@@ -435,9 +435,9 @@ export default function BotsPage() {
 
                 {/* Knowledge Link */}
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-steel-800 mb-1">ความรู้</label>
+                    <label className="block text-sm font-bold text-steel-800 mb-1">Knowledge Base</label>
                     <p className="text-xs text-steel-400 mb-3">
-                        หากต้องการเชื่อมต่อฐานความรู้ที่นี่ ให้เพิ่มข้อมูลลงในพื้นที่ทำงาน "ความรู้" ก่อน
+                        To connect to the knowledge base here, add information to the "Knowledge" workspace first.
                     </p>
                     <button
                         onClick={() => {
@@ -450,7 +450,7 @@ export default function BotsPage() {
                         }}
                         className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-4 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
                     >
-                        เลือกความรู้
+                        Select Knowledge Base
                     </button>
 
                     {/* Linked documents chips */}

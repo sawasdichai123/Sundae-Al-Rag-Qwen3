@@ -6,13 +6,15 @@
  * - Support:               see pending user count instead of chat-today
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore, selectIsSupport } from "../store/authStore";
-import { useOrgStore } from "../store/orgStore";
-import { documentsApi, botsApi, inboxApi } from "../api/endpoints";
-import { supabase } from "../api/supabaseClient";
+import { useOrgStore, selectIsOrgOwner } from "../store/orgStore";
+import { useToastStore } from "../store/toastStore";
+import { documentsApi, botsApi, inboxApi, orgApi } from "../api/endpoints";
 import apiClient from "../api/axios";
+import type { OrgMember } from "../types";
+import Spinner from "../components/Spinner";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -93,32 +95,164 @@ function MetricCard({ icon, label, value, change, changeType, accentColor, disab
     );
 }
 
+// ── Member Management Section ──────────────────────────────────
+
+function MemberManagement({ orgId }: { orgId: string }) {
+    const toast = useToastStore((s) => s.addToast);
+    const [members, setMembers] = useState<OrgMember[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [inviteEmail, setInviteEmail] = useState("");
+    const [inviting, setInviting] = useState(false);
+    const [removingId, setRemovingId] = useState<string | null>(null);
+
+    const loadMembers = useCallback(async () => {
+        try {
+            const { data } = await orgApi.listMembers(orgId);
+            setMembers(data || []);
+        } catch (err) {
+            console.error("[Dashboard] Failed to load members:", err);
+        } finally {
+            setLoading(false);
+        }
+    }, [orgId]);
+
+    useEffect(() => { loadMembers(); }, [loadMembers]);
+
+    const handleInvite = async (e: FormEvent) => {
+        e.preventDefault();
+        if (!inviteEmail.trim()) return;
+        setInviting(true);
+        try {
+            await orgApi.invite(orgId, inviteEmail.trim());
+            toast("success", `ส่งคำเชิญไปที่ ${inviteEmail.trim()} แล้ว`);
+            setInviteEmail("");
+            await loadMembers();
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ส่งคำเชิญไม่สำเร็จ";
+            toast("error", msg);
+        } finally {
+            setInviting(false);
+        }
+    };
+
+    const handleRemove = async (userId: string, name: string) => {
+        if (!confirm(`ลบ ${name} ออกจากองค์กร?`)) return;
+        setRemovingId(userId);
+        try {
+            await orgApi.removeMember(orgId, userId);
+            toast("success", "ลบสมาชิกสำเร็จ");
+            await loadMembers();
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ลบสมาชิกไม่สำเร็จ";
+            toast("error", msg);
+        } finally {
+            setRemovingId(null);
+        }
+    };
+
+    return (
+        <div className="bg-white rounded-2xl border border-steel-100 p-6 mt-6">
+            <div className="flex items-center justify-between mb-4">
+                <h2 className="text-base font-semibold text-steel-800">
+                    สมาชิกในองค์กร ({loading ? "..." : members.length})
+                </h2>
+            </div>
+
+            {/* Member List */}
+            {loading ? (
+                <div className="flex items-center gap-2 text-steel-400 py-4">
+                    <Spinner /> <span className="text-sm">กำลังโหลด...</span>
+                </div>
+            ) : (
+                <div className="divide-y divide-steel-100 mb-5">
+                    {members.map((m) => (
+                        <div key={m.user_id} className="flex items-center gap-3 py-3">
+                            <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0">
+                                {(m.full_name || m.email)?.[0]?.toUpperCase() || "?"}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-steel-800 truncate">
+                                    {m.full_name || "ไม่ระบุชื่อ"}
+                                </p>
+                                <p className="text-xs text-steel-400 truncate">{m.email}</p>
+                            </div>
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                m.org_role === "owner"
+                                    ? "bg-brand-100 text-brand-700"
+                                    : "bg-steel-100 text-steel-500"
+                            }`}>
+                                {m.org_role}
+                            </span>
+                            {m.org_role !== "owner" && (
+                                <button
+                                    onClick={() => handleRemove(m.user_id, m.full_name || m.email)}
+                                    disabled={removingId === m.user_id}
+                                    className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                    {removingId === m.user_id ? "..." : "ลบ"}
+                                </button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Invite Form */}
+            <div className="border-t border-steel-100 pt-4">
+                <p className="text-xs font-medium text-steel-600 mb-2">เชิญสมาชิก</p>
+                <form onSubmit={handleInvite} className="flex gap-2">
+                    <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="email@example.com"
+                        required
+                        disabled={inviting}
+                        className="flex-1 px-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
+                    />
+                    <button
+                        type="submit"
+                        disabled={inviting || !inviteEmail.trim()}
+                        className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                        {inviting ? <><Spinner /> ส่ง...</> : "ส่งคำเชิญ"}
+                    </button>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 // ── Page ────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
     const user = useAuthStore((s) => s.user);
     const isSupport = useAuthStore(selectIsSupport);
+    const isOrgOwner = useOrgStore(selectIsOrgOwner);
     const navigate = useNavigate();
 
     const [docCount, setDocCount] = useState<number | null>(null);
     const [botCount, setBotCount] = useState<number | null>(null);
     const [sessionTodayCount, setSessionTodayCount] = useState<number | null>(null);
     const [takeoverCount, setTakeoverCount] = useState<number | null>(null);
-    const [pendingUserCount, setPendingUserCount] = useState<number | null>(null);
     const [services, setServices] = useState<HealthServices | null>(null);
 
     useEffect(() => {
         const activeOrgId = useOrgStore.getState().activeOrgId;
         const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+
+        apiClient
+            .get<{ services: HealthServices }>("/health")
+            .then((res) => setServices((res.data as any).services as HealthServices))
+            .catch(() => setServices({ backend: true, ollama: false, supabase: false }));
+
         if (!orgId) return;
 
-        // Fetch documents, bots, sessions, and health in parallel
         Promise.allSettled([
             documentsApi.list(orgId),
             botsApi.list(orgId),
             inboxApi.listSessions(orgId),
-            apiClient.get<{ services: HealthServices }>("/health"),
-        ]).then(([docsRes, botsRes, sessionsRes, healthRes]) => {
+        ]).then(([docsRes, botsRes, sessionsRes]) => {
             if (docsRes.status === "fulfilled") {
                 setDocCount((docsRes.value.data as any[]).length);
             }
@@ -141,24 +275,7 @@ export default function DashboardPage() {
                     allSessions.filter((s: any) => s.status === "human_takeover").length
                 );
             }
-
-            if (healthRes.status === "fulfilled") {
-                setServices((healthRes.value.data as any).services as HealthServices);
-            } else {
-                // Backend is up (we're here), but Ollama/Supabase unknown
-                setServices({ backend: true, ollama: false, supabase: false });
-            }
         });
-
-        // Support role: also count unapproved users directly from Supabase
-        if (isSupport) {
-            supabase
-                .from("user_profiles")
-                .select("*", { count: "exact", head: true })
-                .eq("is_approved", false)
-                .eq("organization_id", orgId)
-                .then(({ count }) => setPendingUserCount(count ?? 0));
-        }
     }, [user?.organization_id, isSupport]);
 
     // Format a nullable count for display
@@ -182,7 +299,7 @@ export default function DashboardPage() {
                     {activeOrg ? activeOrg.name : "Dashboard"}
                 </h1>
                 <p className="text-sm text-steel-500 mt-1">
-                    {isSupport ? "ภาพรวมระบบ — โหมดเจ้าหน้าที่ Support" : "ภาพรวมระบบ SUNDAE — ข้อมูลอัปเดตล่าสุด"}
+ภาพรวมระบบ SUNDAE — ข้อมูลอัปเดตล่าสุด
                 </p>
             </div>
 
@@ -208,26 +325,15 @@ export default function DashboardPage() {
                     accentColor="bg-steel-100"
                 />
 
-                {/* 3 — Pending Users (support) or Chats Today (others) */}
-                {isSupport ? (
-                    <MetricCard
-                        icon={<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-amber-600"><path d="M10 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.465 14.493a1.23 1.23 0 0 0 .41 1.412A9.957 9.957 0 0 0 10 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 0 0-13.074.003Z" /></svg>}
-                        label="ผู้ใช้รออนุมัติ"
-                        value={fmt(pendingUserCount)}
-                        change="live"
-                        changeType="neutral"
-                        accentColor="bg-amber-50"
-                    />
-                ) : (
-                    <MetricCard
-                        icon={<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-violet-600"><path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0 1 10 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.202 41.202 0 0 1-5.183.501.78.78 0 0 0-.528.224l-3.579 3.58A.75.75 0 0 1 6 17.25v-3.443a41.033 41.033 0 0 1-2.57-.33C2.993 13.244 2 11.986 2 10.573V5.426c0-1.413.993-2.67 2.43-2.902Z" clipRule="evenodd" /></svg>}
-                        label="แชทวันนี้"
-                        value={fmt(sessionTodayCount)}
-                        change="live"
-                        changeType="neutral"
-                        accentColor="bg-violet-50"
-                    />
-                )}
+                {/* 3 — Chats Today */}
+                <MetricCard
+                    icon={<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-violet-600"><path fillRule="evenodd" d="M3.43 2.524A41.29 41.29 0 0 1 10 2c2.236 0 4.43.18 6.57.524 1.437.231 2.43 1.49 2.43 2.902v5.148c0 1.413-.993 2.67-2.43 2.902a41.202 41.202 0 0 1-5.183.501.78.78 0 0 0-.528.224l-3.579 3.58A.75.75 0 0 1 6 17.25v-3.443a41.033 41.033 0 0 1-2.57-.33C2.993 13.244 2 11.986 2 10.573V5.426c0-1.413.993-2.67 2.43-2.902Z" clipRule="evenodd" /></svg>}
+                    label="แชทวันนี้"
+                    value={fmt(sessionTodayCount)}
+                    change="live"
+                    changeType="neutral"
+                    accentColor="bg-violet-50"
+                />
 
                 {/* 4 — Human-Takeover Sessions (chats waiting for agent) */}
                 <MetricCard
@@ -238,28 +344,27 @@ export default function DashboardPage() {
                     changeType="neutral"
                     accentColor="bg-orange-50"
                 />
+
             </div>
 
             {/* Quick Actions */}
-            {!isSupport && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                    {[
-                        { label: "จัดการ Knowledge", desc: "อัปโหลดและจัดการเอกสาร PDF", icon: "📄", to: "/knowledge-base", color: "hover:border-brand-300" },
-                        { label: "จัดการ Bot", desc: "สร้างและแก้ไข AI Bot", icon: "🤖", to: "/bots", color: "hover:border-violet-300" },
-                        { label: "ดู Inbox", desc: "ดูประวัติการสนทนาทั้งหมด", icon: "💬", to: "/inbox", color: "hover:border-emerald-300" },
-                    ].map((action) => (
-                        <button
-                            key={action.to}
-                            onClick={() => navigate(action.to)}
-                            className={`bg-white rounded-2xl border border-steel-100 p-5 text-left cursor-pointer transition-all duration-200 hover:shadow-md ${action.color}`}
-                        >
-                            <span className="text-2xl mb-3 block">{action.icon}</span>
-                            <p className="text-sm font-semibold text-steel-900">{action.label}</p>
-                            <p className="text-xs text-steel-500 mt-0.5">{action.desc}</p>
-                        </button>
-                    ))}
-                </div>
-            )}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                {[
+                    { label: "จัดการ Knowledge", desc: "อัปโหลดและจัดการเอกสาร PDF", icon: "📄", to: "/knowledge-base", color: "hover:border-brand-300" },
+                    { label: "จัดการ Bot", desc: "สร้างและแก้ไข AI Bot", icon: "🤖", to: "/bots", color: "hover:border-violet-300" },
+                    { label: "ดู Inbox", desc: "ดูประวัติการสนทนาทั้งหมด", icon: "💬", to: "/inbox", color: "hover:border-emerald-300" },
+                ].map((action) => (
+                    <button
+                        key={action.to}
+                        onClick={() => navigate(action.to)}
+                        className={`bg-white rounded-2xl border border-steel-100 p-5 text-left cursor-pointer transition-all duration-200 hover:shadow-md ${action.color}`}
+                    >
+                        <span className="text-2xl mb-3 block">{action.icon}</span>
+                        <p className="text-sm font-semibold text-steel-900">{action.label}</p>
+                        <p className="text-xs text-steel-500 mt-0.5">{action.desc}</p>
+                    </button>
+                ))}
+            </div>
 
             {/* System Status */}
             <div className="bg-white rounded-2xl border border-steel-100 p-6">
@@ -285,6 +390,11 @@ export default function DashboardPage() {
                     ))}
                 </div>
             </div>
+
+            {/* Member Management — owner, support, and admin */}
+            {(isOrgOwner || isSupport || user?.role === "admin") && activeOrg && (
+                <MemberManagement orgId={activeOrg.id} />
+            )}
         </div>
     );
 }
