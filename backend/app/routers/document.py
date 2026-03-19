@@ -261,14 +261,23 @@ async def link_document_to_bot(
 # ── Helper Functions ─────────────────────────────────────────────
 
 
+# Sentinel pattern injected before each page's text so the chunker can
+# determine which PDF page(s) a chunk originates from.
+PAGE_SENTINEL_PATTERN = "<<<PAGE:{page}>>>"
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract all text from a PDF file using PyMuPDF.
+
+    Each page is preceded by a sentinel marker ``<<<PAGE:N>>>`` (1-based)
+    so that downstream chunking can compute page_start / page_end for
+    every chunk.  The sentinel is stripped before storing chunk text.
 
     Args:
         pdf_bytes: Raw bytes of the PDF file.
 
     Returns:
-        Concatenated text from all pages.
+        Full text with page sentinels interleaved, ready for chunking.
 
     Raises:
         ValueError: If the PDF contains no extractable text.
@@ -284,7 +293,9 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         for page in doc:
             text = page.get_text("text")
             if text and text.strip():
-                pages.append(text.strip())
+                # page.number is 0-based; use +1 to match physical PDF page numbers
+                sentinel = f"\n{PAGE_SENTINEL_PATTERN.format(page=page.number + 1)}\n"
+                pages.append(sentinel + text.strip())
     finally:
         doc.close()
 
@@ -441,6 +452,8 @@ async def upload_document(
                 "document_id": p.document_id,
                 "chunk_index": p.chunk_index,
                 "text": p.text,
+                "page_start": p.page_start,
+                "page_end": p.page_end,
             }
             for p in parent_chunks
         ]
@@ -458,6 +471,8 @@ async def upload_document(
                         "document_id": document_id,
                         "chunk_index": child.chunk_index,
                         "text": child.text,
+                        "page_start": child.page_start,
+                        "page_end": child.page_end,
                         "embedding": all_embeddings[embedding_idx],
                     }
                 )

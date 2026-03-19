@@ -18,7 +18,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { chatApi, botsApi, inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
-import type { Bot, SessionStatus } from "../types";
+import type { Bot, SessionStatus, SourceReference } from "../types";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ interface ChatBubble {
     id: string;
     role: "user" | "assistant" | "admin" | "system";
     content: string;
-    sources?: Array<{ document_id: string; chunk_index: number; score: number }>;
+    sources?: SourceReference[];
     timestamp: Date;
 }
 
@@ -453,7 +453,7 @@ export default function WebChatPage() {
         let created = false;
         let finished = false;
         // Buffer sources — they arrive before the first token (before bubble exists)
-        let pendingSources: Array<{ document_id: string; chunk_index: number; score: number }> | null = null;
+        let pendingSources: SourceReference[] | null = null;
 
         const markFinished = () => {
             if (finished) return; // Prevent double-call
@@ -791,17 +791,28 @@ export default function WebChatPage() {
                                                         <span className="text-[11px] font-medium text-steel-400">อ้างอิงจากเอกสาร</span>
                                                     </div>
                                                     <div className="flex flex-wrap gap-1.5">
-                                                        {msg.sources.map((src, i) => (
-                                                            <span
-                                                                key={i}
-                                                                className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200"
-                                                            >
-                                                                <span className="w-1 h-1 rounded-full bg-brand-400"></span>
-                                                                {src.document_id.slice(0, 8)}…
-                                                                <span className="text-steel-400">#{src.chunk_index}</span>
-                                                                <span className="text-emerald-500 font-semibold">{(src.score * 100).toFixed(0)}%</span>
-                                                            </span>
-                                                        ))}
+                                                        {msg.sources.map((src, i) => {
+                                                            const docLabel = src.document_name ?? `${src.document_id.slice(0, 8)}…`;
+                                                            const pageLabel = src.page_start != null
+                                                                ? src.page_start === src.page_end || src.page_end == null
+                                                                    ? `หน้า ${src.page_start}`
+                                                                    : `หน้า ${src.page_start}–${src.page_end}`
+                                                                : null;
+                                                            return (
+                                                                <span
+                                                                    key={i}
+                                                                    className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200"
+                                                                    title={`${docLabel}${pageLabel ? ` — ${pageLabel}` : ""} (${(src.score * 100).toFixed(0)}%)`}
+                                                                >
+                                                                    <span className="w-1 h-1 rounded-full bg-brand-400"></span>
+                                                                    <span className="truncate max-w-[120px]">{docLabel}</span>
+                                                                    {pageLabel && (
+                                                                        <span className="text-steel-400 shrink-0">{pageLabel}</span>
+                                                                    )}
+                                                                    <span className="text-emerald-500 font-semibold shrink-0">{(src.score * 100).toFixed(0)}%</span>
+                                                                </span>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
                                             )}

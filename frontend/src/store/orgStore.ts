@@ -19,6 +19,8 @@ interface OrgState {
     isLoading: boolean;
     /** true after fetchOrgs has completed at least once */
     hasFetched: boolean;
+    /** true if the last fetchOrgs call failed (API error, network, etc.) */
+    fetchFailed: boolean;
 
     fetchOrgs: () => Promise<void>;
     setActiveOrg: (id: string) => void;
@@ -31,6 +33,7 @@ export const useOrgStore = create<OrgState>((set, get) => ({
     activeOrgRole: null,
     isLoading: false,
     hasFetched: false,
+    fetchFailed: false,
 
     fetchOrgs: async () => {
         set({ isLoading: true });
@@ -66,10 +69,10 @@ export const useOrgStore = create<OrgState>((set, get) => ({
                 localStorage.removeItem(ACTIVE_ORG_KEY);
             }
 
-            set({ orgs, activeOrgId: activeId, activeOrgRole: activeRole, isLoading: false, hasFetched: true });
+            set({ orgs, activeOrgId: activeId, activeOrgRole: activeRole, isLoading: false, hasFetched: true, fetchFailed: false });
         } catch (err) {
             console.error("[OrgStore] Failed to fetch orgs:", err);
-            set({ isLoading: false, hasFetched: true });
+            set({ isLoading: false, hasFetched: true, fetchFailed: true });
         }
     },
 
@@ -84,7 +87,7 @@ export const useOrgStore = create<OrgState>((set, get) => ({
 
     clearOrgs: () => {
         localStorage.removeItem(ACTIVE_ORG_KEY);
-        set({ orgs: [], activeOrgId: null, activeOrgRole: null });
+        set({ orgs: [], activeOrgId: null, activeOrgRole: null, hasFetched: false, fetchFailed: false });
     },
 }));
 

@@ -158,6 +158,7 @@ export default function DashboardLayout() {
     const isOrgOwner = useOrgStore(selectIsOrgOwner);
     const hasOrgs = useOrgStore(selectHasOrgs);
     const orgsFetched = useOrgStore((s) => s.hasFetched);
+    const fetchFailed = useOrgStore((s) => s.fetchFailed);
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
@@ -168,13 +169,14 @@ export default function DashboardLayout() {
 
     // Auto-redirect: approved user with no orgs → create org page
     // Wait for orgStore to finish initial fetch before deciding (prevents false redirect)
+    // Do NOT redirect if fetchOrgs failed — orgs may exist but the API call errored
     // Applies to ALL roles (user, support, admin) — not just support/admin
     useEffect(() => {
-        if (!orgsFetched) return;
+        if (!orgsFetched || fetchFailed) return;
         if (user && user.is_approved && !hasOrgs && location.pathname !== "/create-org") {
             navigate("/create-org", { replace: true });
         }
-    }, [user, hasOrgs, orgsFetched, location.pathname, navigate]);
+    }, [user, hasOrgs, orgsFetched, fetchFailed, location.pathname, navigate]);
 
     // Unapproved users see NO navigation links at all
     const visibleNav = isUnapproved

@@ -133,13 +133,18 @@ export interface ChatMessage {
 
 // ── API Responses ───────────────────────────────────────────────
 
+export interface SourceReference {
+    document_id: string;
+    document_name: string | null;
+    chunk_index: number;
+    page_start: number | null;
+    page_end: number | null;
+    score: number;
+}
+
 export interface ChatAskResponse {
     answer: string;
-    sources: Array<{
-        document_id: string;
-        chunk_index: number;
-        score: number;
-    }>;
+    sources: SourceReference[];
     session_id: string | null;
 }
 

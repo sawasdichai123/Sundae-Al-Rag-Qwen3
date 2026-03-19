@@ -67,7 +67,10 @@ class SourceChunk(BaseModel):
     """A source chunk used to generate the answer."""
 
     document_id: str
+    document_name: Optional[str] = None
     chunk_index: int
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     score: float
 
 
@@ -217,7 +220,10 @@ async def ask_question(
                     sources.append(
                         SourceChunk(
                             document_id=original_parent.document_id,
+                            document_name=original_parent.document_name,
                             chunk_index=original_parent.chunk_index,
+                            page_start=original_parent.page_start,
+                            page_end=original_parent.page_end,
                             score=round(rr.score, 4),
                         )
                     )
@@ -230,7 +236,10 @@ async def ask_question(
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
+                    document_name=p.document_name,
                     chunk_index=p.chunk_index,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
                     score=round(p.best_child_similarity, 4),
                 )
                 for p in parent_results
@@ -398,7 +407,10 @@ async def ask_question_stream(
                     sources.append(
                         SourceChunk(
                             document_id=original_parent.document_id,
+                            document_name=original_parent.document_name,
                             chunk_index=original_parent.chunk_index,
+                            page_start=original_parent.page_start,
+                            page_end=original_parent.page_end,
                             score=round(rr.score, 4),
                         )
                     )
@@ -408,7 +420,10 @@ async def ask_question_stream(
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
+                    document_name=p.document_name,
                     chunk_index=p.chunk_index,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
                     score=round(p.best_child_similarity, 4),
                 )
                 for p in parent_results

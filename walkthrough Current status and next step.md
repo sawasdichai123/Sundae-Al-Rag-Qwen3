@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 17 มีนาคม 2569
+> **อัพเดทล่าสุด**: 19 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -21,6 +21,7 @@ flowchart TB
         AP[Approvals]
         CO[Create Org]
         ORG_P[Organization]
+        PR[Profile]
     end
 
     subgraph Auth ["Supabase Auth"]
@@ -1379,15 +1380,15 @@ JWT expiry ใน Supabase Cloud Free Plan fix ไว้ที่ **3600 วิ�
 
 **เปลี่ยนแปลง**: org_role ย้ายจาก `user_profiles` ไป `org_members` table — user สามารถมี role ต่างกันในแต่ละ org
 
-### 15.3 Business Flow (ใหม่)
+### 15.3 Business Flow (ปรับปรุง 19 มี.ค. 2569)
 
 ```
 1. User สมัครสมาชิก → กรอกแค่ชื่อ + email + password (ไม่ต้องกรอกชื่อ org)
 2. DB trigger สร้าง user_profiles (role=user, is_approved=false, organization_id=NULL)
 3. Support/Admin เห็น pending user ใน ApprovalsPage → กด Approve (แค่ set is_approved=true)
-4. User ล็อกอิน → ไม่มี org → redirect ไป /create-org
-5. User สร้าง org เอง → org_members row (org_role=owner) สร้างอัตโนมัติ
-6. Owner เชิญ member ผ่าน OrganizationPage → invited user accept → org_members row (member)
+4. Support/Admin สร้าง org → ไม่ได้เป็น member ของ org (แค่สร้างให้)
+5. Support/Admin เชิญ user เข้า org → คนแรกที่ accept จะได้เป็น owner อัตโนมัติ
+6. คนต่อไปที่ accept invitation จะเป็น member
 7. User สามารถเป็นสมาชิกหลาย org → สลับด้วย OrgSwitcher
 ```
 
@@ -1764,24 +1765,102 @@ DROP TABLE IF EXISTS public.users;
 
 ---
 
-## 18. Next Steps
+## 18. RAG Page Number Tracking — Citation แสดงชื่อเอกสาร + หน้า (19 มีนาคม 2569) ✅
 
-### 🟡 งานที่เหลือ (อัพเดท 17 มี.ค. 2569)
+### 18.1 ปัญหา
+
+เมื่อบอทตอบคำถาม source pills แสดงแค่ UUID ตัด 8 ตัว + chunk index + score เช่น `abc12345… #2 87%` — ไม่มีประโยชน์ต่อผู้ใช้
+
+### 18.2 เป้าหมาย
+
+แสดง citation เช่น `สัญญาเช่า.pdf — หน้า 3–4 (87%)` แทน UUID
+
+### 18.3 Strategy: Page Sentinel Markers
+
+ฝัง marker `<<<PAGE:N>>>` ลงในข้อความ PDF ก่อน chunking → แต่ละ chunk จะรู้ว่ามาจากหน้าไหน → strip marker ออกก่อนเก็บ DB
+
+เหตุผลที่ใช้ sentinel: separator `\n\n` ที่ใช้ join หน้าเหมือนกับ separator ของ ThaiTextSplitter → ใช้ newline เฉยๆ แยกไม่ได้
+
+### 18.4 การเปลี่ยนแปลง
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/sql/013_add_page_columns.sql` | **ใหม่** — เพิ่ม `page_start`, `page_end` columns ใน chunk tables + update RPC `match_child_chunks` ให้ JOIN documents table return `document_name` |
+| `backend/app/routers/document.py` | แก้ `extract_text_from_pdf` ฝัง sentinel `<<<PAGE:N>>>` ก่อนข้อความแต่ละหน้า + เพิ่ม page fields ใน storage rows |
+| `backend/app/services/chunking.py` | เพิ่ม `page_start`/`page_end` ใน dataclasses + helper `_extract_pages_from_text()` / `_strip_sentinels()` |
+| `backend/app/services/vector_search.py` | เพิ่ม `document_name`, `page_start`, `page_end` ใน dataclasses + storage + retrieval |
+| `backend/app/routers/chat.py` | เพิ่ม `document_name`, `page_start`, `page_end` ใน `SourceChunk` model |
+| `frontend/src/types/index.ts` | เพิ่ม `SourceReference` interface |
+| `frontend/src/api/endpoints.ts` | แก้ `onSources` callback type ใช้ `SourceReference[]` |
+| `frontend/src/pages/WebChatPage.tsx` | แก้ source pill UI แสดงชื่อเอกสาร + หน้า + score พร้อม tooltip |
+
+### 18.5 Backward Compatibility
+
+- คอลัมน์ DB เป็น nullable → ข้อมูลเก่าได้ `NULL`
+- `document_name` มาจาก JOIN ใน RPC → ข้อมูลเก่าก็ได้ชื่อเอกสาร (แค่ไม่มีเลขหน้า)
+- Frontend fallback: ไม่มี page → แสดงแค่ชื่อเอกสาร + score
+- เอกสารที่ upload ก่อน migration ต้อง **re-upload** เพื่อให้มี page tracking
+
+---
+
+## 19. Org Flow Fixes — Ownership + Login + Deletion (19 มีนาคม 2569) ✅
+
+### 19.1 Org Creation — เปลี่ยนจาก User สร้างเอง เป็น Support/Admin สร้างให้
+
+**ก่อน**: User สร้าง org เอง → กลายเป็น owner ทันที
+**หลัง**: Support/Admin สร้าง org (ไม่ได้เป็น member) → เชิญ user → คนแรกที่ accept เป็น owner
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/organization.py` `create_org` | ลบการเพิ่ม creator เป็น owner ใน org_members |
+| `backend/app/routers/organization.py` `accept_invitation` | เช็คว่า org มี owner หรือยัง → คนแรก = owner, คนต่อไป = member |
+
+### 19.2 Login Redirect Bug — เด้งไป /create-org
+
+**สาเหตุ**: `orgStore.fetchOrgs()` fail (token ยังไม่พร้อม) → set `hasFetched: true` + orgs เป็น array ว่าง → `DashboardLayout` เห็นว่าไม่มี org → redirect ไป `/create-org`
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `frontend/src/store/orgStore.ts` | เพิ่ม `fetchFailed: boolean` flag — set true เมื่อ fetch fail |
+| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่มเงื่อนไข `if (fetchFailed) return;` ไม่ redirect เมื่อ fetch fail |
+
+### 19.3 Org Deletion — 2 bugs
+
+#### Bug 1: Owner ที่เป็น support/admin ไม่สามารถ request deletion
+**สาเหตุ**: `request_deletion` มี hard block `if user.role in ("support", "admin"): raise 403` ก่อนเช็ค org_members
+**แก้ไข**: ลบ platform role check → ใช้แค่ org_role owner check
+
+#### Bug 2: Confirm deletion 500 error
+**สาเหตุ**: `organizations.status` CHECK constraint (migration 011) อนุญาตแค่ `('active', 'pending_deletion')` แต่ `confirm_deletion` set `status = 'deleted'`
+**แก้ไข**: เพิ่มใน migration 013 — ALTER constraint ให้รวม `'deleted'`
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/organization.py` `request_deletion` | ลบ platform role block ก่อน org_role check |
+| `backend/sql/013_add_page_columns.sql` | เพิ่ม `ALTER TABLE organizations DROP/ADD CONSTRAINT` ให้ status รับ `'deleted'` |
+
+---
+
+## 20. Next Steps
+
+### 🟡 งานที่เหลือ (อัพเดท 19 มี.ค. 2569)
 
 | # | งาน | รายละเอียด |
 |---|------|-----------|
 | ~~1~~ | ~~รัน SQL Migration 011 + 012~~ | ✅ รันแล้ว |
 | ~~2~~ | ~~แก้ Critical Bugs (Approval Sync, Lockout, Redirect)~~ | ✅ แก้แล้ว (Section 16) |
 | ~~3~~ | ~~Drop legacy `public.users` table~~ | ✅ ลบแล้ว (Section 17) |
-| 4 | **ทดสอบ Multi-Org Flow end-to-end** | Register → approve (auto-accept) → login → member view → switch orgs |
-| 5 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
-| 6 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
-| 7 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
-| 8 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 19) |
-| 9 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 10 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
-| 11 | **Dark mode** | เพิ่ม theme switcher |
-| 12 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
+| 4 | **รัน SQL Migration 013** | Page tracking columns + RPC update + status constraint fix (Section 18) |
+| 5 | **ทดสอบ RAG Page Tracking** | Upload PDF ใหม่ → ถามคำถาม → ดูว่า source pills แสดงชื่อเอกสาร + หน้า |
+| 6 | **ทดสอบ Multi-Org Flow end-to-end** | Support สร้าง org → เชิญ user → accept = owner → เชิญคนที่สอง = member |
+| 7 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 8 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
+| 9 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
+| 10 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 21) |
+| 11 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 12 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
+| 13 | **Dark mode** | เพิ่ม theme switcher |
+| 14 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
 
 ### SQL Migrations — สถานะปัจจุบัน
 
@@ -1791,10 +1870,11 @@ DROP TABLE IF EXISTS public.users;
 | 011 — Multi-tenant migration (org_members, org_invitations rename, drop old columns) | ✅ รันแล้ว |
 | 012 — Simplify auth trigger (no org assignment on signup) | ✅ รันแล้ว |
 | Manual — Drop `public.users` table (ไม่ใช่ migration file — รัน SQL ตรง) | ✅ ลบแล้ว |
+| 013 — Page tracking columns + RPC update + status constraint fix | ✅ รันแล้ว |
 
 ---
 
-## 19. LINE Webhook — งานที่เหลือ
+## 21. LINE Webhook — งานที่เหลือ
 
 ### สถานะปัจจุบัน
 

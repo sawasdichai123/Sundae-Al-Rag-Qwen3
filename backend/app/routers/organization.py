@@ -124,7 +124,11 @@ async def create_org(
     body: CreateOrgRequest,
     user: CurrentUser = Depends(require_role("support", "admin")),
 ):
-    """Create a new organization. Support/Admin only; the creator becomes the owner."""
+    """Create a new organization. Support/Admin only.
+
+    The creator (support/admin) is NOT added as owner.
+    The first invited user who accepts becomes the owner.
+    """
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "Organization name is required.")
@@ -165,57 +169,9 @@ async def create_org(
     org = org_result.data[0]
     org_id = org["id"]
 
-    # 2. Add creator as owner in org_members
-    try:
-        member_result = await (
-            supabase.table("org_members").insert({
-                "user_id": user.id,
-                "organization_id": org_id,
-                "org_role": "owner",
-                "joined_at": now_iso,
-            })
-        ).execute()
-    except Exception as exc:
-        logger.error("Org create failed (insert org_members): %s", exc)
-        # Best-effort cleanup to avoid orphan organizations
-        try:
-            await supabase.table("organizations").delete().eq("id", org_id).execute()
-        except Exception:
-            pass
-        msg = str(exc)
-        if "org_members" in msg and ("does not exist" in msg or "relation" in msg):
-            raise HTTPException(
-                status_code=500,
-                detail="Database migration missing: org_members table not found. Run backend/sql/011_multi_tenant_migration.sql on Supabase.",
-            )
-        raise HTTPException(status_code=500, detail=f"Failed to create organization membership: {exc}")
-
-    member_error = getattr(member_result, "error", None)
-    if member_error:
-        logger.error("Org create failed (org_members error): %s", member_error)
-        # Best-effort cleanup to avoid orphan organizations
-        try:
-            await supabase.table("organizations").delete().eq("id", org_id).execute()
-        except Exception:
-            pass
-        msg = str(member_error)
-        if "org_members" in msg and ("does not exist" in msg or "relation" in msg):
-            raise HTTPException(
-                status_code=500,
-                detail="Database migration missing: org_members table not found. Run backend/sql/011_multi_tenant_migration.sql on Supabase.",
-            )
-        raise HTTPException(status_code=500, detail=f"Failed to create organization membership: {member_error}")
-
-    # 3. Update user_profiles.organization_id (backward compat, first org)
-    if not user.organization_id:
-        try:
-            await (
-                supabase.table("user_profiles")
-                .update({"organization_id": org_id})
-                .eq("id", user.id)
-            ).execute()
-        except Exception as exc:
-            logger.warning("Org created but failed to update user_profiles.organization_id (user=%s, org=%s): %s", user.id, org_id, exc)
+    # NOTE: Support/Admin creator is NOT added as org_members owner.
+    # They already bypass org checks via their platform role.
+    # The first invited user who accepts the invitation becomes the owner.
 
     logger.info("Org created: %s by user %s", org_id, user.email)
 
@@ -352,15 +308,29 @@ async def accept_invitation(
         ).execute()
         return MessageResponse(message="You are already a member of this organization.")
 
-    # 3. Add to org_members
+    # 3. Determine role: first member becomes owner, others become member
+    owner_check = await (
+        supabase.table("org_members")
+        .select("id")
+        .eq("organization_id", org_id)
+        .eq("org_role", "owner")
+        .limit(1)
+    ).execute()
+    assigned_role = "owner" if not owner_check.data else "member"
+
     await (
         supabase.table("org_members").insert({
             "user_id": user.id,
             "organization_id": org_id,
-            "org_role": "member",
+            "org_role": assigned_role,
             "joined_at": now_iso,
         })
     ).execute()
+
+    logger.info(
+        "User %s joined org %s as %s (via invitation %s)",
+        user.email, org_id, assigned_role, inv_id,
+    )
 
     # 4. Mark invitation accepted
     await (
@@ -490,11 +460,10 @@ async def request_deletion(
     await verify_organization(user, org_id)
 
     supabase = get_supabase()
-    # Policy: only the org owner can request deletion.
-    # support/admin accounts cannot request deletion to reduce blast radius.
-    if user.role in ("support", "admin"):
-        raise HTTPException(403, "Only org owner can request deletion.")
 
+    # Policy: only the org owner (in org_members) can request deletion.
+    # Any platform role (user, support, admin) is allowed as long as they
+    # are the org owner — this covers legacy orgs where support was owner.
     member = await (
         supabase.table("org_members")
         .select("org_role")

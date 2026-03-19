@@ -13,6 +13,7 @@ import type {
     DocumentUploadResponse,
     OrgInvitation,
     OrgMember,
+    SourceReference,
     OrgMembership,
     MyInvitation,
     PendingUser,
@@ -101,7 +102,7 @@ export const chatApi = {
     askStream: (
         params: ChatAskParams,
         onToken: (token: string) => void,
-        onSources: (sources: Array<{ document_id: string; chunk_index: number; score: number }>) => void,
+        onSources: (sources: SourceReference[]) => void,
         onDone: () => void,
         onError: (error: string) => void,
     ): AbortController => {
