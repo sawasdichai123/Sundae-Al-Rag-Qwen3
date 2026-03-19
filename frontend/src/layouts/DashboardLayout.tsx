@@ -121,7 +121,7 @@ interface NavItem {
 }
 
 const allNavItems: NavItem[] = [
-    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support"] },
+    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support", "user"], requireOwner: true },
     { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
     { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },

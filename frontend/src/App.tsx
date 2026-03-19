@@ -9,6 +9,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./api/supabaseClient";
 import { useAuthStore } from "./store/authStore";
+import { useOrgStore } from "./store/orgStore";
 
 // Layouts
 import DashboardLayout from "./layouts/DashboardLayout";
@@ -94,8 +95,20 @@ function LoadingScreen() {
 
 function HomeRedirect() {
     const role = useAuthStore((s) => s.user?.role);
-    // Regular users go straight to chatbot; support/admin go to dashboard
-    if (role === "user") {
+    const orgRole = useOrgStore((s) => s.activeOrgRole);
+    const hasFetched = useOrgStore((s) => s.hasFetched);
+
+    // Wait for org data before deciding (prevent premature redirect)
+    if (role === "user" && !hasFetched) {
+        return (
+            <div className="min-h-[60vh] flex items-center justify-center text-sm text-steel-400">
+                กำลังโหลดข้อมูลองค์กร...
+            </div>
+        );
+    }
+
+    // Org owners see dashboard (stats overview); regular members go to chatbot
+    if (role === "user" && orgRole !== "owner") {
         return <Navigate to="/chat" replace />;
     }
     return <DashboardPage />;
