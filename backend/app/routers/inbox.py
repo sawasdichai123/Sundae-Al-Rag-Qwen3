@@ -127,11 +127,16 @@ async def list_sessions(
             try:
                 profiles = await (
                     supabase.table("user_profiles")
-                    .select("id, full_name, email")
+                    .select("id, first_name, last_name, email")
                     .in_("id", uuid_ids)
                 ).execute()
                 for p in (profiles.data or []):
-                    name_map[str(p["id"])] = p.get("full_name") or p.get("email") or "Anonymous"
+                    name = None
+                    if p.get("first_name"):
+                        name = p["first_name"]
+                        if p.get("last_name"):
+                            name += f" {p['last_name']}"
+                    name_map[str(p["id"])] = name or p.get("email") or "Anonymous"
             except Exception as exc:
                 logger.warning("Failed to resolve user names: %s", exc)
 
@@ -356,6 +361,35 @@ async def send_admin_message(
         ).execute()
 
         logger.info("Admin message sent to session %s by %s", session_id, user.email)
+
+        # ── LINE Push: if this session is from LINE, push the reply ──
+        try:
+            session_full = await (
+                supabase.table("chat_sessions")
+                .select("platform_source, platform_user_id, bot_id")
+                .eq("id", session_id)
+                .limit(1)
+            ).execute()
+
+            if session_full.data:
+                sess = session_full.data[0]
+                if sess.get("platform_source") == "line" and sess.get("platform_user_id"):
+                    bot_result = await (
+                        supabase.table("bots")
+                        .select("line_access_token")
+                        .eq("id", sess["bot_id"])
+                        .limit(1)
+                    ).execute()
+                    if bot_result.data and bot_result.data[0].get("line_access_token"):
+                        from app.services.line_service import push_message
+                        await push_message(
+                            user_id=sess["platform_user_id"],
+                            text=content,
+                            access_token=bot_result.data[0]["line_access_token"],
+                        )
+                        logger.info("[LINE] Pushed admin reply to user %s", sess["platform_user_id"][:10])
+        except Exception as push_exc:
+            logger.warning("LINE push failed (non-blocking): %s", push_exc)
 
         created = insert_result.data[0] if insert_result.data else {
             **msg_row,

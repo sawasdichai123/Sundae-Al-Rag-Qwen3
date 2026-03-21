@@ -825,7 +825,7 @@ export default function WebChatPage() {
                                         {/* User Avatar */}
                                         {isUser && (
                                             <div className="w-8 h-8 rounded-xl bg-steel-700 flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5">
-                                                {(user?.full_name || user?.email)?.[0]?.toUpperCase() || "U"}
+                                                {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "U"}
                                             </div>
                                         )}
                                     </div>

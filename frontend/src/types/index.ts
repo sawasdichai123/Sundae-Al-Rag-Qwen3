@@ -22,7 +22,8 @@ export interface UserProfile {
     id: string;                         // maps to auth.users.id
     organization_id: string | null;     // DEPRECATED — use org_members
     email: string;                      // also in user_profiles table
-    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
     role: UserRole;
     is_approved: boolean;
     created_at: string;
@@ -41,7 +42,8 @@ export interface OrgMembership {
 export interface OrgMember {
     user_id: string;
     email: string;
-    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
     org_role: OrgRole;
     joined_at: string;
 }
@@ -67,7 +69,8 @@ export interface MyInvitation {
 export interface PendingUser {
     id: string;
     email: string;
-    full_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
     role: string;
     is_approved: boolean;
     created_at: string;

@@ -111,12 +111,12 @@ export default function ProfilePage() {
                 <h2 className="text-sm font-semibold text-steel-800 mb-4">ข้อมูลส่วนตัว</h2>
                 <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
-                        {(user?.full_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                        {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
                     </div>
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                             <p className="text-base font-semibold text-steel-900 truncate">
-                                {user?.full_name || "ไม่ระบุชื่อ"}
+                                {[user?.first_name, user?.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
                             </p>
                             {user?.role && roleBadge(user.role)}
                         </div>

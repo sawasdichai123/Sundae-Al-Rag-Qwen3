@@ -80,7 +80,8 @@ class OrgListItem(BaseModel):
 class OrgMemberResponse(BaseModel):
     user_id: str
     email: str
-    full_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     org_role: str
     joined_at: str | None = None
 
@@ -602,7 +603,7 @@ async def list_members(
     user_ids = [row["user_id"] for row in result.data]
     profiles_result = await (
         supabase.table("user_profiles")
-        .select("id, email, full_name")
+        .select("id, email, first_name, last_name")
         .in_("id", user_ids)
     ).execute()
 
@@ -615,7 +616,8 @@ async def list_members(
         members.append(OrgMemberResponse(
             user_id=row["user_id"],
             email=profile.get("email", ""),
-            full_name=profile.get("full_name"),
+            first_name=profile.get("first_name"),
+            last_name=profile.get("last_name"),
             org_role=row["org_role"],
             joined_at=row.get("joined_at"),
         ))

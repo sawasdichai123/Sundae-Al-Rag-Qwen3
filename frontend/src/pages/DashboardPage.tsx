@@ -168,11 +168,11 @@ function MemberManagement({ orgId }: { orgId: string }) {
                     {members.map((m) => (
                         <div key={m.user_id} className="flex items-center gap-3 py-3">
                             <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0">
-                                {(m.full_name || m.email)?.[0]?.toUpperCase() || "?"}
+                                {([m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)?.[0]?.toUpperCase() || "?"}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-steel-800 truncate">
-                                    {m.full_name || "ไม่ระบุชื่อ"}
+                                    {[m.first_name, m.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
                                 </p>
                                 <p className="text-xs text-steel-400 truncate">{m.email}</p>
                             </div>
@@ -185,7 +185,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                             </span>
                             {m.org_role !== "owner" && (
                                 <button
-                                    onClick={() => handleRemove(m.user_id, m.full_name || m.email)}
+                                    onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                     disabled={removingId === m.user_id}
                                     className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
                                 >

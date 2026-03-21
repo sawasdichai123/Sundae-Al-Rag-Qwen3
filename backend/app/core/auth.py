@@ -49,7 +49,8 @@ class CurrentUser:
     role: str               # "user" | "support" | "admin"
     is_approved: bool
     organization_id: str | None   # DEPRECATED — use org_members table
-    full_name: str | None
+    first_name: str | None
+    last_name: str | None
     active_org_id: str | None = None  # from X-Active-Org header
 
 
@@ -204,7 +205,8 @@ async def get_current_user(request: Request) -> CurrentUser:
         role=profile.get("role", "user"),
         is_approved=profile.get("is_approved", False),
         organization_id=profile.get("organization_id"),
-        full_name=profile.get("full_name"),
+        first_name=profile.get("first_name"),
+        last_name=profile.get("last_name"),
         active_org_id=active_org_id,
     )
 

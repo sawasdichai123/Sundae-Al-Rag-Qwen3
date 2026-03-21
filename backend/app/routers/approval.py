@@ -35,7 +35,8 @@ router = APIRouter(prefix="/api/admin", tags=["Admin"])
 class PendingUserResponse(BaseModel):
     id: str
     email: str
-    full_name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     role: str
     is_approved: bool
     created_at: str
@@ -63,7 +64,7 @@ async def list_pending_users(
     try:
         result = await (
             supabase.table("user_profiles")
-            .select("id, email, full_name, role, is_approved, created_at")
+            .select("id, email, first_name, last_name, role, is_approved, created_at")
             .eq("is_approved", False)
             .order("created_at", desc=True)
         ).execute()
@@ -72,7 +73,8 @@ async def list_pending_users(
             PendingUserResponse(
                 id=u["id"],
                 email=u.get("email", ""),
-                full_name=u.get("full_name"),
+                first_name=u.get("first_name"),
+                last_name=u.get("last_name"),
                 role=u.get("role", "user"),
                 is_approved=u.get("is_approved", False),
                 created_at=u.get("created_at", ""),

@@ -117,10 +117,10 @@ export default function ApprovalsPage() {
                             {pendingUsers.map((user) => (
                                 <div key={user.id} className="px-6 py-4 flex items-center gap-4 hover:bg-steel-50 transition-colors">
                                     <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-sm shrink-0">
-                                        {(user.full_name || user.email)?.[0]?.toUpperCase() || "?"}
+                                        {([user.first_name, user.last_name].filter(Boolean).join(" ") || user.email)?.[0]?.toUpperCase() || "?"}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium text-steel-800">{user.full_name || "ไม่ระบุชื่อ"}</p>
+                                        <p className="text-sm font-medium text-steel-800">{[user.first_name, user.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}</p>
                                         <p className="text-xs text-steel-400">{user.email}</p>
                                     </div>
                                     <span className="text-xs text-steel-400 shrink-0 hidden sm:block">

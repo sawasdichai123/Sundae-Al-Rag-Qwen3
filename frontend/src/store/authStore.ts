@@ -142,7 +142,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             id: profile.id,
             organization_id: profile.organization_id,
             email,
-            full_name: profile.full_name ?? null,
+            first_name: profile.first_name ?? null,
+            last_name: profile.last_name ?? null,
             role: profile.role as UserRole,
             is_approved: profile.is_approved ?? false,
             created_at: profile.created_at,
@@ -155,7 +156,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             try {
                 const { data: org, error: orgError } = await supabase
                     .from("organizations")
-                    .select("id,name,created_at")
+                    .select("id,name,slug,status,created_at,updated_at")
                     .eq("id", profile.organization_id)
                     .single();
 
@@ -166,7 +167,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                         organization: {
                             id: org.id,
                             name: org.name,
+                            slug: org.slug ?? "",
+                            status: org.status ?? "active",
                             created_at: org.created_at,
+                            updated_at: org.updated_at ?? org.created_at,
                         },
                     });
                 }

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_supabase, close_supabase
 from app.core.config import get_settings
-from app.routers import health, document, chat, bot, inbox, approval, organization
+from app.routers import health, document, chat, bot, inbox, approval, organization, webhook_line, widget
 from app.services.ai_models import get_embedding_service, get_reranker_service
 
 logger = logging.getLogger(__name__)
@@ -102,3 +102,13 @@ app.include_router(bot.router)
 app.include_router(inbox.router)
 app.include_router(approval.router)
 app.include_router(organization.router)
+app.include_router(webhook_line.router)
+app.include_router(widget.router)
+
+# ── Static files (widget.js etc.) ────────────────────────────────
+import pathlib
+from fastapi.staticfiles import StaticFiles
+
+_static_dir = pathlib.Path(__file__).resolve().parent.parent / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")

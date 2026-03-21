@@ -1,8 +1,9 @@
 """
 SUNDAE Backend — LINE Webhook Authentication
 
-Provides FastAPI dependency for verifying LINE webhook requests:
-  - verify_line_signature: Validates X-Line-Signature header using HMAC-SHA256
+Provides functions for verifying LINE webhook requests:
+  - verify_line_signature_with_secret: Validates using a provided channel secret
+  - verify_line_signature: FastAPI dependency using .env fallback (legacy)
 
 LINE Platform sends webhook events with:
   - Body: JSON payload with events
@@ -13,6 +14,12 @@ Authentication is purely based on the shared channel secret.
 
 Usage in routers::
 
+    # Dynamic (Multi-Tenant) — preferred for per-bot secrets
+    secret = bot_record["line_channel_secret"]
+    body = await request.body()
+    verify_line_signature_with_secret(body, request.headers.get("X-Line-Signature"), secret)
+
+    # Legacy dependency (uses .env LINE_CHANNEL_SECRET)
     @router.post("/line/webhook")
     async def line_webhook(
         request: Request,
@@ -35,19 +42,53 @@ from app.core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def verify_line_signature(request: Request) -> None:
-    """Verify that the incoming request is genuinely from the LINE Platform.
+def verify_line_signature_with_secret(
+    body: bytes,
+    signature: str | None,
+    channel_secret: str,
+) -> None:
+    """Verify a LINE webhook request using a specific channel secret.
 
-    Validates the X-Line-Signature header against the request body using
-    HMAC-SHA256 with the LINE Channel Secret.
+    This is the Multi-Tenant version — each bot has its own secret stored in DB.
 
-    This dependency MUST be used instead of Supabase JWT auth for LINE
-    webhook endpoints, because LINE servers do not send Supabase tokens.
+    Args:
+        body: Raw request body bytes.
+        signature: Value of the X-Line-Signature header.
+        channel_secret: The LINE Channel Secret for this specific bot/OA.
 
     Raises:
         HTTPException 400: Missing X-Line-Signature header.
         HTTPException 401: Invalid signature (request not from LINE).
-        HTTPException 500: LINE_CHANNEL_SECRET not configured.
+    """
+    if not signature:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing X-Line-Signature header.",
+        )
+
+    # Compute expected signature
+    hash_digest = hmac.new(
+        channel_secret.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).digest()
+    expected_signature = base64.b64encode(hash_digest).decode("utf-8")
+
+    # Constant-time comparison
+    if not hmac.compare_digest(signature, expected_signature):
+        logger.warning("LINE webhook signature mismatch — possible forgery")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid LINE signature. Request rejected.",
+        )
+
+    logger.debug("[LINE Auth] Signature verified OK (dynamic secret)")
+
+
+async def verify_line_signature(request: Request) -> None:
+    """Legacy FastAPI dependency — uses LINE_CHANNEL_SECRET from .env.
+
+    For Multi-Tenant setups, use verify_line_signature_with_secret() instead.
     """
     settings = get_settings()
 
@@ -58,31 +99,7 @@ async def verify_line_signature(request: Request) -> None:
             detail="LINE webhook is not configured on this server.",
         )
 
-    # ── 1. Extract signature from header ─────────────────────────
-    signature = request.headers.get("X-Line-Signature")
-    if not signature:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing X-Line-Signature header.",
-        )
-
-    # ── 2. Read request body ─────────────────────────────────────
     body = await request.body()
+    signature = request.headers.get("X-Line-Signature")
 
-    # ── 3. Compute expected signature ────────────────────────────
-    hash_digest = hmac.new(
-        settings.line_channel_secret.encode("utf-8"),
-        body,
-        hashlib.sha256,
-    ).digest()
-    expected_signature = base64.b64encode(hash_digest).decode("utf-8")
-
-    # ── 4. Constant-time comparison ──────────────────────────────
-    if not hmac.compare_digest(signature, expected_signature):
-        logger.warning("LINE webhook signature mismatch — possible forgery")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid LINE signature. Request rejected.",
-        )
-
-    logger.debug("[LINE Auth] Signature verified OK")
+    verify_line_signature_with_secret(body, signature, settings.line_channel_secret)

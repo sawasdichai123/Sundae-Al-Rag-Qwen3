@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="th">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BingsuCafe — ร้านบิงซูสุดฟิน</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;600;700&display=swap"
+    rel="stylesheet" />
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --primary: #6C63FF;
+      --primary-dark: #5A52D5;
+      --accent: #FF6B6B;
+      --bg: #0f0e17;
+      --surface: #1a1932;
+      --surface-light: #232146;
+      --text: #fffffe;
+      --text-muted: #a7a9be;
+    }
+
+    body {
+      font-family: 'Noto Sans Thai', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── Navbar ─────────────────────────────────────────────── */
+    .navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 40px;
+      background: rgba(15, 14, 23, 0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(108, 99, 255, 0.15);
+    }
+
+    .navbar-brand {
+      font-size: 22px;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .navbar-links {
+      display: flex;
+      gap: 28px;
+      list-style: none;
+    }
+
+    .navbar-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 400;
+      transition: color 0.2s;
+    }
+
+    .navbar-links a:hover {
+      color: var(--text);
+    }
+
+    /* ── Hero ───────────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 30% 40%, rgba(108, 99, 255, 0.15) 0%, transparent 60%),
+        radial-gradient(circle at 70% 60%, rgba(255, 107, 107, 0.1) 0%, transparent 50%);
+    }
+
+    .hero-content {
+      position: relative;
+      max-width: 700px;
+    }
+
+    .hero h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 20px;
+    }
+
+    .hero h1 span {
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      font-size: 18px;
+      color: var(--text-muted);
+      max-width: 520px;
+      margin: 0 auto 36px;
+    }
+
+    .hero-btn {
+      display: inline-block;
+      padding: 14px 36px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .hero-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(108, 99, 255, 0.35);
+    }
+
+    /* ── Features ───────────────────────────────────────────── */
+    .section {
+      padding: 80px 24px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-title {
+      text-align: center;
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 16px;
+      margin-bottom: 48px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid rgba(108, 99, 255, 0.1);
+      border-radius: 16px;
+      padding: 32px;
+      transition: transform 0.25s, border-color 0.25s;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(108, 99, 255, 0.35);
+    }
+
+    .feature-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .feature-card h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    /* ── Menu ───────────────────────────────────────────────── */
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 24px;
+    }
+
+    .menu-card {
+      background: var(--surface);
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: transform 0.25s;
+    }
+
+    .menu-card:hover {
+      transform: translateY(-4px);
+    }
+
+    .menu-img {
+      height: 160px;
+      background: var(--surface-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+    }
+
+    .menu-info {
+      padding: 20px;
+    }
+
+    .menu-info h3 {
+      font-size: 16px;
+      margin-bottom: 4px;
+    }
+
+    .menu-info .price {
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .menu-info p {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    /* ── CTA ────────────────────────────────────────────────── */
+    .cta-section {
+      text-align: center;
+      padding: 80px 24px;
+      background: linear-gradient(135deg, rgba(108, 99, 255, 0.08), rgba(255, 107, 107, 0.05));
+      border-radius: 24px;
+      margin: 40px 24px;
+      max-width: 1100px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .cta-section h2 {
+      font-size: 28px;
+      margin-bottom: 12px;
+    }
+
+    .cta-section p {
+      color: var(--text-muted);
+      margin-bottom: 28px;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────── */
+    .footer {
+      text-align: center;
+      padding: 32px;
+      color: var(--text-muted);
+      font-size: 13px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    /* ── Decorative blobs ───────────────────────────────────── */
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+      opacity: 0.4;
+    }
+
+    .blob-1 {
+      width: 400px;
+      height: 400px;
+      background: var(--primary);
+      top: -150px;
+      right: -100px;
+    }
+
+    .blob-2 {
+      width: 300px;
+      height: 300px;
+      background: var(--accent);
+      bottom: -100px;
+      left: -80px;
+    }
+
+    /* ── Notice banner ─────────────────────────────────────── */
+    .demo-banner {
+      background: linear-gradient(90deg, var(--accent), var(--primary));
+      color: #fff;
+      text-align: center;
+      padding: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 200;
+    }
+
+    .navbar {
+      top: 36px;
+    }
+
+    .hero {
+      padding-top: 160px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Demo Banner -->
+  <div class="demo-banner">
+    🧪 นี่คือเว็บไซต์ทดสอบ (Dummy) — ลองกดปุ่มแชทมุมขวาล่างเพื่อทดสอบ Web Widget
+  </div>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <div class="navbar-brand">🍧 BingsuCafe</div>
+    <ul class="navbar-links">
+      <li><a href="#features">จุดเด่น</a></li>
+      <li><a href="#menu">เมนู</a></li>
+      <li><a href="#contact">ติดต่อ</a></li>
+    </ul>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="hero-content">
+      <h1>บิงซูพรีเมียม<br><span>ส่งตรงถึงมือคุณ</span></h1>
+      <p>สัมผัสความอร่อยระดับเกาหลีแท้ๆ พร้อมท็อปปิ้งกว่า 20 ชนิด ให้คุณเลือกสรรตามใจ</p>
+      <a href="#menu" class="hero-btn">🍧 ดูเมนูทั้งหมด</a>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section id="features" class="section">
+    <h2 class="section-title">ทำไมต้อง BingsuCafe?</h2>
+    <p class="section-sub">ร้านบิงซูออนไลน์อันดับ 1 — สดใหม่ทุกวัน จัดส่งภายใน 30 นาที</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">❄️</div>
+        <h3>น้ำแข็งเกล็ดหิมะ</h3>
+        <p>เนื้อน้ำแข็งละเอียดเหมือนหิมะ ละลายในปาก ไม่เหมือนน้ำแข็งใสทั่วไป</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🥛</div>
+        <h3>นมสดแท้ 100%</h3>
+        <p>ใช้นมสดจากฟาร์มในประเทศไทย ไม่ผสมนมผง รสชาติเข้มข้นกลมกล่อม</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🚀</div>
+        <h3>ส่งไว 30 นาที</h3>
+        <p>ระบบจัดส่งแบบควบคุมอุณหภูมิ ถึงมือคุณยังคงความเย็นฉ่ำเหมือนเพิ่งตัก</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Menu -->
+  <section id="menu" class="section">
+    <h2 class="section-title">เมนูยอดนิยม</h2>
+    <p class="section-sub">คัดสรรมาแล้วเฉพาะเมนูที่ลูกค้ารีวิวมากที่สุด</p>
+    <div class="menu-grid">
+      <div class="menu-card">
+        <div class="menu-img">🍓</div>
+        <div class="menu-info">
+          <h3>สตรอว์เบอร์รีบิงซู</h3>
+          <div class="price">฿189</div>
+          <p>สตรอว์เบอร์รีสด + ไอศกรีมวนิลา + วิปครีมเกาหลี</p>
+        </div>
+      </div>
+      <div class="menu-card">
+        <div class="menu-img">🥭</div>
+        <div class="menu-info">
+          <h3>มะม่วงข้าวเหนียวบิงซู</h3>
+          <div class="price">฿209</div>
+          <p>มะม่วงน้ำดอกไม้ + ข้าวเหนียวมูน + น้ำกะทิ</p>
+        </div>
+      </div>
+      <div class="menu-card">
+        <div class="menu-img">🍫</div>
+        <div class="menu-info">
+          <h3>ช็อกโกแลตลาวาบิงซู</h3>
+          <div class="price">฿199</div>
+          <p>ช็อกโกแลตเบลเยียม + บราวนี่ + ไอศกรีมดาร์กช็อก</p>
+        </div>
+      </div>
+      <div class="menu-card">
+        <div class="menu-img">🍵</div>
+        <div class="menu-info">
+          <h3>มัทฉะอุจิบิงซู</h3>
+          <div class="price">฿219</div>
+          <p>ชาเขียวมัทฉะเกรด A + ถั่วแดง + โมจิญี่ปุ่น</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section id="contact" class="cta-section">
+    <h2>มีคำถาม? ลองถาม AI ของเราได้เลย!</h2>
+    <p>กดปุ่มแชทมุมขวาล่าง → พิมพ์คำถาม → AI จะตอบให้ทันที 🤖</p>
+    <a href="#" class="hero-btn" onclick="document.querySelector('.sw-fab')?.click(); return false;">💬 เปิดแชท</a>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>© 2026 BingsuCafe — เว็บไซต์ทดสอบ (Dummy) สำหรับ SUNDAE Web Widget</p>
+  </footer>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       SUNDAE Web Widget — ก๊อปโค้ดนี้ไปแปะบนเว็บไซต์จริง
+       ═══════════════════════════════════════════════════════════ -->
+  <!--
+    ⚠️ แก้ไข 2 ค่านี้ก่อนใช้:
+      data-bot-id  = UUID ของ Bot ที่สร้างไว้ใน SUNDAE
+      data-server  = URL ของ Backend server (เช่น http://localhost:8000)
+  -->
+  <script src="http://localhost:8000/static/widget.js" data-bot-id="YOUR_BOT_UUID_HERE"
+    data-server="http://localhost:8000" data-theme="#6C63FF" data-title="BingsuCafe — ถามได้เลย!">
+    </script>
+
+</body>
+
+</html>
