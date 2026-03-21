@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import init_supabase, close_supabase
 from app.core.config import get_settings
-from app.routers import health, document, chat, bot, inbox
+from app.routers import health, document, chat, bot, inbox, approval, organization
 from app.services.ai_models import get_embedding_service, get_reranker_service
 
 logger = logging.getLogger(__name__)
@@ -80,9 +80,15 @@ app = FastAPI(
 )
 
 # ── Middleware ───────────────────────────────────────────────────
+_settings = get_settings()
+_cors_origins = (
+    [o.strip() for o in _settings.cors_origins.split(",") if o.strip()]
+    if hasattr(_settings, "cors_origins") and _settings.cors_origins
+    else ["http://localhost:3000", "http://localhost:5173"]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Restrict in production
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -94,3 +100,5 @@ app.include_router(document.router)
 app.include_router(chat.router)
 app.include_router(bot.router)
 app.include_router(inbox.router)
+app.include_router(approval.router)
+app.include_router(organization.router)

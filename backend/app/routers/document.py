@@ -26,7 +26,8 @@ import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved
+from app.core.auth import CurrentUser, require_approved, require_org_owner, verify_organization
+from app.core.config import get_settings
 from app.core.database import get_supabase
 from app.services.ai_models import get_embedding_service
 from app.services.chunking import create_parent_child_chunks
@@ -87,6 +88,7 @@ async def list_documents(
     Returns:
         List of documents ordered by creation date (newest first).
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
     try:
         result = await (
@@ -100,7 +102,7 @@ async def list_documents(
 
     except Exception as exc:
         logger.error("Failed to list documents (org=%s): %s", organization_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to list documents: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to list documents.")
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -121,6 +123,7 @@ async def get_document(
     Raises:
         HTTPException 404: Document not found.
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
     try:
         result = await (
@@ -147,7 +150,7 @@ async def get_document(
 async def delete_document(
     document_id: str,
     organization_id: str,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> DeleteResponse:
     """Delete a document and all associated chunks.
 
@@ -164,6 +167,7 @@ async def delete_document(
         HTTPException 404: Document not found.
         HTTPException 500: Deletion failure.
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     # Verify document exists and belongs to the organization
@@ -201,7 +205,7 @@ async def delete_document(
 
     except Exception as exc:
         logger.error("Failed to delete document %s: %s", document_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to delete document: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to delete document.")
 
 
 @router.patch("/{document_id}/link-bot")
@@ -209,22 +213,34 @@ async def link_document_to_bot(
     document_id: str,
     organization_id: str,
     bot_id: Optional[str] = None,
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ):
     """Link or unlink a document to/from a bot.
 
     Pass bot_id to link, or null/omit to unlink.
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
+        # Verify bot belongs to the same organization (prevent cross-tenant linking)
+        if bot_id:
+            bot_check = await (
+                supabase.table("bots")
+                .select("id")
+                .eq("id", bot_id)
+                .eq("organization_id", organization_id)
+                .limit(1)
+            ).execute()
+            if not bot_check.data:
+                raise HTTPException(status_code=404, detail="Bot not found in this organization.")
+
         result = await (
             supabase.table("documents")
             .update({"bot_id": bot_id})
             .eq("id", document_id)
             .eq("organization_id", organization_id)
-            .execute()
-        )
+        ).execute()
 
         if not result.data:
             raise HTTPException(status_code=404, detail="Document not found.")
@@ -239,20 +255,29 @@ async def link_document_to_bot(
         raise
     except Exception as exc:
         logger.error("Failed to link document %s to bot: %s", document_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to link document: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to link document.")
 
 
 # ── Helper Functions ─────────────────────────────────────────────
 
 
+# Sentinel pattern injected before each page's text so the chunker can
+# determine which PDF page(s) a chunk originates from.
+PAGE_SENTINEL_PATTERN = "<<<PAGE:{page}>>>"
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Extract all text from a PDF file using PyMuPDF.
+
+    Each page is preceded by a sentinel marker ``<<<PAGE:N>>>`` (1-based)
+    so that downstream chunking can compute page_start / page_end for
+    every chunk.  The sentinel is stripped before storing chunk text.
 
     Args:
         pdf_bytes: Raw bytes of the PDF file.
 
     Returns:
-        Concatenated text from all pages.
+        Full text with page sentinels interleaved, ready for chunking.
 
     Raises:
         ValueError: If the PDF contains no extractable text.
@@ -268,7 +293,9 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         for page in doc:
             text = page.get_text("text")
             if text and text.strip():
-                pages.append(text.strip())
+                # page.number is 0-based; use +1 to match physical PDF page numbers
+                sentinel = f"\n{PAGE_SENTINEL_PATTERN.format(page=page.number + 1)}\n"
+                pages.append(sentinel + text.strip())
     finally:
         doc.close()
 
@@ -290,7 +317,7 @@ async def upload_document(
     file: UploadFile = File(...),
     organization_id: str = Form(...),
     bot_id: Optional[str] = Form(None),
-    user: CurrentUser = Depends(require_approved),
+    user: CurrentUser = Depends(require_org_owner),
 ) -> UploadResponse:
     """Upload a PDF document and process it through the RAG pipeline.
 
@@ -310,6 +337,9 @@ async def upload_document(
         HTTPException 400: Invalid file type or empty PDF.
         HTTPException 500: Processing or storage failure.
     """
+    # ── Security: verify user belongs to this org ────────────
+    await verify_organization(user, organization_id)
+
     # ── 1. Validate file type ────────────────────────────────────
     if file.content_type not in ("application/pdf",):
         raise HTTPException(
@@ -325,8 +355,24 @@ async def upload_document(
     supabase = get_supabase()
 
     try:
-        # ── 2. Insert document record (status = processing) ──────
+        # ── 2. Read & validate file size (max 50 MB) ──────────────
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
         doc_bytes = await file.read()
+
+        # Validate PDF magic bytes (don't rely solely on client-provided MIME type)
+        if not doc_bytes[:5] == b"%PDF-":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file: not a valid PDF (bad magic bytes).",
+            )
+
+        if len(doc_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large ({len(doc_bytes) / 1024 / 1024:.1f} MB). Maximum is 50 MB.",
+            )
+
+        # ── 3. Insert document record (status = processing) ──────
         file_size = len(doc_bytes)
 
         doc_row = {
@@ -363,9 +409,14 @@ async def upload_document(
         )
 
         # ── 4. Chunk text (Parent-Child) ────────────────────────
+        cfg = get_settings()
         parent_chunks = create_parent_child_chunks(
             text=full_text,
             document_id=document_id,
+            parent_chunk_size=cfg.parent_chunk_size,
+            parent_chunk_overlap=cfg.parent_chunk_overlap,
+            child_chunk_size=cfg.child_chunk_size,
+            child_chunk_overlap=cfg.child_chunk_overlap,
         )
 
         total_parent = len(parent_chunks)
@@ -401,6 +452,8 @@ async def upload_document(
                 "document_id": p.document_id,
                 "chunk_index": p.chunk_index,
                 "text": p.text,
+                "page_start": p.page_start,
+                "page_end": p.page_end,
             }
             for p in parent_chunks
         ]
@@ -418,6 +471,8 @@ async def upload_document(
                         "document_id": document_id,
                         "chunk_index": child.chunk_index,
                         "text": child.text,
+                        "page_start": child.page_start,
+                        "page_end": child.page_end,
                         "embedding": all_embeddings[embedding_idx],
                     }
                 )
@@ -463,5 +518,5 @@ async def upload_document(
 
         raise HTTPException(
             status_code=500,
-            detail=f"Document processing failed: {exc}",
+            detail="Document processing failed. Please try again.",
         )

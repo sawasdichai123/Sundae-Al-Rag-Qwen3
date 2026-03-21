@@ -11,6 +11,12 @@ import type {
     ChatAskResponse,
     Document,
     DocumentUploadResponse,
+    OrgInvitation,
+    OrgMember,
+    SourceReference,
+    OrgMembership,
+    MyInvitation,
+    PendingUser,
     PlatformSource,
 } from "../types";
 
@@ -96,7 +102,7 @@ export const chatApi = {
     askStream: (
         params: ChatAskParams,
         onToken: (token: string) => void,
-        onSources: (sources: Array<{ document_id: string; chunk_index: number; score: number }>) => void,
+        onSources: (sources: SourceReference[]) => void,
         onDone: () => void,
         onError: (error: string) => void,
     ): AbortController => {
@@ -151,12 +157,17 @@ export const chatApi = {
                 };
 
                 const doFetch = async (accessToken: string) => {
+                    const headers: Record<string, string> = {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${accessToken}`,
+                    };
+                    try {
+                        const activeOrgId = localStorage.getItem("sundae_active_org_id");
+                        if (activeOrgId) headers["X-Active-Org"] = activeOrgId;
+                    } catch { /* ignore */ }
                     return await fetch(`${baseUrl}/api/chat/ask/stream`, {
                         method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": `Bearer ${accessToken}`,
-                        },
+                        headers,
                         body: JSON.stringify(payload),
                         signal: controller.signal,
                     });
@@ -337,4 +348,82 @@ export const inboxApi = {
         apiClient.get("/api/inbox/my-sessions", {
             params: { organization_id: organizationId },
         }),
+};
+
+// ── Admin (User Approval) ────────────────────────────────────────
+
+export const adminApi = {
+    /** List pending (unapproved) users. */
+    listPending: () =>
+        apiClient.get<PendingUser[]>("/api/admin/pending-users"),
+
+    /** Approve a user — just sets is_approved=true. */
+    approve: (userId: string) =>
+        apiClient.post<{ message: string; user_id: string }>(
+            `/api/admin/approve/${userId}`
+        ),
+
+    /** Reject a pending user. */
+    reject: (userId: string) =>
+        apiClient.post<{ message: string; user_id: string }>(
+            `/api/admin/reject/${userId}`
+        ),
+};
+
+// ── Organizations (Multi-tenant) ────────────────────────────────
+
+export const orgApi = {
+    /** Create a new organization (user becomes owner). */
+    create: (name: string) =>
+        apiClient.post<{ id: string; name: string; slug: string }>("/api/orgs", { name }),
+
+    /** List user's organizations (via org_members). */
+    list: () =>
+        apiClient.get<OrgMembership[]>("/api/orgs"),
+
+    /** Get organization details. */
+    get: (orgId: string) =>
+        apiClient.get<{ id: string; name: string; slug: string; status: string; created_at: string }>(
+            `/api/orgs/${orgId}`
+        ),
+
+    /** Update organization name. */
+    update: (orgId: string, name: string) =>
+        apiClient.put(`/api/orgs/${orgId}`, { name }),
+
+    /** Request organization deletion. */
+    requestDeletion: (orgId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/request-deletion`),
+
+    /** Confirm organization deletion (other party). */
+    confirmDeletion: (orgId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/confirm-deletion`),
+
+    /** List members of an organization. */
+    listMembers: (orgId: string) =>
+        apiClient.get<OrgMember[]>(`/api/orgs/${orgId}/members`),
+
+    /** Invite a user by email. */
+    invite: (orgId: string, email: string) =>
+        apiClient.post<OrgInvitation>(`/api/orgs/${orgId}/invite`, { email }),
+
+    /** Remove a member from an organization. */
+    removeMember: (orgId: string, userId: string) =>
+        apiClient.delete(`/api/orgs/${orgId}/members/${userId}`),
+
+    /** List invitations sent to current user. */
+    myInvitations: () =>
+        apiClient.get<MyInvitation[]>("/api/orgs/invitations"),
+
+    /** Accept an invitation. */
+    acceptInvitation: (invitationId: string) =>
+        apiClient.post(`/api/orgs/invitations/${invitationId}/accept`),
+
+    /** Decline an invitation. */
+    declineInvitation: (invitationId: string) =>
+        apiClient.post(`/api/orgs/invitations/${invitationId}/decline`),
+
+    /** Leave an organization (member only, not owner). */
+    leave: (orgId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/leave`),
 };

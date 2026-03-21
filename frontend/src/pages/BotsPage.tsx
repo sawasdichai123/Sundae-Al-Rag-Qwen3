@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { botsApi, documentsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Bot, Document } from "../types";
 
@@ -85,7 +86,8 @@ export default function BotsPage() {
 
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
-    const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load bots ───────────────────────────────────────────────
     const loadBots = useCallback(async () => {
@@ -174,7 +176,7 @@ export default function BotsPage() {
         setEditingBot(bot);
         setFormName(bot.name);
         setFormDescription(bot.description || "");
-        setFormPrompt(bot.prompt || bot.system_prompt || "");
+        setFormPrompt(bot.system_prompt || "");
         setFormWebEnabled(bot.is_web_enabled);
         setViewMode("edit");
         // Load documents to show linked ones
@@ -433,9 +435,9 @@ export default function BotsPage() {
 
                 {/* Knowledge Link */}
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-steel-800 mb-1">ความรู้</label>
+                    <label className="block text-sm font-bold text-steel-800 mb-1">Knowledge Base</label>
                     <p className="text-xs text-steel-400 mb-3">
-                        หากต้องการเชื่อมต่อฐานความรู้ที่นี่ ให้เพิ่มข้อมูลลงในพื้นที่ทำงาน "ความรู้" ก่อน
+                        To connect to the knowledge base here, add information to the "Knowledge" workspace first.
                     </p>
                     <button
                         onClick={() => {
@@ -448,7 +450,7 @@ export default function BotsPage() {
                         }}
                         className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-4 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
                     >
-                        เลือกความรู้
+                        Select Knowledge Base
                     </button>
 
                     {/* Linked documents chips */}
@@ -580,7 +582,7 @@ export default function BotsPage() {
                                         )}
                                     </div>
                                     <p className="text-xs text-steel-500 line-clamp-2">
-                                        {bot.prompt || bot.system_prompt || bot.description || "ไม่มีคำอธิบาย"}
+                                        {bot.system_prompt || bot.description || "ไม่มีคำอธิบาย"}
                                     </p>
                                 </div>
 

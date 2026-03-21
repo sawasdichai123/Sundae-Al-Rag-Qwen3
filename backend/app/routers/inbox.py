@@ -22,12 +22,13 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, require_role
+from app.core.auth import CurrentUser, require_approved, require_role, verify_organization, verify_session_access
 from app.core.database import get_supabase
 
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -105,6 +106,7 @@ async def list_sessions(
     Only support and admin roles can access this endpoint.
     Sessions are ordered by last_message_at (newest first).
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -140,7 +142,7 @@ async def list_sessions(
 
     except Exception as exc:
         logger.error("Failed to list sessions (org=%s): %s", organization_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to list sessions.")
 
 
 class MySessionResponse(BaseModel):
@@ -165,6 +167,7 @@ async def list_my_sessions(
     Any approved user can call this endpoint — returns only their own sessions
     (filtered by platform_user_id = user.id).
     """
+    await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -208,7 +211,7 @@ async def list_my_sessions(
 
     except Exception as exc:
         logger.error("Failed to list user sessions (user=%s, org=%s): %s", user.id, organization_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to list sessions.")
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
@@ -218,6 +221,8 @@ async def get_session_messages(
     user: CurrentUser = Depends(require_approved),
 ) -> list[MessageResponse]:
     """Get all messages in a chat session, ordered by creation time."""
+    await verify_organization(user, organization_id)
+    await verify_session_access(user, session_id, organization_id)
     supabase = get_supabase()
 
     try:
@@ -233,7 +238,7 @@ async def get_session_messages(
 
     except Exception as exc:
         logger.error("Failed to get messages for session %s: %s", session_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to get messages: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to get messages.")
 
 
 @router.put("/sessions/{session_id}/status", response_model=StatusUpdateResponse)
@@ -250,6 +255,7 @@ async def update_session_status(
         - human_takeover: A human agent has taken over
         - resolved: The session is closed
     """
+    await verify_organization(user, organization_id)
     valid_statuses = {"active", "human_takeover", "helped", "resolved"}
     if body.status not in valid_statuses:
         raise HTTPException(
@@ -283,7 +289,7 @@ async def update_session_status(
         raise
     except Exception as exc:
         logger.error("Failed to update session %s: %s", session_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to update session: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to update session.")
 
 
 @router.post("/sessions/{session_id}/messages", response_model=MessageResponse)
@@ -298,6 +304,7 @@ async def send_admin_message(
     Automatically sets the session status to 'human_takeover' if currently 'active'.
     Updates the session's last_message_at timestamp.
     """
+    await verify_organization(user, organization_id)
     content = body.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content must not be empty.")
@@ -320,8 +327,8 @@ async def send_admin_message(
         current_status = session_result.data[0].get("status", "active")
 
         # Auto-escalate to human_takeover if currently active
-        update_data: dict = {"last_message_at": "now()"}
-        if current_status in {"active", "helped"}:
+        update_data: dict = {"last_message_at": datetime.now(timezone.utc).isoformat()}
+        if current_status == "active":
             update_data["status"] = "human_takeover"
 
         await (
@@ -350,14 +357,17 @@ async def send_admin_message(
 
         logger.info("Admin message sent to session %s by %s", session_id, user.email)
 
-        created = insert_result.data[0] if insert_result.data else msg_row
+        created = insert_result.data[0] if insert_result.data else {
+            **msg_row,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
         return MessageResponse(**created)
 
     except HTTPException:
         raise
     except Exception as exc:
         logger.error("Failed to send admin message (session=%s): %s", session_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to send message: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to send message.")
 
 
 @router.get("/sessions/{session_id}/messages/new", response_model=PollResponse)
@@ -376,6 +386,8 @@ async def get_new_messages(
     Args:
         after: ISO-8601 timestamp. Only messages with created_at > after are returned.
     """
+    await verify_organization(user, organization_id)
+    await verify_session_access(user, session_id, organization_id)
     supabase = get_supabase()
 
     try:
@@ -411,4 +423,4 @@ async def get_new_messages(
 
     except Exception as exc:
         logger.error("Failed to poll new messages (session=%s): %s", session_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to get new messages: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to get new messages.")

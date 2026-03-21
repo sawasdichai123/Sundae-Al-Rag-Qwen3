@@ -17,7 +17,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { chatApi, botsApi, inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
-import type { Bot, SessionStatus } from "../types";
+import { useOrgStore } from "../store/orgStore";
+import type { Bot, SessionStatus, SourceReference } from "../types";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -25,14 +26,15 @@ interface ChatBubble {
     id: string;
     role: "user" | "assistant" | "admin" | "system";
     content: string;
-    sources?: Array<{ document_id: string; chunk_index: number; score: number }>;
+    sources?: SourceReference[];
     timestamp: Date;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/** localStorage key per bot for session persistence */
-const sessionKey = (botId: string) => `sundae_chat_session_${botId}`;
+/** localStorage key per bot+org for session persistence */
+const sessionKey = (botId: string, orgId?: string) =>
+    orgId ? `sundae_chat_session_${orgId}_${botId}` : `sundae_chat_session_${botId}`;
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -84,8 +86,9 @@ export default function WebChatPage() {
 
     // Auth store
     const user = useAuthStore((s) => s.user);
-    const orgId = user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
-    const platformUserId = user?.id || `web-${crypto.randomUUID().slice(0, 8)}`;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = activeOrgId || user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
+    const [platformUserId] = useState(() => user?.id || `web-${crypto.randomUUID().slice(0, 8)}`);
 
     // Bot selector
     const [bots, setBots] = useState<Bot[]>([]);
@@ -109,11 +112,35 @@ export default function WebChatPage() {
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
     // Load chat history
+    const historyLoadedRef = useRef(false);
     const loadHistory = useCallback(async () => {
         if (!orgId) return;
         try {
             const res = await inboxApi.mySessions(orgId);
-            setHistorySessions(res.data || []);
+            const sessions: HistorySession[] = res.data || [];
+            setHistorySessions(sessions);
+
+            // On first load, auto-select the most recent session for the current bot
+            // so the user sees their last conversation instead of the welcome screen
+            if (!historyLoadedRef.current && sessions.length > 0) {
+                historyLoadedRef.current = true;
+                setSelectedBotId((currentBotId) => {
+                    const botId = currentBotId || null;
+                    const lastSession = botId
+                        ? sessions.find((s) => s.bot_id === botId)
+                        : sessions[0];
+                    if (lastSession) {
+                        if (lastSession.bot_id) {
+                            localStorage.setItem(sessionKey(lastSession.bot_id, orgId), lastSession.id);
+                        }
+                        setSessionId(lastSession.id);
+                        setMessages([]);
+                        setSessionStatus((lastSession.status || "active") as SessionStatus);
+                        lastPollTimestampRef.current = null;
+                    }
+                    return lastSession?.bot_id || currentBotId;
+                });
+            }
         } catch (err) {
             console.error("[Chat] Failed to load history:", err);
         }
@@ -129,16 +156,17 @@ export default function WebChatPage() {
         try {
             const res = await botsApi.list(orgId);
             setBots(res.data);
-            // Auto-select first active web-enabled bot if none selected
-            if (!selectedBotId && res.data.length > 0) {
+            // Auto-select first active web-enabled bot if none selected yet
+            setSelectedBotId((prev) => {
+                if (prev) return prev; // already selected — don't overwrite
+                if (res.data.length === 0) return prev;
                 const webBot = res.data.find((b) => b.is_active && b.is_web_enabled);
-                if (webBot) setSelectedBotId(webBot.id);
-                else setSelectedBotId(res.data[0].id);
-            }
+                return webBot ? webBot.id : res.data[0].id;
+            });
         } catch (err) {
             console.error("[Chat] Failed to load bots:", err);
         }
-    }, [orgId, selectedBotId]);
+    }, [orgId]);
 
     useEffect(() => {
         loadBots();
@@ -146,22 +174,22 @@ export default function WebChatPage() {
 
     const selectedBot = bots.find((b) => b.id === selectedBotId);
 
-    // ── Fix 2: Session persistence — load or create sessionId per bot ──
+    // ── Fix 2: Session persistence — load or create sessionId per bot+org ──
     useEffect(() => {
         if (!selectedBotId) return;
-        const stored = localStorage.getItem(sessionKey(selectedBotId));
+        const stored = localStorage.getItem(sessionKey(selectedBotId, orgId));
         if (stored) {
             setSessionId(stored);
         } else {
             const newId = crypto.randomUUID();
-            localStorage.setItem(sessionKey(selectedBotId), newId);
+            localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
             setSessionId(newId);
         }
         // Reset messages — will be loaded from DB by the next useEffect
         setMessages([]);
         setSessionStatus("active");
         lastPollTimestampRef.current = null;
-    }, [selectedBotId]);
+    }, [selectedBotId, orgId]);
 
     // ── Fix 2: Reload messages + session status from DB on mount ────────
     useEffect(() => {
@@ -195,8 +223,9 @@ export default function WebChatPage() {
                         lastPollTimestampRef.current = msgs[msgs.length - 1].created_at;
                     }
                 }
-            } catch {
+            } catch (err) {
                 // Session doesn't exist in DB yet — that's fine, first message will create it
+                console.warn("[Chat] Failed to restore session messages:", err);
             }
         };
         restore();
@@ -236,12 +265,21 @@ export default function WebChatPage() {
     }, [botDropdownOpen]);
 
     // ── Fix 1: Poll for admin replies + sync session status ─────────────
+    // Use a ref to read sessionStatus inside the interval without
+    // re-creating the interval every time the status changes.
+    const sessionStatusRef = useRef(sessionStatus);
+    useEffect(() => { sessionStatusRef.current = sessionStatus; }, [sessionStatus]);
+
+    // Poll in any non-terminal status so we catch admin-initiated changes
     useEffect(() => {
-        if (sessionStatus !== "human_takeover" || !orgId || !sessionId) return;
+        if (!orgId || !sessionId) return;
 
         const interval = setInterval(async () => {
+            // No need to poll terminal statuses
+            if (sessionStatusRef.current === "resolved") return;
+            if (document.hidden) return; // skip polling when tab is not visible
             try {
-                const after = lastPollTimestampRef.current || new Date().toISOString();
+                const after = lastPollTimestampRef.current || new Date(0).toISOString();
                 const res = await inboxApi.getNewMessages(sessionId, orgId, after);
                 const pollData = res.data;
 
@@ -267,9 +305,9 @@ export default function WebChatPage() {
                     lastPollTimestampRef.current = lastMsg.created_at;
                 }
 
-                // Sync session status from backend
+                // Sync session status from backend — only react when it actually changes
                 const backendStatus = pollData?.session_status;
-                if (backendStatus && backendStatus !== "human_takeover") {
+                if (backendStatus && backendStatus !== sessionStatusRef.current) {
                     setSessionStatus(backendStatus as SessionStatus);
                     if (backendStatus === "active") {
                         setMessages((prev) => [
@@ -309,7 +347,7 @@ export default function WebChatPage() {
         }, 3000);
 
         return () => clearInterval(interval);
-    }, [sessionStatus, sessionId, orgId]);
+    }, [sessionId, orgId]);
 
     // Request human handoff
     const handleRequestHuman = async () => {
@@ -354,7 +392,7 @@ export default function WebChatPage() {
     const handleNewChat = () => {
         if (!selectedBotId) return;
         const newId = crypto.randomUUID();
-        localStorage.setItem(sessionKey(selectedBotId), newId);
+        localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
         setSessionId(newId);
         setMessages([]);
         setSessionStatus("active");
@@ -367,7 +405,7 @@ export default function WebChatPage() {
     const handleSelectSession = (hist: HistorySession) => {
         if (hist.bot_id) {
             setSelectedBotId(hist.bot_id);
-            localStorage.setItem(sessionKey(hist.bot_id), hist.id);
+            localStorage.setItem(sessionKey(hist.bot_id, orgId), hist.id);
         }
         setSessionId(hist.id);
         setMessages([]);
@@ -414,6 +452,8 @@ export default function WebChatPage() {
         const assistantId = crypto.randomUUID();
         let created = false;
         let finished = false;
+        // Buffer sources — they arrive before the first token (before bubble exists)
+        let pendingSources: SourceReference[] | null = null;
 
         const markFinished = () => {
             if (finished) return; // Prevent double-call
@@ -445,9 +485,11 @@ export default function WebChatPage() {
                             id: assistantId,
                             role: "assistant",
                             content: token,
+                            sources: pendingSources ?? undefined,
                             timestamp: new Date(),
                         },
                     ]);
+                    pendingSources = null;
                 } else {
                     setMessages((prev) =>
                         prev.map((m) =>
@@ -458,13 +500,17 @@ export default function WebChatPage() {
                     );
                 }
             },
-            // onSources
+            // onSources — buffer if bubble doesn't exist yet
             (sources) => {
-                setMessages((prev) =>
-                    prev.map((m) =>
-                        m.id === assistantId ? { ...m, sources } : m
-                    )
-                );
+                if (!created) {
+                    pendingSources = sources;
+                } else {
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === assistantId ? { ...m, sources } : m
+                        )
+                    );
+                }
             },
             // onDone
             () => {
@@ -507,6 +553,13 @@ export default function WebChatPage() {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
     };
+
+    // Abort streaming on unmount to prevent memory leaks
+    useEffect(() => {
+        return () => {
+            abortControllerRef.current?.abort();
+        };
+    }, []);
 
     // Helper: format relative time
     const timeAgo = (dateStr: string | null) => {
@@ -738,17 +791,28 @@ export default function WebChatPage() {
                                                         <span className="text-[11px] font-medium text-steel-400">อ้างอิงจากเอกสาร</span>
                                                     </div>
                                                     <div className="flex flex-wrap gap-1.5">
-                                                        {msg.sources.map((src, i) => (
-                                                            <span
-                                                                key={i}
-                                                                className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200"
-                                                            >
-                                                                <span className="w-1 h-1 rounded-full bg-brand-400"></span>
-                                                                {src.document_id.slice(0, 8)}…
-                                                                <span className="text-steel-400">#{src.chunk_index}</span>
-                                                                <span className="text-emerald-500 font-semibold">{(src.score * 100).toFixed(0)}%</span>
-                                                            </span>
-                                                        ))}
+                                                        {msg.sources.map((src, i) => {
+                                                            const docLabel = src.document_name ?? `${src.document_id.slice(0, 8)}…`;
+                                                            const pageLabel = src.page_start != null
+                                                                ? src.page_start === src.page_end || src.page_end == null
+                                                                    ? `หน้า ${src.page_start}`
+                                                                    : `หน้า ${src.page_start}–${src.page_end}`
+                                                                : null;
+                                                            return (
+                                                                <span
+                                                                    key={i}
+                                                                    className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200"
+                                                                    title={`${docLabel}${pageLabel ? ` — ${pageLabel}` : ""} (${(src.score * 100).toFixed(0)}%)`}
+                                                                >
+                                                                    <span className="w-1 h-1 rounded-full bg-brand-400"></span>
+                                                                    <span className="truncate max-w-[120px]">{docLabel}</span>
+                                                                    {pageLabel && (
+                                                                        <span className="text-steel-400 shrink-0">{pageLabel}</span>
+                                                                    )}
+                                                                    <span className="text-emerald-500 font-semibold shrink-0">{(src.score * 100).toFixed(0)}%</span>
+                                                                </span>
+                                                            );
+                                                        })}
                                                     </div>
                                                 </div>
                                             )}

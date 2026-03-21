@@ -1,0 +1,211 @@
+# Organization Multi-Tenant System
+
+ระบบ Organization สำหรับแบ่งแยกข้อมูลแต่ละบริษัท — Owner สร้าง Org, เชิญ Member มาใช้ Bot ร่วมกัน
+
+## User Review Required
+
+> [!IMPORTANT]
+> SQL 2 statements ด้านล่างถูกรันไปแล้วใน Supabase:
+> - `org_members` table (many-to-many user↔org)
+> - `organizations.status` + `deletion_requested_by` columns
+>
+> Migration 011 จะรวม SQL ที่เหลือ (RLS, indexes, ย้าย data จาก `user_profiles.organization_id`)
+
+> [!WARNING]
+> การย้ายจาก `user_profiles.organization_id` → `org_members` จะกระทบ **ทุก query** ที่ใช้ `organization_id` ใน frontend/backend ปัจจุบัน ต้องแก้หลายไฟล์
+> นอกจากนี้มีการแยก `full_name` เป็น `first_name` และ `last_name` (Migration 012) ซึ่งได้ทำการเปลี่ยนโค้ดส่วนใหญ่ไปแล้ว
+
+---
+
+## Proposed Changes
+
+### Database Migration
+
+#### [NEW] [011_org_members_migration.sql](file:///c:/Users/zypny/Desktop/Sundae/backend/sql/011_org_members_migration.sql)
+
+เพิ่ม index, RLS, migrate data จาก `user_profiles` → `org_members`, สร้าง invitation table
+
+#### [NEW] [012_split_fullname.sql](file:///c:/Users/zypny/Desktop/Sundae/backend/sql/012_split_fullname.sql)
+
+เปลี่ยน column `full_name` เป็น `first_name` + `last_name` (รันบน DB แล้ว)
+
+```sql
+-- 1. Index + RLS สำหรับ org_members (table สร้างไปแล้ว)
+CREATE INDEX idx_org_members_user ON org_members(user_id);
+CREATE INDEX idx_org_members_org ON org_members(organization_id);
+ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;
+
+-- 2. Migrate data: user_profiles.organization_id → org_members
+INSERT INTO org_members (user_id, organization_id, org_role)
+SELECT id, organization_id, 'member'
+FROM user_profiles
+WHERE organization_id IS NOT NULL
+ON CONFLICT DO NOTHING;
+
+-- 3. Invitation table
+CREATE TABLE IF NOT EXISTS org_invitations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    invited_email TEXT NOT NULL,
+    invited_by UUID REFERENCES auth.users(id),
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending','accepted','revoked')),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_invitations_email ON org_invitations(invited_email);
+CREATE INDEX idx_invitations_org ON org_invitations(organization_id);
+```
+
+---
+
+### Backend — Organization Router
+
+#### [NEW] [organization.py](file:///c:/Users/zypny/Desktop/Sundae/backend/app/routers/organization.py)
+
+| Endpoint | Method | Auth | หน้าที่ |
+|----------|--------|------|--------|
+| `/api/orgs` | POST | `require_approved` | สร้าง Org (ผู้สร้าง = owner) |
+| `/api/orgs` | GET | `require_approved` | List Orgs ที่ user เป็นสมาชิก |
+| `/api/orgs/{id}` | GET | `require_approved` | ดูรายละเอียด Org |
+| `/api/orgs/{id}` | PUT | owner only | แก้ไขชื่อ/รายละเอียด |
+| `/api/orgs/{id}/request-deletion` | POST | owner or support | ขอลบ Org (pending) |
+| `/api/orgs/{id}/confirm-deletion` | POST | อีกฝ่าย confirm | ลบจริง (soft delete) |
+| `/api/orgs/{id}/members` | GET | owner | List สมาชิก |
+| `/api/orgs/{id}/invite` | POST | owner | เชิญ user ด้วย email |
+| `/api/orgs/{id}/members/{uid}` | DELETE | owner | ลบ member ออก |
+| `/api/orgs/invitations` | GET | `require_approved` | ดู invitations ที่ส่งถึงฉัน |
+| `/api/orgs/invitations/{id}/accept` | POST | invited user | ตอบรับเชิญ |
+
+**Org Role Authorization:**
+```python
+async def require_org_owner(org_id: str, user: CurrentUser) -> None:
+    """ตรวจสอบว่า user เป็น owner ของ org นี้"""
+    # query org_members where user_id=user.id, org_id=org_id, org_role='owner'
+    # if not found → 403
+```
+
+---
+
+### Backend — Auth Middleware Update
+
+#### [MODIFY] [auth.py](file:///c:/Users/zypny/Desktop/Sundae/backend/app/core/auth.py)
+
+เพิ่ม `active_org_id` ใน `CurrentUser`:
+
+```diff
+ @dataclass
+ class CurrentUser:
+     id: str
+     email: str
+     role: str               # global role: user/support/admin
+     is_approved: bool
+-    organization_id: str | None
+-    full_name: str | None
++    organization_id: str | None    # deprecated — ใช้ org_members แทน
++    first_name: str | None
++    last_name: str | None
++    active_org_id: str | None      # Org ที่เลือกใช้งาน (จาก header X-Active-Org)
+```
+
+Frontend ส่ง `X-Active-Org: <uuid>` header ทุก request → `get_current_user()` ตรวจสอบว่า user เป็นสมาชิก org นั้นจริง
+
+---
+
+### Backend — Existing Router Updates
+
+#### [MODIFY] [bot.py](file:///c:/Users/zypny/Desktop/Sundae/backend/app/routers/bot.py)
+
+เพิ่ม org_role check:
+- `create_bot`, `update_bot`, `delete_bot` → ต้องเป็น **owner** เท่านั้น
+- `list_bots`, `get_bot` → owner หรือ member ก็ได้
+
+#### [MODIFY] [document.py](file:///c:/Users/zypny/Desktop/Sundae/backend/app/routers/document.py)
+
+- `upload_document` → owner only
+- `list_documents` → owner + member
+
+#### [MODIFY] [inbox.py](file:///c:/Users/zypny/Desktop/Sundae/backend/app/routers/inbox.py)
+
+- ทุก endpoint → owner only
+
+---
+
+### Frontend — Org Switcher
+
+#### [NEW] [OrgSwitcher.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/components/OrgSwitcher.tsx)
+
+Dropdown ใน sidebar header — แสดง Orgs ที่ user เป็นสมาชิก, เปลี่ยน active org
+
+#### [MODIFY] [DashboardLayout.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/layouts/DashboardLayout.tsx)
+
+เพิ่ม `OrgSwitcher` ใน sidebar (บน nav items)
+
+#### [NEW] [orgStore.ts](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/store/orgStore.ts)
+
+```typescript
+interface OrgState {
+    orgs: Organization[];           // Orgs ที่ user เป็นสมาชิก (มี id, name, slug, status)
+    activeOrgId: string | null;     // Org ที่เลือกใช้งาน
+    orgRole: 'owner' | 'member';    // role ใน Org ปัจจุบัน
+    setActiveOrg: (id: string) => void;
+    fetchOrgs: () => Promise<void>;
+}
+```
+
+#### [MODIFY] [axios.ts](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/api/axios.ts)
+
+Request interceptor → แนบ `X-Active-Org` header จาก `orgStore.activeOrgId`
+
+---
+
+### Frontend — Org Settings Page
+
+#### [NEW] [OrganizationPage.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/pages/OrganizationPage.tsx)
+
+สำหรับ Owner:
+- แก้ไขชื่อ/slug Org
+- ดูรายชื่อ Members (แสดง first_name, last_name, email)
+- เชิญ Member ด้วย email
+- ลบ Member
+- ขอลบ Org (pending → รอ Support confirm)
+
+#### [NEW] [CreateOrgPage.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/pages/CreateOrgPage.tsx)
+
+หน้าสร้าง Org ใหม่ (แสดงหลัง approve ถ้ายังไม่มี Org)
+
+#### [MODIFY] [App.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/App.tsx)
+
+เพิ่ม routes:
+- `/organizations` → OrganizationPage
+- `/organizations/new` → CreateOrgPage
+
+#### [MODIFY] [endpoints.ts](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/api/endpoints.ts)
+
+เพิ่ม API calls สำหรับ org CRUD, invite, accept
+
+---
+
+### Frontend — Permission Gating
+
+#### [MODIFY] [BotsPage.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/pages/BotsPage.tsx)
+
+- ซ่อนปุ่ม "สร้าง Bot", "แก้ไข", "ลบ" ถ้า `orgRole !== 'owner'`
+
+#### [MODIFY] [KnowledgeBasePage.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/pages/KnowledgeBasePage.tsx)
+
+- ซ่อนปุ่ม "Upload" ถ้า `orgRole !== 'owner'`
+
+#### [MODIFY] [DashboardLayout.tsx](file:///c:/Users/zypny/Desktop/Sundae/frontend/src/layouts/DashboardLayout.tsx)
+
+- ซ่อน Inbox, KB nav items ถ้า `orgRole === 'member'`
+
+---
+
+## Verification Plan
+
+### Manual Verification
+1. สร้าง account ใหม่ → approve → สร้าง Org → ยืนยันเป็น owner
+2. เชิญ email อื่น → ล็อกอินด้วย email นั้น → accept invite → ยืนยันเป็น member
+3. Member ลองสร้าง Bot → ต้องถูกบล็อก (403)
+4. Member ลองใช้ Bot (chat) → ต้องใช้ได้
+5. Owner ขอลบ Org → ยืนยัน status=pending_deletion → Support confirm → status=deleted
+6. Org Switcher → สลับ Org → ข้อมูลเปลี่ยนตาม

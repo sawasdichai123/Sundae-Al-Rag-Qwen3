@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
+import { useOrgStore } from "../store/orgStore";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -102,7 +103,8 @@ export default function InboxPage() {
     const hasLoadedSessionsOnceRef = useRef(false);
 
     const user = useAuthStore((s) => s.user);
-    const orgId = (user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load sessions ───────────────────────────────────────────
     const loadSessions = useCallback(async (opts?: { silent?: boolean }) => {
@@ -131,6 +133,7 @@ export default function InboxPage() {
     useEffect(() => {
         if (!orgId) return;
         const interval = setInterval(() => {
+            if (document.hidden) return; // skip polling when tab is not visible
             loadSessions({ silent: true });
         }, 3000);
         return () => clearInterval(interval);
@@ -143,9 +146,9 @@ export default function InboxPage() {
         try {
             const res = await inboxApi.getMessages(session.id, orgId);
             setMessages(res.data);
-            // initialize poll cursor to the last message timestamp
+            // initialize poll cursor to the last message timestamp (or now if empty)
             const last = res.data?.[res.data.length - 1];
-            lastPollTimestampRef.current = last?.created_at ?? null;
+            lastPollTimestampRef.current = last?.created_at ?? new Date().toISOString();
         } catch (err) {
             console.error("[Inbox] Failed to load messages:", err);
         } finally {
@@ -167,9 +170,9 @@ export default function InboxPage() {
         if (!selectedSession || !orgId) return;
         try {
             await inboxApi.updateStatus(selectedSession.id, orgId, newStatus);
-            setSelectedSession({ ...selectedSession, status: newStatus });
-            // Refresh session list
-            await loadSessions();
+            setSelectedSession((prev) => (prev ? { ...prev, status: newStatus } : prev));
+            // Refresh session list (silent to avoid loading spinner)
+            await loadSessions({ silent: true });
         } catch (err) {
             console.error("[Inbox] Status update failed:", err);
         }
@@ -179,18 +182,22 @@ export default function InboxPage() {
     useEffect(() => {
         if (!selectedSession || !orgId) return;
 
+        let cancelled = false;
+
         const interval = setInterval(async () => {
+            if (cancelled || document.hidden) return; // skip if unmounted or tab hidden
             try {
                 const after = lastPollTimestampRef.current || "1970-01-01T00:00:00Z";
                 const res = await inboxApi.getNewMessages(selectedSession.id, orgId, after);
+                if (cancelled) return; // check again after await
                 const pollData = res.data;
 
                 // Sync current session status (backend may change it)
                 const backendStatus = (pollData as any)?.session_status as string | undefined;
                 if (backendStatus && backendStatus !== selectedSession.status) {
                     setSelectedSession((prev) => (prev ? { ...prev, status: backendStatus } : prev));
-                    // Also refresh list so badge updates
-                    loadSessions();
+                    // Also refresh list so badge updates (silent to avoid loading spinner)
+                    loadSessions({ silent: true });
                 }
 
                 const newMsgs = (pollData as any)?.messages as Message[] | undefined;
@@ -201,15 +208,18 @@ export default function InboxPage() {
                         return unique.length > 0 ? [...prev, ...unique] : prev;
                     });
                     lastPollTimestampRef.current = newMsgs[newMsgs.length - 1].created_at;
-                    // sessions list should reflect last_message_at
-                    loadSessions();
+                    // sessions list should reflect last_message_at (silent to avoid loading spinner)
+                    loadSessions({ silent: true });
                 }
             } catch (err) {
-                console.error("[Inbox] Poll new messages failed:", err);
+                if (!cancelled) console.error("[Inbox] Poll new messages failed:", err);
             }
         }, 2000);
 
-        return () => clearInterval(interval);
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
     }, [selectedSession, orgId, loadSessions]);
 
     // ── Send admin reply ─────────────────────────────────────────
@@ -224,9 +234,9 @@ export default function InboxPage() {
             setReplyText("");
             if (replyInputRef.current) replyInputRef.current.style.height = "auto";
             // Update session status locally if it changed
-            if (selectedSession.status === "active") {
-                setSelectedSession({ ...selectedSession, status: "human_takeover" });
-            }
+            setSelectedSession((prev) =>
+                prev && prev.status === "active" ? { ...prev, status: "human_takeover" } : prev
+            );
         } catch (err) {
             console.error("[Inbox] Failed to send reply:", err);
         } finally {

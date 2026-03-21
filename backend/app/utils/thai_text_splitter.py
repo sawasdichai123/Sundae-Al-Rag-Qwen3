@@ -22,8 +22,7 @@ from __future__ import annotations
 import re
 from typing import List
 
-from llama_index.core.node_parser import SentenceSplitter
-from pythainlp.tokenize import word_tokenize
+# NOTE: llama_index and pythainlp are imported lazily to speed up server startup.
 
 # Delimiter injected between Thai words before splitting.
 # Using a rare Unicode character that won't appear in real Thai text.
@@ -52,6 +51,7 @@ def _segment_thai(text: str, engine: str = "newmm") -> str:
     """
 
     def _replace_match(match: re.Match) -> str:
+        from pythainlp.tokenize import word_tokenize
         thai_run = match.group(0)
         tokens = word_tokenize(thai_run, engine=engine, keep_whitespace=True)
         return _THAI_WORD_DELIMITER.join(tokens)
@@ -90,6 +90,7 @@ class ThaiTextSplitter:
         # Build the underlying LlamaIndex splitter.
         # We add _THAI_WORD_DELIMITER to the list of secondary separators so
         # that the splitter prefers to cut at Thai word boundaries.
+        from llama_index.core.node_parser import SentenceSplitter
         self._splitter = SentenceSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,

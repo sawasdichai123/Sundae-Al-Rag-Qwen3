@@ -36,8 +36,11 @@ class MatchedChildChunk:
     id: str
     parent_id: str
     document_id: str
+    document_name: Optional[str]
     chunk_index: int
     text: str
+    page_start: Optional[int]
+    page_end: Optional[int]
     similarity: float
 
 
@@ -47,8 +50,11 @@ class RetrievedParentChunk:
 
     id: str
     document_id: str
+    document_name: Optional[str]
     chunk_index: int
     text: str
+    page_start: Optional[int]
+    page_end: Optional[int]
     # The best similarity score among the child chunks that mapped to this parent
     best_child_similarity: float
     # All child chunks that pointed to this parent
@@ -112,8 +118,11 @@ async def search_child_chunks(
             id=row["id"],
             parent_id=row["parent_id"],
             document_id=row["document_id"],
+            document_name=row.get("document_name"),
             chunk_index=row["chunk_index"],
             text=row["text"],
+            page_start=row.get("page_start"),
+            page_end=row.get("page_end"),
             similarity=row["similarity"],
         )
         for row in response.data
@@ -146,7 +155,7 @@ async def fetch_parent_chunks(
     # (e.g. if a child chunk's parent_id was somehow corrupted).
     query = (
         client.table("document_parent_chunks")
-        .select("id, document_id, chunk_index, text")
+        .select("id, document_id, chunk_index, text, page_start, page_end")
         .in_("id", parent_ids)
         .eq("organization_id", organization_id)
     )
@@ -228,12 +237,16 @@ async def search_parent_chunks(
             continue
 
         best_score = max(c.similarity for c in children)
+        doc_name = children[0].document_name if children else None
         results.append(
             RetrievedParentChunk(
                 id=parent_row["id"],
                 document_id=parent_row["document_id"],
+                document_name=doc_name,
                 chunk_index=parent_row["chunk_index"],
                 text=parent_row["text"],
+                page_start=parent_row.get("page_start"),
+                page_end=parent_row.get("page_end"),
                 best_child_similarity=best_score,
                 matched_children=sorted(
                     children, key=lambda c: c.similarity, reverse=True
@@ -275,13 +288,19 @@ async def store_parent_chunks(
             "organization_id": organization_id,
             "chunk_index": chunk["chunk_index"],
             "text": chunk["text"],
+            "page_start": chunk.get("page_start"),
+            "page_end": chunk.get("page_end"),
         }
         for chunk in parent_chunks
     ]
 
+    # Batch insert to avoid payload limits on large documents
+    BATCH_SIZE = 100
     try:
-        query = client.table("document_parent_chunks").insert(rows)
-        await query.execute()
+        for i in range(0, len(rows), BATCH_SIZE):
+            batch = rows[i : i + BATCH_SIZE]
+            query = client.table("document_parent_chunks").insert(batch)
+            await query.execute()
     except Exception as exc:
         logger.error("Failed to store %d parent chunks (org=%s): %s", len(rows), organization_id, exc)
         raise RuntimeError(f"Failed to store parent chunks: {exc}") from exc
@@ -316,13 +335,19 @@ async def store_child_chunks(
             "chunk_index": chunk["chunk_index"],
             "text": chunk["text"],
             "embedding": chunk["embedding"],
+            "page_start": chunk.get("page_start"),
+            "page_end": chunk.get("page_end"),
         }
         for chunk in child_chunks
     ]
 
+    # Batch insert to avoid payload limits on large documents
+    BATCH_SIZE = 50  # smaller batch for child chunks (includes embedding vectors)
     try:
-        query = client.table("document_child_chunks").insert(rows)
-        await query.execute()
+        for i in range(0, len(rows), BATCH_SIZE):
+            batch = rows[i : i + BATCH_SIZE]
+            query = client.table("document_child_chunks").insert(batch)
+            await query.execute()
     except Exception as exc:
         logger.error("Failed to store %d child chunks (org=%s): %s", len(rows), organization_id, exc)
         raise RuntimeError(f"Failed to store child chunks: {exc}") from exc

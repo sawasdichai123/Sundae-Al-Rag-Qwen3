@@ -8,7 +8,7 @@
  * Token Keep-Alive System:
  *   Since we disabled Web Locks (Bug B17), Supabase's built-in
  *   autoRefreshToken does NOT work reliably. We compensate with:
- *     1. Periodic refresh every 4 minutes
+ *     1. Periodic refresh every 30 minutes
  *     2. Refresh on tab focus (user returns after idle/sleep)
  *     3. Timestamp-based staleness check on visibility change
  */
@@ -25,17 +25,53 @@ if (!supabaseUrl || !supabaseAnonKey) {
     );
 }
 
+// In-memory mutex lock — replaces navigator.locks to avoid Bug B17 deadlock,
+// while still serializing concurrent calls (prevents auth-js _acquireLock deadlock).
+// Includes a timeout to prevent permanent deadlock when tab is suspended/resumed.
+const lockQueues = new Map<string, Promise<void>>();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function inMemoryLock(_name: string, acquireTimeout: number, fn: () => Promise<any>): Promise<any> {
+    const queue = lockQueues.get(_name) ?? Promise.resolve();
+    let resolve: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    lockQueues.set(_name, next);
+
+    // Wait for the previous holder to finish, but with a timeout
+    // to recover from stale locks (e.g. tab was suspended mid-operation)
+    const timeout = Math.max(acquireTimeout || 5000, 5000);
+    await Promise.race([
+        queue,
+        new Promise<void>((r) => setTimeout(r, timeout)),
+    ]);
+
+    try {
+        return await fn();
+    } finally {
+        resolve!();
+        if (lockQueues.get(_name) === next) {
+            lockQueues.delete(_name);
+        }
+    }
+}
+
+// Reset stale locks when tab becomes visible again (after sleep/suspend)
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+        // Clear all lock queues — any pending lock from before suspend is stale
+        lockQueues.clear();
+    }
+});
+
 export const supabase = createClient(
     supabaseUrl || "http://localhost:54321",
     supabaseAnonKey || "placeholder-key",
     {
         auth: {
-            // No-op lock function — prevents "Acquiring an exclusive Navigator Lock… timed out"
-            // deadlock that blocks the entire app (Bug B17).
+            // In-memory mutex lock — avoids navigator.locks deadlock (Bug B17)
+            // while properly serializing concurrent auth operations.
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            lock: (async (_name: string, _acquireTimeout: number, fn: () => Promise<any>) => {
-                return await fn();
-            }) as any,
+            lock: inMemoryLock as any,
             autoRefreshToken: true,
             persistSession: true,
             detectSessionInUrl: true,
@@ -67,7 +103,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
     });
 }
 
-async function refreshOnce(): Promise<void> {
+export async function refreshOnce(): Promise<void> {
     if (refreshPromise) return refreshPromise;
 
     refreshPromise = (async () => {
@@ -112,6 +148,13 @@ async function forceReauth(): Promise<void> {
 }
 
 async function refreshIfNeeded() {
+    // Skip refresh on auth pages where no session is expected
+    // or where refreshing could invalidate a recovery session
+    const authPages = ["/login", "/register", "/forgot-password", "/reset-password"];
+    if (authPages.includes(window.location.pathname)) {
+        return;
+    }
+
     try {
         const { data } = await withTimeout(
             supabase.auth.getSession(),
@@ -130,8 +173,8 @@ async function refreshIfNeeded() {
         const now = Math.floor(Date.now() / 1000);
         const remainingSec = expiresAt - now;
 
-        // Refresh if less than 10 minutes remaining
-        if (remainingSec < 600) {
+        // Refresh if less than 35 minutes remaining
+        if (remainingSec < 2100) {
             await refreshOnce();
             if (consecutiveRefreshFailures >= 2) {
                 await forceReauth();
@@ -140,17 +183,17 @@ async function refreshIfNeeded() {
     } catch { /* silent */ }
 }
 
-// 1. Periodic refresh — every 4 minutes
-setInterval(refreshIfNeeded, 4 * 60 * 1000);
+// 1. Periodic refresh — every 30 minutes
+setInterval(refreshIfNeeded, 30 * 60 * 1000);
 
 // 2. Refresh on tab focus — handles idle/sleep/tab-switch scenarios
 //    Also checks if we've been away for more than 5 minutes (sleep/hibernate)
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
         const timeSinceLastRefresh = Date.now() - lastRefreshTime;
-        const fiveMinutes = 5 * 60 * 1000;
+        const thirtyFiveMinutes = 35 * 60 * 1000;
 
-        if (timeSinceLastRefresh > fiveMinutes) {
+        if (timeSinceLastRefresh > thirtyFiveMinutes) {
             // We've been away for a while — force refresh immediately
             refreshIfNeeded();
         }

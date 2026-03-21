@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # ── Application ──────────────────────────────────────────────
     app_name: str = "SUNDAE API"
     debug: bool = False
+    cors_origins: str = Field(
+        default="http://localhost:3000,http://localhost:5173",
+        description="Comma-separated allowed CORS origins",
+    )
 
     # ── Supabase (Self-Hosted) ───────────────────────────────────
     supabase_url: str = Field(..., description="Supabase project URL")

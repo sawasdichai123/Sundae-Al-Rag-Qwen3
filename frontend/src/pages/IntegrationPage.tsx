@@ -4,10 +4,14 @@
  * Displays integration cards for LINE and Website channels.
  * Each card has a toggle switch, status badge, and documentation link.
  *
+ * NOTE: Toggle state is UI-only (not persisted to the database).
+ * Integration enablement is controlled per-bot via is_web_enabled / is_line_enabled.
+ *
  * Figma ref: Intregration.png
  */
 
 import { useState } from "react";
+import { useToastStore } from "../store/toastStore";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -94,6 +98,12 @@ function IntegrationCard({ icon, name, description, enabled, onToggle }: Integra
 export default function IntegrationPage() {
     const [lineEnabled, setLineEnabled] = useState(false);
     const [webEnabled, setWebEnabled] = useState(true);
+    const toast = useToastStore((s) => s.addToast);
+
+    const handleToggle = (name: string, setter: React.Dispatch<React.SetStateAction<boolean>>) => {
+        setter((prev) => !prev);
+        toast("info", `${name}: ฟีเจอร์นี้ยังอยู่ระหว่างพัฒนา — การตั้งค่าจะยังไม่ถูกบันทึก`);
+    };
 
     return (
         <div className="animate-fade-in">
@@ -110,7 +120,7 @@ export default function IntegrationPage() {
                     name="LINE"
                     description="Connect to LINE for Seamless Integration and Quick Communication"
                     enabled={lineEnabled}
-                    onToggle={() => setLineEnabled(!lineEnabled)}
+                    onToggle={() => handleToggle("LINE", setLineEnabled)}
                 />
 
                 <IntegrationCard
@@ -118,7 +128,7 @@ export default function IntegrationPage() {
                     name="Website"
                     description="Connect to Website for Seamless Integration and Quick Communication"
                     enabled={webEnabled}
-                    onToggle={() => setWebEnabled(!webEnabled)}
+                    onToggle={() => handleToggle("Website", setWebEnabled)}
                 />
             </div>
         </div>

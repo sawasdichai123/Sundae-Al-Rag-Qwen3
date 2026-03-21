@@ -7,14 +7,17 @@
  */
 
 import { useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, Link, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { supabase } from "../api/supabaseClient";
+import Spinner from "../components/Spinner";
 
 type Tab = "login" | "register";
 
 export default function LoginPage() {
     const { signIn, isAuthenticated, isLoading, authError, clearError } = useAuthStore();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const resetSuccess = searchParams.get("reset") === "success";
     const [tab, setTab] = useState<Tab>("login");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -31,6 +34,7 @@ export default function LoginPage() {
         setTab(t);
         clearError();
         setRegisterMsg("");
+        if (resetSuccess) setSearchParams({}, { replace: true });
     };
 
     // ── Sign In ─────────────────────────────────────────────────
@@ -48,13 +52,11 @@ export default function LoginPage() {
         setRegisterMsg("");
         clearError();
 
-        // 1. Create auth user
+        // 1. Create auth user — org is created later via CreateOrgPage
         const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password: password.trim(),
-            options: {
-                data: { full_name: fullName.trim() || null },
-            },
+            options: { data: { full_name: fullName.trim() || null } },
         });
 
         if (error) {
@@ -71,7 +73,7 @@ export default function LoginPage() {
         // user_profiles row ถูกสร้างอัตโนมัติโดย DB trigger (handle_new_auth_user)
         // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
 
-        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Admin อนุมัติก่อนใช้งาน)");
+        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Support อนุมัติก่อนใช้งาน)");
         setRegisterLoading(false);
         setPassword("");
         // Auto-switch to login tab after 1.5s
@@ -115,6 +117,13 @@ export default function LoginPage() {
                 </button>
             </div>
 
+            {/* Reset Password Success */}
+            {resetSuccess && (
+                <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                    เปลี่ยนรหัสผ่านสำเร็จ กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่
+                </div>
+            )}
+
             {/* Error / Success Messages */}
             {authError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
@@ -154,6 +163,11 @@ export default function LoginPage() {
                             disabled={isLoading}
                             className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
                         />
+                        <div className="mt-1.5 text-right">
+                            <Link to="/forgot-password" className="text-xs text-steel-400 hover:text-brand-500 transition-colors">
+                                ลืมรหัสผ่าน?
+                            </Link>
+                        </div>
                     </div>
                     <button
                         type="submit"
@@ -215,7 +229,7 @@ export default function LoginPage() {
                         )}
                     </button>
                     <p className="text-[10px] text-steel-400 text-center">
-                        สมัครแล้วต้องรอ Admin อนุมัติก่อนจึงจะใช้ฟีเจอร์ทั้งหมดได้
+                        สมัครแล้วต้องรอ Support อนุมัติก่อนจึงจะใช้ฟีเจอร์ทั้งหมดได้
                     </p>
                 </form>
             )}
@@ -227,11 +241,3 @@ export default function LoginPage() {
     );
 }
 
-function Spinner() {
-    return (
-        <svg className="w-4 h-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-    );
-}

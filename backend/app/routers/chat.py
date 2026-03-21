@@ -25,13 +25,14 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.core.auth import CurrentUser, require_approved
+from app.core.auth import CurrentUser, require_approved, verify_organization, verify_session_access
 from app.core.database import get_supabase
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response, generate_response_stream
@@ -66,7 +67,10 @@ class SourceChunk(BaseModel):
     """A source chunk used to generate the answer."""
 
     document_id: str
+    document_name: Optional[str] = None
     chunk_index: int
+    page_start: Optional[int] = None
+    page_end: Optional[int] = None
     score: float
 
 
@@ -83,8 +87,11 @@ class ChatResponse(BaseModel):
 
 async def _validate_bot(
     bot_id: str, organization_id: str, platform_source: str
-) -> None:
+) -> dict:
     """Validate bot ownership and platform enablement.
+
+    Returns:
+        The bot record dict (includes system_prompt, etc.).
 
     Raises:
         HTTPException 404: Bot not found or doesn't belong to the org.
@@ -93,7 +100,7 @@ async def _validate_bot(
     supabase = get_supabase()
     query = (
         supabase.table("bots")
-        .select("id, organization_id, is_web_enabled, is_active")
+        .select("id, organization_id, is_web_enabled, is_active, system_prompt")
         .eq("id", bot_id)
         .eq("organization_id", organization_id)
         .limit(1)
@@ -119,6 +126,8 @@ async def _validate_bot(
             status_code=403,
             detail="Web chat is disabled for this bot.",
         )
+
+    return bot
 
 
 # ── Endpoint ─────────────────────────────────────────────────────
@@ -159,11 +168,15 @@ async def ask_question(
     platform_source = request.platform_source
     session_id = request.session_id
 
+    # ── Security: verify user belongs to this org ────────────
+    await verify_organization(user, organization_id)
+
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
 
     # ── Step 0: Validate Bot ────────────────────────────────────
-    await _validate_bot(bot_id, organization_id, platform_source)
+    bot = await _validate_bot(bot_id, organization_id, platform_source)
+    bot_system_prompt = bot.get("system_prompt") or None
 
     try:
         t0 = time.time()
@@ -202,14 +215,18 @@ async def ask_question(
             # Build source references from reranked results
             sources: list[SourceChunk] = []
             for rr in rerank_results:
-                original_parent = parent_results[rr.original_index]
-                sources.append(
-                    SourceChunk(
-                        document_id=original_parent.document_id,
-                        chunk_index=original_parent.chunk_index,
-                        score=round(rr.score, 4),
+                if rr.original_index < len(parent_results):
+                    original_parent = parent_results[rr.original_index]
+                    sources.append(
+                        SourceChunk(
+                            document_id=original_parent.document_id,
+                            document_name=original_parent.document_name,
+                            chunk_index=original_parent.chunk_index,
+                            page_start=original_parent.page_start,
+                            page_end=original_parent.page_end,
+                            score=round(rr.score, 4),
+                        )
                     )
-                )
 
             t3 = time.time()
             logger.info("Step 3 Rerank: %.1fs — %d → %d survived (org=%s)", t3 - t2, len(parent_results), len(rerank_results), organization_id)
@@ -219,7 +236,10 @@ async def ask_question(
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
+                    document_name=p.document_name,
                     chunk_index=p.chunk_index,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
                     score=round(p.best_child_similarity, 4),
                 )
                 for p in parent_results
@@ -235,6 +255,7 @@ async def ask_question(
         answer = await generate_response(
             user_query=user_query,
             retrieved_contexts=surviving_texts,
+            system_prompt=bot_system_prompt,
         )
 
         t4 = time.time()
@@ -246,19 +267,32 @@ async def ask_question(
             try:
                 supabase = get_supabase()
 
-                # Upsert chat session with omnichannel fields
+                # Upsert chat session — try insert first, fall back to update
+                # This avoids TOCTOU race condition with check-then-insert
+                now_iso = datetime.now(timezone.utc).isoformat()
                 session_row = {
                     "id": session_id,
                     "organization_id": organization_id,
                     "bot_id": bot_id,
                     "platform_user_id": platform_user_id,
                     "platform_source": platform_source,
-                    "last_message_at": "now()",
+                    "started_at": now_iso,
+                    "last_message_at": now_iso,
                 }
-                await (
-                    supabase.table("chat_sessions")
-                    .upsert(session_row, on_conflict="id")
-                ).execute()
+                try:
+                    await (
+                        supabase.table("chat_sessions")
+                        .insert(session_row)
+                    ).execute()
+                except Exception:
+                    # Session already exists (concurrent insert or repeat message)
+                    # — just update last_message_at without overwriting started_at
+                    await (
+                        supabase.table("chat_sessions")
+                        .update({"last_message_at": now_iso})
+                        .eq("id", session_id)
+                        .eq("organization_id", organization_id)
+                    ).execute()
 
                 # Insert user message
                 user_msg = {
@@ -305,7 +339,7 @@ async def ask_question(
         logger.error("RAG pipeline failed (org=%s): %s", organization_id, exc)
         raise HTTPException(
             status_code=500,
-            detail=f"RAG pipeline processing failed: {exc}",
+            detail="RAG pipeline processing failed. Please try again.",
         )
 
 
@@ -334,10 +368,14 @@ async def ask_question_stream(
     platform_source = request.platform_source
     session_id = request.session_id
 
+    # ── Security: verify user belongs to this org ────────────
+    await verify_organization(user, organization_id)
+
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
 
-    await _validate_bot(bot_id, organization_id, platform_source)
+    bot = await _validate_bot(bot_id, organization_id, platform_source)
+    bot_system_prompt = bot.get("system_prompt") or None
 
     # Steps 1-3 run before streaming starts
     t0 = time.time()
@@ -369,7 +407,10 @@ async def ask_question_stream(
                     sources.append(
                         SourceChunk(
                             document_id=original_parent.document_id,
+                            document_name=original_parent.document_name,
                             chunk_index=original_parent.chunk_index,
+                            page_start=original_parent.page_start,
+                            page_end=original_parent.page_end,
                             score=round(rr.score, 4),
                         )
                     )
@@ -379,7 +420,10 @@ async def ask_question_stream(
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
+                    document_name=p.document_name,
                     chunk_index=p.chunk_index,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
                     score=round(p.best_child_similarity, 4),
                 )
                 for p in parent_results
@@ -389,7 +433,7 @@ async def ask_question_stream(
             sources = []
     except Exception as exc:
         logger.error("Stream pre-processing failed (org=%s): %s", organization_id, exc)
-        raise HTTPException(status_code=500, detail=f"RAG pre-processing failed: {exc}")
+        raise HTTPException(status_code=500, detail="RAG pre-processing failed. Please try again.")
 
     t_pre = time.time()
     logger.info("Stream pre-processing: %.1fs (org=%s)", t_pre - t0, organization_id)
@@ -400,20 +444,48 @@ async def ask_question_stream(
     if session_id:
         try:
             supabase_pre = get_supabase()
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            # Try insert first, fall back to update (avoids TOCTOU race)
             session_row = {
                 "id": session_id,
                 "organization_id": organization_id,
                 "bot_id": bot_id,
                 "platform_user_id": platform_user_id,
                 "platform_source": platform_source,
-                "last_message_at": "now()",
+                "started_at": now_iso,
+                "last_message_at": now_iso,
             }
-            await (
-                supabase_pre.table("chat_sessions")
-                .upsert(session_row, on_conflict="id")
-            ).execute()
+            try:
+                await (
+                    supabase_pre.table("chat_sessions")
+                    .insert(session_row)
+                ).execute()
+            except Exception:
+                # Session already exists — update last_message_at only
+                await (
+                    supabase_pre.table("chat_sessions")
+                    .update({"last_message_at": now_iso})
+                    .eq("id", session_id)
+                    .eq("organization_id", organization_id)
+                ).execute()
         except Exception as pre_exc:
             logger.warning("Pre-stream session upsert failed (session=%s): %s", session_id, pre_exc)
+
+    # Save user message BEFORE streaming so it persists even if client disconnects
+    if session_id:
+        try:
+            supabase_msg = get_supabase()
+            user_msg = {
+                "id": str(uuid.uuid4()),
+                "session_id": session_id,
+                "organization_id": organization_id,
+                "role": "user",
+                "content": user_query,
+            }
+            await (supabase_msg.table("chat_messages").insert(user_msg)).execute()
+        except Exception as msg_exc:
+            logger.warning("Failed to save user message (session=%s): %s", session_id, msg_exc)
 
     async def event_stream():
         # Send sources first so frontend can display them
@@ -429,6 +501,7 @@ async def ask_question_stream(
             async for token in generate_response_stream(
                 user_query=user_query,
                 retrieved_contexts=surviving_texts,
+                system_prompt=bot_system_prompt,
             ):
                 full_answer.append(token)
                 token_data = json.dumps(
@@ -443,48 +516,38 @@ async def ask_question_stream(
                 ensure_ascii=False,
             )
             yield f"data: {error_data}\n\n"
+        finally:
+            # Save assistant message in finally — runs even if client disconnects
+            answer_text = "".join(full_answer)
+            if session_id and answer_text:
+                try:
+                    supabase = get_supabase()
+                    await (
+                        supabase.table("chat_sessions")
+                        .update({"last_message_at": datetime.now(timezone.utc).isoformat()})
+                        .eq("id", session_id)
+                        .eq("organization_id", organization_id)
+                    ).execute()
+
+                    assistant_msg = {
+                        "id": str(uuid.uuid4()),
+                        "session_id": session_id,
+                        "organization_id": organization_id,
+                        "role": "assistant",
+                        "content": answer_text,
+                        "metadata": {
+                            "sources": [s.model_dump() for s in sources],
+                            "reranked_count": len(sources),
+                        },
+                    }
+                    await (supabase.table("chat_messages").insert(assistant_msg)).execute()
+                except Exception as log_exc:
+                    logger.warning("Failed to log assistant message (session=%s): %s", session_id, log_exc)
+
+            logger.info("Stream complete: %.1fs total (org=%s)", time.time() - t0, organization_id)
 
         # ALWAYS send done signal — even if streaming errored
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-        # Log messages (session row already created before streaming)
-        answer_text = "".join(full_answer)
-        if session_id:
-            try:
-                supabase = get_supabase()
-
-                # Update last_message_at after streaming completes
-                await (
-                    supabase.table("chat_sessions")
-                    .update({"last_message_at": "now()"})
-                    .eq("id", session_id)
-                ).execute()
-
-                user_msg = {
-                    "id": str(uuid.uuid4()),
-                    "session_id": session_id,
-                    "organization_id": organization_id,
-                    "role": "user",
-                    "content": user_query,
-                }
-                await (supabase.table("chat_messages").insert(user_msg)).execute()
-
-                assistant_msg = {
-                    "id": str(uuid.uuid4()),
-                    "session_id": session_id,
-                    "organization_id": organization_id,
-                    "role": "assistant",
-                    "content": answer_text,
-                    "metadata": {
-                        "sources": [s.model_dump() for s in sources],
-                        "reranked_count": len(sources),
-                    },
-                }
-                await (supabase.table("chat_messages").insert(assistant_msg)).execute()
-            except Exception as log_exc:
-                logger.warning("Failed to log chat (session=%s): %s", session_id, log_exc)
-
-        logger.info("Stream complete: %.1fs total (org=%s)", time.time() - t0, organization_id)
 
     return StreamingResponse(
         event_stream(),
@@ -526,6 +589,8 @@ async def request_human(
     Sets session status to 'human_takeover' and inserts a system message
     so the admin sees the escalation in the Inbox.
     """
+    await verify_organization(user, body.organization_id)
+    await verify_session_access(user, body.session_id, body.organization_id)
     supabase = get_supabase()
 
     try:
@@ -544,7 +609,7 @@ async def request_human(
         # Update status to human_takeover
         await (
             supabase.table("chat_sessions")
-            .update({"status": "human_takeover", "last_message_at": "now()"})
+            .update({"status": "human_takeover", "last_message_at": datetime.now(timezone.utc).isoformat()})
             .eq("id", body.session_id)
             .eq("organization_id", body.organization_id)
         ).execute()
@@ -576,7 +641,7 @@ async def request_human(
         raise
     except Exception as exc:
         logger.error("Handoff request failed (session=%s): %s", body.session_id, exc)
-        raise HTTPException(status_code=500, detail=f"Handoff request failed: {exc}")
+        raise HTTPException(status_code=500, detail="Handoff request failed. Please try again.")
 
 
 # ── Send Plain Message (during handoff) ──────────────────────
@@ -608,6 +673,8 @@ async def send_user_message(
     Used when the session is in human_takeover mode — the user can keep
     sending messages that the admin will see in the Inbox.
     """
+    await verify_organization(user, body.organization_id)
+    await verify_session_access(user, body.session_id, body.organization_id)
     content = body.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content must not be empty.")
@@ -640,8 +707,9 @@ async def send_user_message(
     # Update last_message_at
     await (
         supabase.table("chat_sessions")
-        .update({"last_message_at": "now()"})
+        .update({"last_message_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", body.session_id)
+        .eq("organization_id", body.organization_id)
     ).execute()
 
     logger.info("Plain message sent: session=%s, user=%s", body.session_id, user.id)

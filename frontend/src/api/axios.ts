@@ -4,77 +4,66 @@
  * Token protection strategy (3 layers):
  *   Layer 1: Request interceptor  — refreshes if token expires within 5 min
  *   Layer 2: Response interceptor — retries once on 401 with fresh token
- *   Layer 3: Periodic refresh     — every 4 min in supabaseClient.ts
+ *   Layer 3: Periodic refresh     — every 30 min in supabaseClient.ts
  *
  * IMPORTANT: All token refresh calls go through a single mutex to prevent
  * concurrent refreshSession() from invalidating the refresh token.
  */
 
 import axios from "axios";
-import { supabase } from "./supabaseClient";
+import { supabase, refreshOnce } from "./supabaseClient";
 
 const apiClient = axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8000",
+    baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:8001",
     headers: {
         "Content-Type": "application/json",
     },
     timeout: 30000,
 });
 
-// ── Refresh Mutex — prevent concurrent refreshSession() calls ────
-// If two API calls both get 401 at the same time, only ONE refresh
-// fires. The second caller waits for the first to complete.
-let refreshPromise: Promise<string | null> | null = null;
-
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-    let timeoutId: number | undefined;
-    const timeoutPromise = new Promise<T>((_resolve, reject) => {
-        timeoutId = window.setTimeout(() => {
-            reject(new Error(`${label} timed out after ${ms}ms`));
-        }, ms);
-    });
-
-    return Promise.race([promise, timeoutPromise]).finally(() => {
-        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-    });
-}
-
+// ── Refresh Token — delegates to the single mutex in supabaseClient.ts ──
+// This prevents dual refreshPromise variables from causing concurrent
+// refreshSession() calls that invalidate the refresh token.
 export async function refreshTokenOnce(): Promise<string | null> {
-    if (refreshPromise) return refreshPromise;
-
-    refreshPromise = (async () => {
-        try {
-            const { data, error } = await withTimeout(
-                supabase.auth.refreshSession(),
-                10_000,
-                "supabase.auth.refreshSession()"
-            );
-            if (error || !data?.session) {
-                console.warn("[Auth] Token refresh failed:", error?.message);
-                return null;
-            }
-            return data.session.access_token;
-        } catch {
-            return null;
-        } finally {
-            // Clear the mutex after a short delay so back-to-back calls
-            // still coalesce, but the next wave gets a fresh refresh.
-            setTimeout(() => { refreshPromise = null; }, 1000);
-        }
-    })();
-
-    return refreshPromise;
+    try {
+        await refreshOnce();
+        const { data: { session } } = await supabase.auth.getSession();
+        return session?.access_token ?? null;
+    } catch {
+        return null;
+    }
 }
 
 // ── Layer 1: Get a valid (non-expired) access token ─────────────
 // Exported so askStream (raw fetch) can reuse the same refresh logic.
+// Includes a timeout to prevent hanging when auth locks are stale (tab resume).
 export async function getValidToken(): Promise<string | null> {
     try {
-        const { data: { session } } = await withTimeout(
-            supabase.auth.getSession(),
-            10_000,
-            "supabase.auth.getSession()"
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("getSession timeout")), 8000)
         );
+
+        let session;
+        try {
+            const result = await Promise.race([sessionPromise, timeoutPromise]);
+            session = result.data.session;
+        } catch {
+            // getSession hung (stale lock) — try reading token from localStorage
+            console.warn("[Auth] getSession timed out, reading from localStorage");
+            try {
+                const storageKey = Object.keys(localStorage).find((k) => k.startsWith("sb-") && k.endsWith("-auth-token"));
+                if (storageKey) {
+                    const raw = localStorage.getItem(storageKey);
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        return parsed?.access_token ?? null;
+                    }
+                }
+            } catch { /* ignore */ }
+            return null;
+        }
+
         if (!session) return null;
 
         const expiresAt = session.expires_at ?? 0;
@@ -99,6 +88,13 @@ apiClient.interceptors.request.use(
         if (token) {
             config.headers.Authorization = `Bearer ${token}`;
         }
+        // Attach active org header for multi-tenant isolation
+        try {
+            const activeOrgId = localStorage.getItem("sundae_active_org_id");
+            if (activeOrgId) {
+                config.headers["X-Active-Org"] = activeOrgId;
+            }
+        } catch { /* ignore storage errors */ }
         return config;
     },
     (error) => Promise.reject(error)
