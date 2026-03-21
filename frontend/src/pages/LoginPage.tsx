@@ -21,7 +21,8 @@ export default function LoginPage() {
     const [tab, setTab] = useState<Tab>("login");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [fullName, setFullName] = useState("");
+    const [firstName, setFirstName] = useState("");
+    const [lastName, setLastName] = useState("");
     const [registerMsg, setRegisterMsg] = useState("");
     const [registerLoading, setRegisterLoading] = useState(false);
 
@@ -56,7 +57,7 @@ export default function LoginPage() {
         const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password: password.trim(),
-            options: { data: { full_name: fullName.trim() || null } },
+            options: { data: { first_name: firstName.trim() || null, last_name: lastName.trim() || null } },
         });
 
         if (error) {
@@ -186,15 +187,27 @@ export default function LoginPage() {
             {/* ── Register Form ───────────────────────────────── */}
             {tab === "register" && (
                 <form onSubmit={handleRegister} className="space-y-4">
-                    <div>
-                        <label htmlFor="reg-name" className="block text-xs font-medium text-steel-600 mb-1.5">ชื่อ-นามสกุล</label>
-                        <input
-                            id="reg-name" type="text" value={fullName}
-                            onChange={(e) => setFullName(e.target.value)}
-                            placeholder="สมชาย ใจดี" autoComplete="name" autoFocus
-                            disabled={registerLoading}
-                            className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
-                        />
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label htmlFor="reg-firstname" className="block text-xs font-medium text-steel-600 mb-1.5">ชื่อ</label>
+                            <input
+                                id="reg-firstname" type="text" value={firstName}
+                                onChange={(e) => setFirstName(e.target.value)}
+                                placeholder="สมชาย" autoComplete="given-name" autoFocus
+                                disabled={registerLoading}
+                                className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="reg-lastname" className="block text-xs font-medium text-steel-600 mb-1.5">นามสกุล</label>
+                            <input
+                                id="reg-lastname" type="text" value={lastName}
+                                onChange={(e) => setLastName(e.target.value)}
+                                placeholder="ใจดี" autoComplete="family-name"
+                                disabled={registerLoading}
+                                className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
+                            />
+                        </div>
                     </div>
                     <div>
                         <label htmlFor="reg-email" className="block text-xs font-medium text-steel-600 mb-1.5">อีเมล</label>

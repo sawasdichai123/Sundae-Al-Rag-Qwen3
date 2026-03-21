@@ -236,9 +236,9 @@ export default function DashboardPage() {
     const [sessionTodayCount, setSessionTodayCount] = useState<number | null>(null);
     const [takeoverCount, setTakeoverCount] = useState<number | null>(null);
     const [services, setServices] = useState<HealthServices | null>(null);
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
 
     useEffect(() => {
-        const activeOrgId = useOrgStore.getState().activeOrgId;
         const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
         apiClient
@@ -276,7 +276,7 @@ export default function DashboardPage() {
                 );
             }
         });
-    }, [user?.organization_id, isSupport]);
+    }, [activeOrgId, user?.organization_id, isSupport]);
 
     // Format a nullable count for display
     const fmt = (val: number | null) =>

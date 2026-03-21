@@ -122,6 +122,23 @@
   - **ไม่ assign org, ไม่เช็ค invitation, ไม่เก็บ desired_org_name** — user สร้าง org เองหลัง approve ผ่าน `/create-org`
   - ใช้ `ON CONFLICT (id) DO NOTHING` กัน duplicate
 
+### 013_add_page_columns.sql
+- เพิ่มคอลัมน์ `page_start`, `page_end` ใน `document_parent_chunks` และ `document_child_chunks` สำหรับ RAG page tracking
+- อัปเดต RPC `match_child_chunks` ให้ JOIN กับ `documents` table เพื่อ return `document_name`
+- แก้ CHECK constraint ของ `organizations.status` ให้รับค่า `'deleted'`
+
+### 014_split_fullname.sql
+- **แยก `full_name` → `first_name` + `last_name`** ใน `user_profiles`
+- เพิ่มคอลัมน์ `first_name TEXT`, `last_name TEXT`
+- Migrate ข้อมูล: `full_name` → `split_part` เป็น first/last
+- อัปเดต trigger `handle_new_auth_user()` ให้อ่าน `first_name` + `last_name` จาก signup metadata แทน `full_name`
+
+### seed_accounts.sql
+- สร้าง admin (`admin@sundae.local`) + support (`support@sundae.local`) accounts
+- สร้าง org "SUNDAE" (slug: `sundae`)
+- Assign admin → owner, support → member ใน `org_members`
+- ใช้ `ON CONFLICT DO NOTHING` / `DO UPDATE` กัน duplicate
+
 ## Dependency / ลำดับการรันที่แนะนำ
 
 ### Fresh install (ทำใหม่ทั้งระบบ)
@@ -136,10 +153,15 @@
 9. `010_add_helped_status.sql`
 10. `011_multi_tenant_migration.sql`
 11. `012_simplify_auth_trigger.sql`
+12. `013_add_page_columns.sql`
+13. `014_split_fullname.sql`
+14. `seed_accounts.sql`
 
 ### จุดที่ต้องระวัง
 - `003_user_profiles_rls.sql` มี seed admin UUID ที่ต้องตรงกับ `auth.users` ของโปรเจกต์จริง
 - `011_multi_tenant_migration.sql` สร้าง `org_members` table และ migrate data จาก `user_profiles` → ต้องรันก่อน 012
+  - ⚠️ **RLS**: มีแค่ policy `"Users read own memberships"` เท่านั้น — policy `members_see_org_peers` ถูกลบออกเพราะทำให้เกิด infinite recursion
 - `012_simplify_auth_trigger.sql` ต้องรันหลัง 011 — trigger ใหม่ไม่อ้างถึง `org_invitations` หรือคอลัมน์เก่าแล้ว
+- `014_split_fullname.sql` ต้องรันหลัง 012 — อัปเดต trigger ให้อ่าน `first_name`/`last_name` แทน `full_name`
 - `006_match_chunks_bot_filter.sql` เปลี่ยน signature ของ `match_child_chunks` → ฝั่ง backend/frontend ที่เรียก RPC ต้องส่งพารามิเตอร์ให้ตรง (หรือปล่อย `target_bot_id` เป็น `NULL`)
 - หลังรัน 011 คอลัมน์ `org_role`, `desired_org_name`, `invite_org_id` จะถูกลบจาก `user_profiles` — backend code ต้องอ่าน org_role จาก `org_members` แทน

@@ -2,9 +2,9 @@
 SUNDAE Backend — Authentication Dependencies (Optimized)
 
 Performance optimizations applied:
-  - LOCAL JWT decode using PyJWT (no Supabase API call)
+  - JWT verification via supabase.auth.get_user() (handles any algorithm)
   - In-memory profile cache with TTL (default 5 minutes)
-  - 0 network calls on cache hit, 1 DB call on cache miss
+  - 1 network call on cache hit (auth verify), 2 on cache miss (+DB fetch)
 
 Provides FastAPI dependencies:
   - get_current_user:   Decodes JWT locally + cached profile → CurrentUser
@@ -29,10 +29,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-import jwt
 from fastapi import Depends, HTTPException, Request, status
 
-from app.core.config import get_settings
 from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -135,36 +133,29 @@ async def get_current_user(request: Request) -> CurrentUser:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # ── 2. Decode JWT locally (NO network call) ──────────────────
-    settings = get_settings()
+    # ── 2. Verify JWT with Supabase Auth ─────────────────────────
+    # Uses supabase.auth.get_user() which handles any JWT algorithm
+    # (HS256, ES256, etc.) — more robust than local jwt.decode().
+    supabase = get_supabase()
     try:
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-        )
-    except jwt.ExpiredSignatureError:
+        user_response = await supabase.auth.get_user(token)
+        auth_user = user_response.user
+    except Exception as exc:
+        logger.warning("JWT verification failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.InvalidTokenError as exc:
-        logger.warning("JWT decode failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token.",
+            detail="Invalid or expired token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id = payload.get("sub")
-    if not user_id:
+    if auth_user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing 'sub' claim.",
+            detail="Invalid or expired token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    user_id = auth_user.id
 
     # ── 3. Check cache first ─────────────────────────────────────
     cached = _profile_cache.get(user_id)
@@ -172,8 +163,7 @@ async def get_current_user(request: Request) -> CurrentUser:
         logger.debug("[Auth] Cache HIT for %s", cached.email)
         return cached
 
-    # ── 4. Cache miss → fetch from DB (1 network call) ───────────
-    supabase = get_supabase()
+    # ── 4. Cache miss → fetch from DB ────────────────────────────
     try:
         result = await (
             supabase.table("user_profiles")
@@ -201,7 +191,7 @@ async def get_current_user(request: Request) -> CurrentUser:
 
     current_user = CurrentUser(
         id=profile["id"],
-        email=profile.get("email") or payload.get("email", ""),
+        email=profile.get("email") or auth_user.email or "",
         role=profile.get("role", "user"),
         is_approved=profile.get("is_approved", False),
         organization_id=profile.get("organization_id"),

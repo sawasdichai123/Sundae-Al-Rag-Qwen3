@@ -73,7 +73,10 @@ class Settings(BaseSettings):
     # ── Vector Search ────────────────────────────────────────────
     vector_search_top_k: int = 20
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ("../.env", ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
 
 # ── Lazy singleton ───────────────────────────────────────────────

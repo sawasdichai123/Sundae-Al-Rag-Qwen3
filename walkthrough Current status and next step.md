@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 19 มีนาคม 2569
+> **อัพเดทล่าสุด**: 21 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -104,7 +104,10 @@ backend/
 │   ├── 009_fix_user_profiles_rls_update.sql
 │   ├── 010_add_helped_status.sql
 │   ├── 011_multi_tenant_migration.sql
-│   └── 012_simplify_auth_trigger.sql
+│   ├── 012_simplify_auth_trigger.sql
+│   ├── 013_add_page_columns.sql
+│   ├── 014_split_fullname.sql
+│   └── seed_accounts.sql
 └── requirements.txt
 ```
 
@@ -113,7 +116,7 @@ backend/
 | Table | Primary Key | สำคัญ |
 |-------|------------|-------|
 | `organizations` | UUID | Multi-tenant root |
-| `user_profiles` | UUID (FK → auth.users) | role, is_approved, email, full_name, organization_id |
+| `user_profiles` | UUID (FK → auth.users) | role, is_approved, email, **first_name**, **last_name**, organization_id |
 | `org_members` | UUID | **user_id, organization_id, org_role** (owner/member) — many-to-many |
 | `bots` | UUID | prompt, line_access_token, is_web_enabled |
 | `documents` | UUID | file_path, status, FK → bots |
@@ -137,13 +140,17 @@ RPC Function: `match_child_chunks` — cosine similarity search บน pgvector
 ### 2.4 Auth Middleware (core/auth.py)
 
 ```
-get_current_user      → ตรวจ Bearer token → ดึง user_profiles จาก DB (service role)
-                      → อ่าน X-Active-Org header → validate via org_members → set active_org_id
+get_current_user      → ตรวจ Bearer token → verify ผ่าน supabase.auth.get_user() (รองรับทุก JWT algorithm)
+                      → profile cache (5 min TTL) → ถ้า miss ดึง user_profiles จาก DB
+                      → อ่าน X-Active-Org header → set active_org_id
 require_approved      → เช็ค is_approved = true → 403 ถ้าไม่ผ่าน
 require_role(...)     → เช็ค platform role + is_approved → 403 ถ้าไม่ผ่าน
 require_org_owner     → เช็ค org_members.org_role = 'owner' สำหรับ active_org → 403 ถ้าไม่ผ่าน (admin bypass)
 verify_organization() → async — ตรวจว่า user เป็นสมาชิก org ใน org_members (admin bypass)
 ```
+
+> **หมายเหตุ JWT**: Supabase project ของเรา (`bzotgjsbuiuotyknjpfv`) ออก JWT ด้วย **ES256** (ECDSA) ไม่ใช่ HS256
+> ดังนั้นจึงใช้ `supabase.auth.get_user(token)` แทน local `jwt.decode()` — ตรงกับ reference project
 
 Backend ใช้ **Service Role Key** — bypass RLS ทั้งหมด ทำให้อ่านค่า `is_approved` จริงจาก DB เสมอ
 
@@ -324,7 +331,7 @@ sequenceDiagram
     FE->>SB: signInWithPassword()
     SB-->>FE: Session + JWT
     FE->>DB: SELECT * FROM user_profiles WHERE id = uid
-    DB-->>FE: { role, is_approved, email, full_name }
+    DB-->>FE: { role, is_approved, email, first_name, last_name }
     FE->>FE: set Zustand state
     alt is_approved = true
         FE-->>U: Dashboard
@@ -343,12 +350,12 @@ sequenceDiagram
     participant TR as DB Trigger
     participant DB as user_profiles
 
-    U->>FE: Register (email/password/name/org_name)
-    FE->>SB: signUp({ data: { full_name, desired_org_name } })
+    U->>FE: Register (email/password/first_name/last_name)
+    FE->>SB: signUp({ data: { first_name, last_name } })
     SB-->>TR: AFTER INSERT on auth.users
-    TR->>DB: INSERT { id, email, full_name, role='user', is_approved=false, desired_org_name, org=NULL }
+    TR->>DB: INSERT { id, email, first_name, last_name, role='user', is_approved=false, org=NULL }
     FE-->>U: "สมัครสำเร็จ! รอ Support อนุมัติ"
-    Note over U: Support approve → สร้าง org + assign owner
+    Note over U: Support approve → auto-accept invitations
 ```
 
 **กรณี Invite Link**: ถ้า URL มี `?invite_org=<uuid>` → trigger จะ set `invite_org_id` แทน `desired_org_name` → Support approve → assign เป็น member ขององค์กรนั้น
@@ -690,9 +697,11 @@ WHERE email = 'sawasdichai.amor@bumail.net' AND is_approved = false;
 | 007 | Admin role in messages | ✅ รันแล้ว | Human handoff ตอบกลับได้ |
 | 008 | Fix organizations RLS | ✅ รันแล้ว | แก้ 406 error บน organizations |
 | 009 | Fix UPDATE RLS + approve | ✅ รันแล้ว | แก้ approve ไม่ทำงาน |
-| 010 | Add helped status | ✅ ทำแล้ว | เพิ่มสถานะ `helped` (ช่วยเหลือเรียบร้อย) ให้ chat_sessions.status |
-| 011 | Org roles & invitations | ⚠️ ยังไม่รัน | เพิ่ม `org_role`, `desired_org_name`, `invite_org_id` + สร้าง `org_invitations` table |
-| 012 | Update auth trigger | ⚠️ ยังไม่รัน | trigger ใหม่ไม่ auto-assign org — เก็บ desired_org_name / invite_org_id แทน |
+| 010 | Add helped status | ✅ รันแล้ว | เพิ่มสถานะ `helped` (ช่วยเหลือเรียบร้อย) ให้ chat_sessions.status |
+| 011 | Multi-tenant migration (org_members) | ✅ รันแล้ว | สร้าง org_members, ปรับ org_invitations, drop deprecated columns (ดู Section 15) |
+| 012 | Simplify auth trigger | ✅ รันแล้ว | trigger ใหม่ไม่ auto-assign org (ดู Section 15) |
+| 013 | Page tracking + status constraint | ✅ รันแล้ว | เพิ่ม page_start/page_end, document_name ใน RPC, status 'deleted' |
+| 014 | Split full_name → first_name + last_name | ✅ รันแล้ว | แยกคอลัมน์ชื่อ + อัปเดต trigger (ดู Section 22) |
 
 ---
 
@@ -1843,38 +1852,45 @@ DROP TABLE IF EXISTS public.users;
 
 ## 20. Next Steps
 
-### 🟡 งานที่เหลือ (อัพเดท 19 มี.ค. 2569)
+### 🟡 งานที่เหลือ (อัพเดท 21 มี.ค. 2569)
 
 | # | งาน | รายละเอียด |
 |---|------|-----------|
 | ~~1~~ | ~~รัน SQL Migration 011 + 012~~ | ✅ รันแล้ว |
 | ~~2~~ | ~~แก้ Critical Bugs (Approval Sync, Lockout, Redirect)~~ | ✅ แก้แล้ว (Section 16) |
 | ~~3~~ | ~~Drop legacy `public.users` table~~ | ✅ ลบแล้ว (Section 17) |
-| 4 | **รัน SQL Migration 013** | Page tracking columns + RPC update + status constraint fix (Section 18) |
-| 5 | **ทดสอบ RAG Page Tracking** | Upload PDF ใหม่ → ถามคำถาม → ดูว่า source pills แสดงชื่อเอกสาร + หน้า |
-| 6 | **ทดสอบ Multi-Org Flow end-to-end** | Support สร้าง org → เชิญ user → accept = owner → เชิญคนที่สอง = member |
-| 7 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
-| 8 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
-| 9 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
-| 10 | **LINE Webhook** | ดูรายละเอียดด้านล่าง (Section 21) |
-| 11 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 12 | **User profile edit** | ให้ user แก้ full_name ของตัวเอง |
-| 13 | **Dark mode** | เพิ่ม theme switcher |
-| 14 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
+| ~~4~~ | ~~รัน SQL Migration 013~~ | ✅ รันแล้ว |
+| ~~5~~ | ~~รัน SQL Migration 014 (split full_name)~~ | ✅ รันแล้ว (Section 22) |
+| ~~6~~ | ~~แก้ 401 JWT Algorithm Mismatch~~ | ✅ แก้แล้ว (Section 23.5) |
+| ~~7~~ | ~~แก้ RLS org_members infinite recursion~~ | ✅ แก้แล้ว (Section 23.4) |
+| ~~8~~ | ~~แก้ DashboardPage non-reactive state~~ | ✅ แก้แล้ว (Section 23.3) |
+| 9 | **แยก Registration form เป็น first_name / last_name** | LoginPage ยังส่ง `full_name` ก้อนเดียว → ต้องแยกเป็น 2 ช่อง (ดู Section 22.3) |
+| 10 | **ทดสอบ RAG Page Tracking** | Upload PDF ใหม่ → ถามคำถาม → ดูว่า source pills แสดงชื่อเอกสาร + หน้า |
+| 11 | **ทดสอบ Multi-Org Flow end-to-end** | Support สร้าง org → เชิญ user → accept = owner → เชิญคนที่สอง = member |
+| 12 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 13 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงานบนมือถือ/อุปกรณ์อื่น |
+| 14 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB (ปัจจุบัน UI-only + toast เตือน) |
+| 15 | **LINE Webhook — งานที่เหลือ** | Backend code เสร็จแล้ว ยังขาด: SQL migration `bots.line_channel_secret`, IntegrationPage เชื่อม API, end-to-end test (ดู Section 21) |
+| 16 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 17 | **User profile edit** | ให้ user แก้ first_name / last_name ของตัวเอง |
+| 18 | **Dark mode** | เพิ่ม theme switcher |
+| 19 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
 
 ### SQL Migrations — สถานะปัจจุบัน
 
 | Migration | สถานะ |
 |-----------|--------|
 | 001-010 | ✅ รันแล้ว |
-| 011 — Multi-tenant migration (org_members, org_invitations rename, drop old columns) | ✅ รันแล้ว |
+| 011 — Multi-tenant migration (org_members, org_invitations rename, drop old columns) | ✅ รันแล้ว (แก้ RLS: ลบ `members_see_org_peers` กันไม่ให้ infinite recursion) |
 | 012 — Simplify auth trigger (no org assignment on signup) | ✅ รันแล้ว |
 | Manual — Drop `public.users` table (ไม่ใช่ migration file — รัน SQL ตรง) | ✅ ลบแล้ว |
 | 013 — Page tracking columns + RPC update + status constraint fix | ✅ รันแล้ว |
+| 014 — Split full_name → first_name + last_name + update trigger | ✅ รันแล้ว |
+| seed_accounts.sql — Seed admin/support + org SUNDAE + org_members | ✅ รันแล้ว |
 
 ---
 
-## 21. LINE Webhook — งานที่เหลือ
+## 21. LINE Webhook — Omnichannel Chat (อัพเดท 21 มี.ค. 2569)
 
 ### สถานะปัจจุบัน
 
@@ -1884,43 +1900,290 @@ DROP TABLE IF EXISTS public.users;
 | `bot.py` — field `line_access_token` | ✅ มีแล้ว | CRUD เก็บ token ต่อ bot ได้ |
 | DB — `bots.line_access_token` | ✅ มีแล้ว | Column เพิ่มผ่าน SQL migration 002 |
 | DB — `chat_sessions.platform_source` | ✅ มีแล้ว | รองรับ `web \| line \| other` |
-| Frontend — `IntegrationPage.tsx` | ⚠️ Mock | Toggle LINE เป็น useState เฉยๆ ยังไม่เชื่อม API |
-| Backend — LINE Webhook endpoint | ❌ ยังไม่มี | ต้องสร้างใหม่ |
-| Backend — LINE reply | ❌ ยังไม่มี | ต้องเรียก LINE Messaging API |
+| Backend — `webhook_line.py` | ✅ มีแล้ว | `POST /api/webhook/line/{bot_id}` — รับ event, verify signature, RAG pipeline in background |
+| Backend — `line_service.py` | ✅ มีแล้ว | `reply_message()` + `push_message()` ผ่าน httpx (ไม่ต้องเพิ่ม dependency) |
+| Backend — `line_auth.py` | ✅ มีแล้ว | `verify_line_signature_with_secret()` HMAC-SHA256 per-bot secret |
+| Backend — `inbox.py` LINE Push | ✅ มีแล้ว | Admin reply ใน Inbox → push ไป LINE user อัตโนมัติ |
+| DB — `bots.line_channel_secret` | ⚠️ ยังไม่มี migration | Code อ่านจาก DB แล้ว แต่ยังไม่มี SQL migration สร้างคอลัมน์ |
+| Frontend — `IntegrationPage.tsx` | ⚠️ Mock | Toggle LINE เป็น useState เฉยๆ ยังไม่เชื่อม API บันทึก credentials |
+| End-to-end testing | ❌ ยังไม่ได้ทดสอบ | ต้อง setup LINE OA + webhook URL + ทดสอบจริง |
 
-### งานที่ต้องทำ
+### Backend Implementation (เสร็จแล้ว)
 
-| # | งาน | ไฟล์ | รายละเอียด |
-|---|------|------|-----------|
-| 1 | **สร้าง LINE Webhook endpoint** | `backend/app/routers/line_webhook.py` (ใหม่) | สร้าง route `POST /webhook/line` รับ events จาก LINE Platform, verify signature ด้วย `X-Line-Signature` + `HMAC-SHA256` |
-| 2 | **LINE reply function** | `backend/app/services/line_service.py` (ใหม่) | ใช้ `httpx` เรียก `https://api.line.me/v2/bot/message/reply` ส่งคำตอบกลับ user ผ่าน LINE |
-| 3 | **เพิ่ม config** | `backend/.env` + `config.py` | เพิ่ม `LINE_CHANNEL_SECRET` สำหรับ verify webhook signature |
-| 4 | **ติดตั้ง dependency** | `requirements.txt` | เพิ่ม `line-bot-sdk` หรือใช้ `httpx` เรียก LINE API ตรงๆ (ไม่ต้องเพิ่ม dependency) |
-| 5 | **Integration Page เชื่อม API** | `frontend/src/pages/IntegrationPage.tsx` | ให้ toggle LINE บันทึก `line_access_token` + `LINE_CHANNEL_SECRET` ลง bot จริง แทน useState mock |
-| 6 | **ทดสอบ end-to-end** | — | LINE ส่งข้อความ → webhook → RAG pipeline → reply กลับ LINE |
-
-### Flow ที่ต้อง implement
+#### `webhook_line.py` — LINE Webhook Router
 
 ```
-LINE User ส่งข้อความ
+POST /api/webhook/line/{bot_id}
     │
-    ▼
-LINE Platform POST /webhook/line
-    │
-    ├─ 1. Verify signature (HMAC-SHA256 + LINE_CHANNEL_SECRET)
-    ├─ 2. Parse event → ดึง user_id, message text, reply_token
-    ├─ 3. หา bot ที่ match (จาก line_access_token ใน DB)
-    ├─ 4. เรียก RAG pipeline (chat.py logic เดิม)
-    ├─ 5. Reply กลับ LINE ผ่าน Messaging API + reply_token
+    ├─ 1. Look up bot จาก DB → ดึง line_channel_secret + line_access_token
+    ├─ 2. Verify HMAC-SHA256 signature (per-bot secret — Multi-Tenant)
+    ├─ 3. Parse events → filter เฉพาะ text messages
+    ├─ 4. Return 200 OK ทันที (LINE ต้องการ response เร็ว)
+    ├─ 5. Background task per message:
+    │     a. Get/create LINE chat_session (platform_source="line")
+    │     b. Save user message
+    │     c. If human_takeover → skip AI (save only)
+    │     d. Else → Embed → Vector search → Rerank → LLM generate
+    │     e. Save assistant message
+    │     f. Reply via LINE Reply API
     │
     ▼
 LINE User ได้รับคำตอบ
 ```
 
-### Environment Variables ที่ต้องเพิ่ม
+**Security**: ไม่ใช้ JWT — authenticate ด้วย HMAC-SHA256 signature per-bot (Multi-Tenant)
+
+#### `line_service.py` — LINE Messaging API
+
+| Function | API | ใช้ตอนไหน |
+|----------|-----|-----------|
+| `reply_message()` | Reply API | Webhook ตอบกลับ (ต้องตอบภายใน 1 นาที) |
+| `push_message()` | Push API | Admin ตอบจาก Inbox → push ไปหา LINE user |
+
+#### `line_auth.py` — Signature Verification
+
+| Function | ใช้กับ | รายละเอียด |
+|----------|--------|-----------|
+| `verify_line_signature_with_secret()` | Multi-Tenant (per-bot secret จาก DB) | ✅ ใช้อยู่ใน webhook_line.py |
+| `verify_line_signature()` | Legacy dependency (ใช้ `LINE_CHANNEL_SECRET` จาก .env) | สำรอง |
+
+### งานที่ยังเหลือ
+
+| # | งาน | รายละเอียด |
+|---|------|-----------|
+| 1 | **สร้าง SQL migration เพิ่ม `bots.line_channel_secret`** | Code อ่านจาก DB แล้วแต่ยังไม่มี migration สร้างคอลัมน์ |
+| 2 | **IntegrationPage เชื่อม API จริง** | ให้ toggle บันทึก `line_access_token` + `line_channel_secret` ลง bot จริง |
+| 3 | **ทดสอบ end-to-end** | สร้าง LINE OA → ตั้ง webhook URL → ส่งข้อความ → ดูว่า RAG ตอบกลับ |
+| 4 | **ทดสอบ Inbox → LINE Push** | Admin reply ใน Inbox → push ไปหา LINE user |
+
+### Environment Variables
 
 ```env
-# LINE Messaging API
-LINE_CHANNEL_SECRET=your_channel_secret_here
-# line_access_token เก็บใน DB ต่อ bot (มีแล้ว)
+# LINE — legacy fallback (ใช้เมื่อ bot ไม่มี line_channel_secret ใน DB)
+LINE_CHANNEL_SECRET=
+# line_access_token + line_channel_secret เก็บใน DB ต่อ bot (Multi-Tenant)
 ```
+
+---
+
+## 22. Split full_name → first_name + last_name (21 มีนาคม 2569) ✅
+
+### 22.1 ปัญหา
+
+`user_profiles` เดิมเก็บชื่อเต็มใน `full_name` คอลัมน์เดียว — ไม่สะดวกในการแสดงผลแยก ชื่อ/นามสกุล และไม่ตรงกับ UI ที่ต้องการแสดงชื่อย่อ
+
+### 22.2 SQL Migration 014
+
+**ไฟล์**: `backend/sql/014_split_fullname.sql`
+
+3 ขั้นตอน:
+1. **เพิ่มคอลัมน์** `first_name` + `last_name` ใน `user_profiles`
+2. **Migrate ข้อมูลเดิม**: แยก `full_name` → ส่วนแรก = `first_name`, ส่วนที่เหลือ = `last_name`
+3. **อัปเดท trigger** `handle_new_auth_user()`: อ่าน `first_name` + `last_name` จาก metadata แทน `full_name`
+
+```sql
+-- 1. Add columns
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS first_name TEXT;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS last_name TEXT;
+
+-- 2. Migrate data
+UPDATE user_profiles
+SET first_name = split_part(full_name, ' ', 1),
+    last_name  = CASE WHEN position(' ' IN full_name) > 0
+                      THEN substring(full_name FROM position(' ' IN full_name) + 1)
+                      ELSE NULL END
+WHERE full_name IS NOT NULL AND first_name IS NULL;
+
+-- 3. Update trigger
+CREATE OR REPLACE FUNCTION handle_new_auth_user() ...
+    INSERT INTO public.user_profiles (id, email, first_name, last_name, ...)
+    VALUES (NEW.id, NEW.email,
+            NEW.raw_user_meta_data ->> 'first_name',
+            NEW.raw_user_meta_data ->> 'last_name', ...);
+```
+
+### 22.3 Frontend Changes
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/types/index.ts` | `UserProfile` เปลี่ยน `full_name` → `first_name` + `last_name` |
+| `frontend/src/store/authStore.ts` | `fetchProfile` อ่าน `first_name` + `last_name` |
+| `frontend/src/pages/LoginPage.tsx` | ⚠️ **ยังค้าง** — form ยังส่ง `full_name` → ต้องแยกเป็น 2 ช่อง |
+
+### 22.4 Backend Changes
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `backend/app/core/auth.py` | `CurrentUser` เปลี่ยน `full_name` → `first_name` + `last_name` |
+| `backend/app/routers/inbox.py` | `list_sessions` resolve ชื่อใช้ `first_name` + `last_name` |
+
+---
+
+## 23. Critical Fixes — RLS, Dashboard, JWT Auth (21 มีนาคม 2569) ✅
+
+### 23.1 ภาพรวม
+
+แก้ปัญหาสำคัญ 4 จุดที่ทำให้ระบบไม่สามารถทำงานได้หลัง migration:
+
+| # | ปัญหา | ระดับ | สถานะ |
+|---|--------|-------|-------|
+| 1 | Seed accounts ไม่มี org_members | Critical | ✅ แก้แล้ว |
+| 2 | DashboardPage ไม่โหลดข้อมูล (non-reactive state) | Critical | ✅ แก้แล้ว |
+| 3 | RLS org_members infinite recursion (500 errors) | Critical | ✅ แก้แล้ว |
+| 4 | JWT Algorithm Mismatch — ES256 vs HS256 (401 errors) | Critical | ✅ แก้แล้ว |
+
+### 23.2 Fix 1: Seed Accounts — เพิ่ม org SUNDAE + org_members
+
+**ไฟล์**: `backend/sql/seed_accounts.sql`
+
+**ปัญหา**: หลัง migration 011 (multi-tenant) ระบบต้องการ org_members เพื่อแสดง org dropdown แต่ seed accounts ไม่มี
+
+**แก้ไข**: เพิ่ม org "SUNDAE" + assign admin เป็น owner, support เป็น member
+
+```sql
+INSERT INTO organizations (name, slug, status)
+VALUES ('SUNDAE', 'sundae', 'active')
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO org_members (user_id, organization_id, org_role)
+SELECT up.id, o.id, 'owner'
+FROM user_profiles up CROSS JOIN organizations o
+WHERE up.email = 'admin@sundae.local' AND o.slug = 'sundae'
+ON CONFLICT (user_id, organization_id) DO UPDATE SET org_role = 'owner';
+```
+
+### 23.3 Fix 2: DashboardPage — Non-reactive Zustand State
+
+**ไฟล์**: `frontend/src/pages/DashboardPage.tsx`
+
+**ปัญหา**: ใช้ `useOrgStore.getState().activeOrgId` ซึ่งอ่านค่าครั้งเดียวตอน render → ไม่ update เมื่อ org เปลี่ยน → metrics แสดง "•••" ตลอด
+
+**แก้ไข**: เปลี่ยนเป็น reactive selector + เพิ่มใน useEffect deps
+
+```typescript
+// ก่อน — non-reactive (อ่านครั้งเดียว)
+const orgId = useOrgStore.getState().activeOrgId ?? user?.organization_id;
+
+// หลัง — reactive (subscribe ต่อการเปลี่ยนแปลง)
+const activeOrgId = useOrgStore((s) => s.activeOrgId);
+// ... ใน useEffect
+useEffect(() => {
+    const orgId = activeOrgId ?? user?.organization_id ?? ...;
+    // API calls
+}, [activeOrgId, user?.organization_id, isSupport]);
+```
+
+### 23.4 Fix 3: RLS org_members Infinite Recursion
+
+**ไฟล์**: `backend/sql/011_multi_tenant_migration.sql` (แก้ไข)
+
+**ปัญหา**: Policy `members_see_org_peers` บน `org_members` query ตาราง `org_members` เพื่อเช็คสิทธิ์ → **infinite recursion** → PostgreSQL 500 error
+
+```sql
+-- Policy ที่เป็นปัญหา (ลบออกแล้ว):
+CREATE POLICY "members_see_org_peers" ON org_members FOR SELECT USING (
+    organization_id IN (
+        SELECT organization_id FROM org_members  -- ❌ query ตัวเอง!
+        WHERE user_id = auth.uid()
+    )
+);
+```
+
+**แก้ไข**: ลบ `members_see_org_peers` + `service_role_full_access` ออกจาก 011 → เหลือแค่ policy เดียวที่ตรงกับ reference project:
+
+```sql
+ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users read own memberships" ON org_members
+    FOR SELECT USING (user_id = auth.uid());
+```
+
+**เหตุผลที่ reference project ทำงานได้**: Reference project (`D:\TEST Project\Ai rag\Sundae`) มีแค่ policy `"Users read own memberships"` → ไม่มี recursion
+
+### 23.5 Fix 4: JWT Algorithm Mismatch — ES256 vs HS256 ⭐
+
+**ไฟล์**: `backend/app/core/auth.py`
+
+**ปัญหา**: Supabase project ออก JWT ด้วย algorithm **ES256** (ECDSA) แต่ backend ใช้ `jwt.decode(token, secret, algorithms=["HS256"])` → decode ล้มเหลวทุกครั้ง → **401 Unauthorized บนทุก API call**
+
+**การค้นพบ**: Debug log แสดง token header `eyJhbGciOiJFUzI1NiIs` ซึ่ง base64 decode ได้ `{"alg":"ES256"` — ไม่ใช่ HS256 ที่ backend คาดหวัง
+
+```
+Token header analysis:
+  eyJhbGciOiJFUzI1NiIs → {"alg":"ES256","  (ECDSA — ต้องใช้ public key)
+  eyJhbGciOiJIUzI1NiIs → {"alg":"HS256","  (HMAC — ใช้ symmetric secret) ← backend คาดหวังแบบนี้
+```
+
+**แก้ไข**: เปลี่ยนจาก local `jwt.decode()` เป็น `supabase.auth.get_user(token)` ซึ่ง Supabase จัดการ verify JWT เอง (รองรับทุก algorithm) — ตรงกับ reference project
+
+```python
+# ก่อน — local decode (HS256 only → ❌ fail กับ ES256 token)
+import jwt
+payload = jwt.decode(
+    token,
+    settings.supabase_jwt_secret,
+    algorithms=["HS256"],
+    audience="authenticated",
+)
+user_id = payload.get("sub")
+
+# หลัง — Supabase verify (รองรับทุก algorithm ✅)
+supabase = get_supabase()
+user_response = await supabase.auth.get_user(token)
+auth_user = user_response.user
+user_id = auth_user.id
+```
+
+**สิ่งที่ยังเก็บไว้**: In-memory profile cache (5 min TTL) — ลด DB query สำหรับ profile fetch
+
+### 23.6 Token Caching ใน axios.ts (Optimization)
+
+**ไฟล์**: `frontend/src/api/axios.ts`
+
+**ปัญหา**: หลายๆ API call พร้อมกัน ทุกตัวเรียก `supabase.auth.getSession()` → lock contention → timeout
+
+**แก้ไข**: เพิ่ม 3 ชั้นสำหรับ `getValidToken()`:
+
+```
+1. In-memory cache     → ถ้ามี cached token ที่ยังไม่หมดอายุ (>5 min) → ใช้เลย (0ms)
+2. localStorage read   → อ่าน sb-*-auth-token ตรงๆ (ไม่ต้อง lock) → ใช้เลย (~1ms)
+3. getSession()        → last resort, มี 8s timeout กัน hang (~50-100ms)
+```
+
+```typescript
+// In-memory cache — update จาก onAuthStateChange
+let _cachedToken: string | null = null;
+let _cachedTokenExpiresAt = 0;
+
+supabase.auth.onAuthStateChange((_event, session) => {
+    _cachedToken = session?.access_token ?? null;
+    _cachedTokenExpiresAt = session?.expires_at ?? 0;
+});
+
+// localStorage direct read (bypass Supabase lock)
+function readTokenFromStorage() {
+    const storageKey = Object.keys(localStorage)
+        .find(k => k.startsWith("sb-") && k.endsWith("-auth-token"));
+    // ... parse and return token + expiresAt
+}
+```
+
+### 23.7 ไฟล์ที่แก้ไข (รอบนี้ทั้งหมด)
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| **Backend** | |
+| `backend/app/core/auth.py` | เปลี่ยน `jwt.decode()` → `supabase.auth.get_user()`, ลบ `import jwt`, ใช้ `auth_user.email` แทน `payload.get("email")` |
+| `backend/sql/seed_accounts.sql` | เพิ่ม org SUNDAE + org_members (admin=owner, support=member) |
+| `backend/sql/011_multi_tenant_migration.sql` | ลบ RLS policies `members_see_org_peers` + `service_role_full_access` |
+| **Frontend** | |
+| `frontend/src/pages/DashboardPage.tsx` | เปลี่ยน `useOrgStore.getState()` → reactive selector `useOrgStore((s) => s.activeOrgId)` |
+| `frontend/src/api/axios.ts` | เพิ่ม token cache (in-memory + localStorage), ลบ debug console.log |
+
+### 23.8 ผลลัพธ์
+
+| ก่อนแก้ | หลังแก้ |
+|---------|---------|
+| Org dropdown หายไป | ✅ แสดง "SUNDAE" |
+| Dashboard metrics "•••" | ✅ โหลดข้อมูลจริง |
+| HTTP 500 (RLS infinite recursion) | ✅ ไม่มี error |
+| HTTP 401 ทุก API call | ✅ Auth ทำงานปกติ |

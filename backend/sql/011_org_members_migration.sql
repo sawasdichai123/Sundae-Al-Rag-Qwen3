@@ -18,20 +18,9 @@ CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(organization_id);
 ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;
 
 -- Users can see their own memberships
-CREATE POLICY "users_see_own_memberships" ON org_members
+-- (backend ใช้ service_role ซึ่ง bypass RLS อัตโนมัติ ไม่ต้องมี policy เพิ่ม)
+CREATE POLICY "Users read own memberships" ON org_members
     FOR SELECT USING (user_id = auth.uid());
-
--- Users can see other members in same org
-CREATE POLICY "members_see_org_peers" ON org_members
-    FOR SELECT USING (
-        organization_id IN (
-            SELECT organization_id FROM org_members WHERE user_id = auth.uid()
-        )
-    );
-
--- Service role can do everything
-CREATE POLICY "service_role_full_access" ON org_members
-    FOR ALL USING (auth.role() = 'service_role');
 
 -- ── 3. Migrate existing data ────────────────────────────────────
 -- Move user_profiles.organization_id → org_members (as 'member')
