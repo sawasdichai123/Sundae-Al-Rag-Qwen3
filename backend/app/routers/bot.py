@@ -98,11 +98,20 @@ async def create_bot(
     If no system_prompt is provided, a sensible Thai-language default is used.
     """
     await verify_organization(user, body.organization_id)
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Bot name cannot be empty.")
+    if len(name) > 100:
+        raise HTTPException(status_code=400, detail="Bot name too long (max 100 characters).")
+    if body.system_prompt is not None and len(body.system_prompt) > 10_000:
+        raise HTTPException(status_code=400, detail="System prompt too long (max 10000 characters).")
+
     supabase = get_supabase()
 
     row = {
         "organization_id": body.organization_id,
-        "name": body.name,
+        "name": name,
         "description": body.description or "",
         "system_prompt": body.system_prompt or DEFAULT_SYSTEM_PROMPT,
         "is_active": True,
@@ -209,6 +218,17 @@ async def update_bot(
         updates["is_active"] = body.is_active
     if body.is_web_enabled is not None:
         updates["is_web_enabled"] = body.is_web_enabled
+
+    # Validate fields if present
+    if "name" in updates:
+        updates["name"] = updates["name"].strip()
+        if not updates["name"]:
+            raise HTTPException(status_code=400, detail="Bot name cannot be empty.")
+        if len(updates["name"]) > 100:
+            raise HTTPException(status_code=400, detail="Bot name too long (max 100 characters).")
+    if "system_prompt" in updates and updates["system_prompt"] is not None:
+        if len(updates["system_prompt"]) > 10_000:
+            raise HTTPException(status_code=400, detail="System prompt too long (max 10000 characters).")
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update.")

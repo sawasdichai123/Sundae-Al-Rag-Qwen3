@@ -282,7 +282,9 @@ async def line_webhook(
         if event.get("message", {}).get("type") != "text":
             continue
 
-        user_text = event["message"]["text"]
+        user_text = event.get("message", {}).get("text", "").strip()
+        if not user_text:
+            continue  # Skip non-text messages
         reply_token = event.get("replyToken", "")
         line_user_id = event.get("source", {}).get("userId", "unknown")
 

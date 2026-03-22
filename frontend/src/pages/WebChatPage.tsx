@@ -202,10 +202,11 @@ export default function WebChatPage() {
                 if (cancelled) return;
                 if (msgRes.data && msgRes.data.length > 0) {
                     const loaded: ChatBubble[] = msgRes.data.map(
-                        (m: { id: string; role: string; content: string; created_at: string }) => ({
+                        (m: { id: string; role: string; content: string; metadata?: { sources?: SourceReference[] }; created_at: string }) => ({
                             id: m.id,
                             role: m.role as ChatBubble["role"],
                             content: m.content,
+                            sources: m.metadata?.sources,
                             timestamp: new Date(m.created_at),
                         })
                     );
@@ -388,6 +389,26 @@ export default function WebChatPage() {
         ]);
     };
 
+    // Cancel human handoff — revert to bot mode
+    const handleCancelHuman = async () => {
+        if (!orgId) return;
+        try {
+            await chatApi.cancelHuman(sessionId, orgId);
+            setSessionStatus("active");
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: crypto.randomUUID(),
+                    role: "system",
+                    content: "ยกเลิกการเรียกเจ้าหน้าที่แล้ว — กลับสู่โหมด AI",
+                    timestamp: new Date(),
+                },
+            ]);
+        } catch (err) {
+            console.error("[CancelHandoff] Failed:", err);
+        }
+    };
+
     // ── Fix 3: Start a new chat ─────────────────────────────────────────
     const handleNewChat = () => {
         if (!selectedBotId) return;
@@ -454,6 +475,8 @@ export default function WebChatPage() {
         let finished = false;
         // Buffer sources — they arrive before the first token (before bubble exists)
         let pendingSources: SourceReference[] | null = null;
+        // Keep a durable copy so onDone can always re-apply sources
+        let finalSources: SourceReference[] | null = null;
 
         const markFinished = () => {
             if (finished) return; // Prevent double-call
@@ -502,6 +525,7 @@ export default function WebChatPage() {
             },
             // onSources — buffer if bubble doesn't exist yet
             (sources) => {
+                finalSources = sources; // always keep a copy
                 if (!created) {
                     pendingSources = sources;
                 } else {
@@ -512,8 +536,15 @@ export default function WebChatPage() {
                     );
                 }
             },
-            // onDone
+            // onDone — re-apply sources to guarantee they're on the final message
             () => {
+                if (finalSources && finalSources.length > 0) {
+                    setMessages((prev) =>
+                        prev.map((m) =>
+                            m.id === assistantId ? { ...m, sources: finalSources! } : m
+                        )
+                    );
+                }
                 markFinished();
             },
             // onError
@@ -809,7 +840,6 @@ export default function WebChatPage() {
                                                                     {pageLabel && (
                                                                         <span className="text-steel-400 shrink-0">{pageLabel}</span>
                                                                     )}
-                                                                    <span className="text-emerald-500 font-semibold shrink-0">{(src.score * 100).toFixed(0)}%</span>
                                                                 </span>
                                                             );
                                                         })}
@@ -884,10 +914,16 @@ export default function WebChatPage() {
 
                 {/* ── Human Takeover Banner ─────────────────────────── */}
                 {sessionStatus === "human_takeover" && (
-                    <div className="bg-blue-50 border-t border-blue-200 px-4 py-2.5 text-center">
+                    <div className="bg-blue-50 border-t border-blue-200 px-4 py-2.5 flex items-center justify-center gap-3">
                         <span className="text-xs font-medium text-blue-700">
                             เจ้าหน้าที่กำลังดูแลคุณอยู่ — สามารถพิมพ์ข้อความเพิ่มเติมได้
                         </span>
+                        <button
+                            onClick={handleCancelHuman}
+                            className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full hover:bg-red-100 transition-colors cursor-pointer"
+                        >
+                            ยกเลิกการเรียกเจ้าหน้าที่
+                        </button>
                     </div>
                 )}
 

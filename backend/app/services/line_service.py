@@ -38,6 +38,9 @@ async def reply_message(
     Returns:
         True if sent successfully, False otherwise.
     """
+    if len(text) > 2000:
+        text = text[:1997] + "..."
+
     url = f"{LINE_API_BASE}/message/reply"
     headers = {
         "Content-Type": "application/json",
@@ -83,6 +86,9 @@ async def push_message(
     Returns:
         True if sent successfully, False otherwise.
     """
+    if len(text) > 2000:
+        text = text[:1997] + "..."
+
     url = f"{LINE_API_BASE}/message/push"
     headers = {
         "Content-Type": "application/json",

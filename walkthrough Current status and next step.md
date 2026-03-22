@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 21 มีนาคม 2569
+> **อัพเดทล่าสุด**: 23 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -2187,3 +2187,114 @@ function readTokenFromStorage() {
 | Dashboard metrics "•••" | ✅ โหลดข้อมูลจริง |
 | HTTP 500 (RLS infinite recursion) | ✅ ไม่มี error |
 | HTTP 401 ทุก API call | ✅ Auth ทำงานปกติ |
+
+---
+
+## 24. Source References — แสดงเอกสารอ้างอิงใน Chat (22 มีนาคม 2569) ✅
+
+### 24.1 ปัญหา
+
+- InboxPage ไม่แสดง source references (เอกสาร + หน้า) ที่ RAG pipeline ส่งมา
+- WebChatPage แสดง source แต่ไม่โชว์ทันทีหลัง streaming (ต้องรีเฟรช)
+- แสดง % confidence ที่ user ไม่ต้องการ
+
+### 24.2 แก้ไข
+
+**InboxPage** (`frontend/src/pages/InboxPage.tsx`):
+- เพิ่ม `SourceRef` interface + source pills rendering ใน message bubbles
+- แสดง "อ้างอิงจากเอกสาร" + ชื่อเอกสาร + หน้า
+
+**WebChatPage** (`frontend/src/pages/WebChatPage.tsx`):
+1. **Restore sources จาก DB** — เพิ่ม `sources: m.metadata?.sources` ตอนโหลด messages จาก DB
+2. **ซ่อน % confidence** — ลบตัวเลข % ออกจาก UI, เก็บไว้ใน tooltip เท่านั้น
+3. **แก้ streaming timing** — เพิ่ม `finalSources` ตัวแปร durable + re-apply ใน `onDone` callback เพื่อให้ sources โชว์ทันทีหลัง streaming เสร็จ
+
+---
+
+## 25. Registration, Invitation & org_members Fixes (23 มีนาคม 2569) ✅
+
+### 25.1 ปุ่มยกเลิกการเรียกเจ้าหน้าที่ (Cancel Handoff)
+
+**ปัญหา**: User กด "ขอพูดคุยกับเจ้าหน้าที่" แล้วไม่มีทางยกเลิก
+
+**แก้ไข**:
+- **Backend** `routers/chat.py` — เพิ่ม endpoint `POST /api/chat/cancel-human` เปลี่ยน session กลับเป็น `active` + บันทึก system message "ผู้ใช้ยกเลิกการเรียกเจ้าหน้าที่"
+- **Frontend** `api/endpoints.ts` — เพิ่ม `chatApi.cancelHuman()`
+- **Frontend** `pages/WebChatPage.tsx` — ปุ่ม "ยกเลิกการเรียกเจ้าหน้าที่" ในแบนเนอร์สีฟ้า กดแล้วกลับสู่โหมด AI
+
+### 25.2 Registration — first_name/last_name NULL
+
+**ปัญหา**: User สมัครแล้วชื่อไม่โชว์ ("ไม่ระบุชื่อ") ในหน้า Approvals
+
+**สาเหตุ**: DB trigger `handle_new_auth_user()` ยังเป็นเวอร์ชันเก่าที่อ่าน `full_name` จาก metadata แต่ frontend ส่ง `first_name` / `last_name` + ช่อง input ไม่ได้ตั้ง `required`
+
+**แก้ไข**:
+- **DB Trigger** — รัน `CREATE OR REPLACE FUNCTION handle_new_auth_user()` จาก `014_split_fullname.sql` ใน Supabase SQL Editor ให้อ่าน `first_name` + `last_name`
+- **Frontend** `pages/LoginPage.tsx` — เพิ่ม `required` ให้ช่องชื่อและนามสกุล
+
+### 25.3 Invitation "ส่งคำเชิญไม่สำเร็จ" ทั้งที่สร้างใน DB แล้ว
+
+**สาเหตุ**: `loadMembers()` อยู่ใน `try` block เดียวกับ `invite` — ถ้า refresh member list พัง ก็ตก catch แสดง error ทับ
+
+**แก้ไข**: `pages/DashboardPage.tsx` — แยก `loadMembers()` ออกจาก try block เรียกหลัง finally
+
+### 25.4 org_members.id does not exist — Error 500
+
+**ปัญหา**: โค้ดหลายจุด `.select("id")` จาก `org_members` ซึ่งไม่มีคอลัมน์ `id` (primary key คือ composite `user_id + organization_id`)
+
+**แก้ไข 4 จุด** — เปลี่ยน `.select("id")` → `.select("user_id")`:
+
+| ไฟล์ | จุดที่แก้ |
+|------|----------|
+| `core/auth.py` | `verify_organization()` |
+| `routers/approval.py` | member check ตอน approve |
+| `routers/organization.py` | already-a-member check (invite) |
+| `routers/organization.py` | owner check (accept invite) |
+
+### 25.5 Invite Permission — Admin/Support เชิญได้
+
+**ปัญหา**: Endpoint ใช้ `require_org_owner` แต่ admin/support ไม่ได้เป็น member ของ org จึงเชิญไม่ได้
+
+**แก้ไข**: `routers/organization.py` — เปลี่ยน dependency เป็น `require_approved` + เช็ค admin/support/owner ในโค้ด
+
+### 25.6 Error Message ภาษาไทย
+
+**แก้ไข** ใน `routers/organization.py`:
+- ซ้ำ → "มีคำเชิญที่รอดำเนินการสำหรับ {email} อยู่แล้ว"
+- สมาชิกแล้ว → "{email} เป็นสมาชิกขององค์กรนี้อยู่แล้ว"
+
+### 25.7 ไฟล์ที่แก้ไข (Section 26 ทั้งหมด)
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| **Backend** | |
+| `app/routers/chat.py` | เพิ่ม `POST /api/chat/cancel-human` endpoint |
+| `app/core/auth.py` | แก้ `verify_organization()` — `.select("id")` → `.select("user_id")` |
+| `app/routers/approval.py` | แก้ member check — `.select("id")` → `.select("user_id")` |
+| `app/routers/organization.py` | แก้ 2 จุด `.select("id")`, เปลี่ยน invite permission, error message ภาษาไทย |
+| **Frontend** | |
+| `pages/LoginPage.tsx` | เพิ่ม `required` ให้ช่องชื่อ-นามสกุล |
+| `pages/DashboardPage.tsx` | แยก `loadMembers()` ออกจาก try block |
+| `pages/WebChatPage.tsx` | เพิ่มปุ่มยกเลิกเรียกเจ้าหน้าที่ + `handleCancelHuman()` |
+| `api/endpoints.ts` | เพิ่ม `chatApi.cancelHuman()` |
+
+---
+
+### 20. Next Steps (อัพเดท 23 มี.ค. 2569)
+
+### 🟡 งานที่เหลือ
+
+| # | งาน | รายละเอียด |
+|---|------|-----------|
+| ~~9~~ | ~~แยก Registration form เป็น first_name / last_name~~ | ✅ แก้แล้ว (Section 25.2) — form แยก 2 ช่อง + required + trigger อัพเดท |
+| 10 | **ทดสอบ RAG Page Tracking** | Upload PDF ใหม่ → ถามคำถาม → ดูว่า source pills แสดงชื่อเอกสาร + หน้า |
+| ~~11~~ | ~~ทดสอบ Multi-Org Flow end-to-end~~ | ✅ ทดสอบแล้ว — invite ทำงาน, duplicate check ทำงาน |
+| 12 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
+| 13 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงาน |
+| 14 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB |
+| 15 | **LINE Webhook — งานที่เหลือ** | SQL migration `bots.line_channel_secret`, IntegrationPage เชื่อม API, end-to-end test |
+| 16 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
+| 17 | **User profile edit** | ให้ user แก้ first_name / last_name ของตัวเอง |
+| 18 | **Dark mode** | เพิ่ม theme switcher |
+| 19 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
+| 20 | **Code Review remaining ~95 issues** | 11 Critical, 4 High, 40 Medium, 40 Low (ดู Code Review Report.md) |

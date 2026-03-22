@@ -27,13 +27,22 @@ interface Session {
     user_name: string | null;
 }
 
+interface SourceRef {
+    document_id: string;
+    document_name?: string;
+    chunk_index: number;
+    page_start: number | null;
+    page_end: number | null;
+    score: number;
+}
+
 interface Message {
     id: string;
     session_id: string;
     organization_id: string;
     role: string;
     content: string;
-    metadata: Record<string, unknown> | null;
+    metadata: { sources?: SourceRef[]; [key: string]: unknown } | null;
     created_at: string;
 }
 
@@ -458,6 +467,32 @@ export default function InboxPage() {
                                                     </p>
                                                 )}
                                                 {msg.content}
+                                                {/* Source References */}
+                                                {msg.role === "assistant" && msg.metadata?.sources && msg.metadata.sources.length > 0 && (
+                                                    <div className="mt-2 pt-2 border-t border-steel-200/50">
+                                                        <p className="text-[9px] font-medium text-steel-400 mb-1">อ้างอิงจากเอกสาร</p>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {msg.metadata.sources.map((src, i) => {
+                                                                const docLabel = src.document_name ?? `${src.document_id.slice(0, 8)}…`;
+                                                                const pageLabel = src.page_start != null
+                                                                    ? src.page_start === src.page_end || src.page_end == null
+                                                                        ? `หน้า ${src.page_start}`
+                                                                        : `หน้า ${src.page_start}–${src.page_end}`
+                                                                    : null;
+                                                                return (
+                                                                    <span
+                                                                        key={i}
+                                                                        className="inline-flex items-center gap-1 text-[9px] font-medium bg-white/60 text-steel-500 px-2 py-0.5 rounded-full border border-steel-200"
+                                                                        title={`${docLabel}${pageLabel ? ` — ${pageLabel}` : ""} (${(src.score * 100).toFixed(0)}%)`}
+                                                                    >
+                                                                        <span className="truncate max-w-[100px]">{docLabel}</span>
+                                                                        {pageLabel && <span className="text-steel-400">{pageLabel}</span>}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 <p className="text-[9px] mt-1.5 opacity-60">
                                                     {new Date(msg.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
                                                 </p>

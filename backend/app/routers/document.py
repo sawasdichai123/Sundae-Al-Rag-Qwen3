@@ -19,6 +19,7 @@ SECURITY:
 from __future__ import annotations
 
 import logging
+import re as _re
 import uuid
 from typing import Optional
 
@@ -352,6 +353,7 @@ async def upload_document(
         bot_id = None
 
     document_id = str(uuid.uuid4())
+    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
     supabase = get_supabase()
 
     try:
@@ -379,7 +381,7 @@ async def upload_document(
             "id": document_id,
             "organization_id": organization_id,
             "bot_id": bot_id,
-            "name": file.filename or "untitled.pdf",
+            "name": sanitized_name,
             "file_size_bytes": file_size,
             "mime_type": "application/pdf",
             "status": "processing",
@@ -402,10 +404,24 @@ async def upload_document(
             ).execute()
             raise HTTPException(status_code=400, detail=str(exc))
 
+        # ── Validate extracted text size ───────────────────────
+        MAX_TEXT_SIZE = 10 * 1024 * 1024  # 10MB of text
+        if len(full_text) > MAX_TEXT_SIZE:
+            await (
+                supabase.table("documents")
+                .update({"status": "error"})
+                .eq("id", document_id)
+                .eq("organization_id", organization_id)
+            ).execute()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Extracted text too large ({len(full_text)} bytes, max {MAX_TEXT_SIZE})",
+            )
+
         logger.info(
             "Extracted %d characters from PDF '%s'",
             len(full_text),
-            file.filename,
+            sanitized_name,
         )
 
         # ── 4. Chunk text (Parent-Child) ────────────────────────
@@ -492,7 +508,7 @@ async def upload_document(
 
         return UploadResponse(
             document_id=document_id,
-            filename=file.filename or "untitled.pdf",
+            filename=sanitized_name,
             total_parent_chunks=total_parent,
             total_child_chunks=total_child,
             status="ready",

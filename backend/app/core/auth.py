@@ -307,21 +307,35 @@ async def verify_session_access(
     """Verify the user can access a specific chat session.
 
     Access is granted if:
-      - The user owns the session (platform_user_id == user.id), OR
-      - The user has support/admin role (can view all sessions in their org).
+      - The user has support/admin role (can view all sessions), OR
+      - The user is an org owner (can view all sessions in their org), OR
+      - The user owns the session (platform_user_id == user.id).
 
-    This prevents regular users from reading/writing other users' sessions.
+    This prevents regular members from reading/writing other users' sessions.
 
     Raises:
         HTTPException 404: Session not found (or not in this org).
         HTTPException 403: User does not have access to this session.
     """
     if user.role in ("support", "admin"):
-        return  # support/admin can access any session in their org
+        return  # support/admin can access any session
 
     from app.core.database import get_supabase
     supabase = get_supabase()
 
+    # Check if user is org owner — owners can access all sessions in their org
+    owner_result = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", organization_id)
+        .limit(1)
+    ).execute()
+
+    if owner_result.data and owner_result.data[0].get("org_role") == "owner":
+        return  # org owner can access any session in their org
+
+    # Regular member — check session ownership
     result = await (
         supabase.table("chat_sessions")
         .select("platform_user_id")
@@ -361,7 +375,7 @@ async def verify_organization(user: CurrentUser, organization_id: str) -> None:
     supabase = get_supabase()
     result = await (
         supabase.table("org_members")
-        .select("id")
+        .select("user_id")
         .eq("user_id", user.id)
         .eq("organization_id", organization_id)
         .limit(1)

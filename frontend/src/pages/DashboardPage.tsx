@@ -126,13 +126,14 @@ function MemberManagement({ orgId }: { orgId: string }) {
             await orgApi.invite(orgId, inviteEmail.trim());
             toast("success", `ส่งคำเชิญไปที่ ${inviteEmail.trim()} แล้ว`);
             setInviteEmail("");
-            await loadMembers();
         } catch (err: unknown) {
             const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ส่งคำเชิญไม่สำเร็จ";
             toast("error", msg);
         } finally {
             setInviting(false);
         }
+        // Refresh member list separately — don't let this fail affect the invite toast
+        loadMembers().catch(() => {});
     };
 
     const handleRemove = async (userId: string, name: string) => {
@@ -237,6 +238,10 @@ export default function DashboardPage() {
     const [takeoverCount, setTakeoverCount] = useState<number | null>(null);
     const [services, setServices] = useState<HealthServices | null>(null);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const activeOrg = useOrgStore((s) => {
+        const id = s.activeOrgId;
+        return s.orgs.find((o) => o.id === id);
+    });
 
     useEffect(() => {
         const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
@@ -286,11 +291,6 @@ export default function DashboardPage() {
     if (user?.role === "user" && !user.is_approved) {
         return <PendingApprovalState />;
     }
-
-    const activeOrg = useOrgStore((s) => {
-        const id = s.activeOrgId;
-        return s.orgs.find((o) => o.id === id);
-    });
 
     return (
         <div className="animate-fade-in">

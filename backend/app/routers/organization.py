@@ -44,6 +44,8 @@ from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
 
+EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+
 router = APIRouter(prefix="/api/orgs", tags=["Organizations"])
 
 
@@ -295,7 +297,7 @@ async def accept_invitation(
     # 2. Check not already a member
     existing = await (
         supabase.table("org_members")
-        .select("id")
+        .select("user_id")
         .eq("user_id", user.id)
         .eq("organization_id", org_id)
         .limit(1)
@@ -312,7 +314,7 @@ async def accept_invitation(
     # 3. Determine role: first member becomes owner, others become member
     owner_check = await (
         supabase.table("org_members")
-        .select("id")
+        .select("user_id")
         .eq("organization_id", org_id)
         .eq("org_role", "owner")
         .limit(1)
@@ -629,34 +631,51 @@ async def list_members(
 async def invite_member(
     org_id: str,
     body: InviteRequest,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_approved),
 ):
-    """Invite a user to the organization by email. Owner only."""
+    """Invite a user to the organization by email. Admin/support/org-owner."""
     await verify_organization(user, org_id)
+
+    # Allow platform admin/support or org owner
+    if user.role not in ("admin", "support"):
+        supabase_check = get_supabase()
+        owner_check = await (
+            supabase_check.table("org_members")
+            .select("org_role")
+            .eq("user_id", user.id)
+            .eq("organization_id", org_id)
+            .limit(1)
+        ).execute()
+        if not owner_check.data or owner_check.data[0].get("org_role") != "owner":
+            raise HTTPException(403, "ต้องเป็นเจ้าของ (owner) ขององค์กรถึงจะเชิญสมาชิกได้")
 
     email = body.email.strip().lower()
     if not email:
         raise HTTPException(400, "Email is required.")
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Invalid email format.")
 
     supabase = get_supabase()
 
-    # Check not already a member
-    existing_member = await (
-        supabase.table("org_members")
-        .select("user_id")
-        .eq("organization_id", org_id)
+    # Check not already a member (efficient 2-query approach)
+    profile_result = await (
+        supabase.table("user_profiles")
+        .select("id")
+        .eq("email", email)
+        .limit(1)
     ).execute()
 
-    if existing_member.data:
-        member_ids = [m["user_id"] for m in existing_member.data]
-        profiles_check = await (
-            supabase.table("user_profiles")
-            .select("id, email")
-            .in_("id", member_ids)
+    if profile_result.data:
+        invited_user_id = profile_result.data[0]["id"]
+        member_check = await (
+            supabase.table("org_members")
+            .select("user_id")
+            .eq("organization_id", org_id)
+            .eq("user_id", invited_user_id)
+            .limit(1)
         ).execute()
-        for p in profiles_check.data or []:
-            if (p.get("email") or "").lower() == email:
-                raise HTTPException(400, f"{email} is already a member of this organization.")
+        if member_check.data:
+            raise HTTPException(400, f"{email} เป็นสมาชิกขององค์กรนี้อยู่แล้ว")
 
     # Check not already invited (pending)
     existing_inv = await (
@@ -668,7 +687,7 @@ async def invite_member(
         .limit(1)
     ).execute()
     if existing_inv.data:
-        raise HTTPException(400, f"A pending invitation for {email} already exists.")
+        raise HTTPException(400, f"มีคำเชิญที่รอดำเนินการสำหรับ {email} อยู่แล้ว")
 
     # Create invitation
     now_iso = datetime.now(timezone.utc).isoformat()

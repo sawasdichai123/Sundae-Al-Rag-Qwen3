@@ -27,7 +27,7 @@ async def health_check() -> dict:
     # ── Ollama check ─────────────────────────────────────────────
     ollama_ok = False
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{settings.ollama_base_url}/api/tags")
             ollama_ok = resp.status_code == 200
     except Exception as e:

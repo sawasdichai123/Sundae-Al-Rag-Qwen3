@@ -1,19 +1,20 @@
 """
 SUNDAE Backend — Inbox Router
 
-Provides chat session management for Support/Admin human-in-the-loop.
-Support agents can view sessions, read messages, change session status,
-and send admin replies to escalated sessions.
+Provides chat session management for support/admin/org-owner.
+Authorized users can view sessions, read messages, change session status,
+and send replies to escalated sessions.
 
 Endpoints:
-    GET  /api/inbox/sessions                            → List chat sessions (support/admin)
+    GET  /api/inbox/sessions                            → List chat sessions (support/admin/owner)
+    GET  /api/inbox/my-sessions                         → List current user's own sessions
     GET  /api/inbox/sessions/{session_id}/messages       → Get messages in a session
     GET  /api/inbox/sessions/{session_id}/messages/new   → Poll new messages after timestamp
-    PUT  /api/inbox/sessions/{session_id}/status          → Update session status
-    POST /api/inbox/sessions/{session_id}/messages        → Admin sends reply (support/admin)
+    PUT  /api/inbox/sessions/{session_id}/status          → Update session status (support/admin/owner)
+    POST /api/inbox/sessions/{session_id}/messages        → Send reply (support/admin/owner)
 
 SECURITY:
-    Session listing requires support/admin role.
+    Session management requires support/admin role OR org owner.
     Every query MUST include organization_id filtering.
 """
 
@@ -25,10 +26,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status as http_status
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, require_role, verify_organization, verify_session_access
+from app.core.auth import CurrentUser, require_approved, verify_organization, verify_session_access
 from app.core.database import get_supabase
 
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -69,7 +70,7 @@ class MessageResponse(BaseModel):
 class StatusUpdateRequest(BaseModel):
     """Request body for status change."""
 
-    status: str  # active | human_takeover | resolved
+    status: str  # active | human_takeover | helped | resolved
 
 
 class StatusUpdateResponse(BaseModel):
@@ -93,20 +94,61 @@ class PollResponse(BaseModel):
     session_status: str = "active"
 
 
+# ── Helpers ──────────────────────────────────────────────────────
+
+
+async def _require_inbox_manager(
+    user: CurrentUser, organization_id: str
+) -> None:
+    """Verify the user belongs to the org AND can manage inbox sessions.
+
+    Combines org membership check + owner role check in a single query.
+
+    Access is granted if:
+      - Platform role is support or admin (bypass — no DB query), OR
+      - User is an org owner (org_members.org_role == 'owner')
+
+    Regular members and non-members are denied.
+    """
+    if user.role in ("support", "admin"):
+        return
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", organization_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data:
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not belong to this organization.",
+        )
+
+    if result.data[0].get("org_role") != "owner":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Requires support, admin, or org owner role.",
+        )
+
+
 # ── Endpoints ────────────────────────────────────────────────────
 
 
 @router.get("/sessions", response_model=list[SessionResponse])
 async def list_sessions(
     organization_id: str,
-    user: CurrentUser = Depends(require_role("support", "admin")),
+    user: CurrentUser = Depends(require_approved),
 ) -> list[SessionResponse]:
     """List all chat sessions for an organization.
 
-    Only support and admin roles can access this endpoint.
+    Accessible by support, admin, or org owner.
     Sessions are ordered by last_message_at (newest first).
     """
-    await verify_organization(user, organization_id)
+    await _require_inbox_manager(user, organization_id)
     supabase = get_supabase()
 
     try:
@@ -251,16 +293,18 @@ async def update_session_status(
     session_id: str,
     body: StatusUpdateRequest,
     organization_id: str,
-    user: CurrentUser = Depends(require_role("support", "admin")),
+    user: CurrentUser = Depends(require_approved),
 ) -> StatusUpdateResponse:
     """Update the status of a chat session.
+
+    Accessible by support, admin, or org owner.
 
     Valid statuses:
         - active: AI is handling the session
         - human_takeover: A human agent has taken over
         - resolved: The session is closed
     """
-    await verify_organization(user, organization_id)
+    await _require_inbox_manager(user, organization_id)
     valid_statuses = {"active", "human_takeover", "helped", "resolved"}
     if body.status not in valid_statuses:
         raise HTTPException(
@@ -302,25 +346,30 @@ async def send_admin_message(
     session_id: str,
     body: AdminMessageRequest,
     organization_id: str,
-    user: CurrentUser = Depends(require_role("support", "admin")),
+    user: CurrentUser = Depends(require_approved),
 ) -> MessageResponse:
-    """Send a message as admin/support into a chat session.
+    """Send a message as admin/support/owner into a chat session.
 
+    Accessible by support, admin, or org owner.
     Automatically sets the session status to 'human_takeover' if currently 'active'.
     Updates the session's last_message_at timestamp.
     """
-    await verify_organization(user, organization_id)
+    await _require_inbox_manager(user, organization_id)
     content = body.content.strip()
     if not content:
         raise HTTPException(status_code=400, detail="Message content must not be empty.")
 
+    MAX_MSG_LEN = 10_000
+    if len(content) > MAX_MSG_LEN:
+        raise HTTPException(status_code=400, detail=f"Message too long (max {MAX_MSG_LEN} characters).")
+
     supabase = get_supabase()
 
     try:
-        # Verify session exists and belongs to org
+        # Fetch full session (used for status check + LINE push)
         session_result = await (
             supabase.table("chat_sessions")
-            .select("id, status")
+            .select("*")
             .eq("id", session_id)
             .eq("organization_id", organization_id)
             .limit(1)
@@ -329,7 +378,8 @@ async def send_admin_message(
         if not session_result.data:
             raise HTTPException(status_code=404, detail="Session not found.")
 
-        current_status = session_result.data[0].get("status", "active")
+        sess = session_result.data[0]
+        current_status = sess.get("status", "active")
 
         # Auto-escalate to human_takeover if currently active
         update_data: dict = {"last_message_at": datetime.now(timezone.utc).isoformat()}
@@ -364,30 +414,21 @@ async def send_admin_message(
 
         # ── LINE Push: if this session is from LINE, push the reply ──
         try:
-            session_full = await (
-                supabase.table("chat_sessions")
-                .select("platform_source, platform_user_id, bot_id")
-                .eq("id", session_id)
-                .limit(1)
-            ).execute()
-
-            if session_full.data:
-                sess = session_full.data[0]
-                if sess.get("platform_source") == "line" and sess.get("platform_user_id"):
-                    bot_result = await (
-                        supabase.table("bots")
-                        .select("line_access_token")
-                        .eq("id", sess["bot_id"])
-                        .limit(1)
-                    ).execute()
-                    if bot_result.data and bot_result.data[0].get("line_access_token"):
-                        from app.services.line_service import push_message
-                        await push_message(
-                            user_id=sess["platform_user_id"],
-                            text=content,
-                            access_token=bot_result.data[0]["line_access_token"],
-                        )
-                        logger.info("[LINE] Pushed admin reply to user %s", sess["platform_user_id"][:10])
+            if sess.get("platform_source") == "line" and sess.get("platform_user_id"):
+                bot_result = await (
+                    supabase.table("bots")
+                    .select("line_access_token")
+                    .eq("id", sess["bot_id"])
+                    .limit(1)
+                ).execute()
+                if bot_result.data and bot_result.data[0].get("line_access_token"):
+                    from app.services.line_service import push_message
+                    await push_message(
+                        user_id=sess["platform_user_id"],
+                        text=content,
+                        access_token=bot_result.data[0]["line_access_token"],
+                    )
+                    logger.info("[LINE] Pushed admin reply to user %s", sess["platform_user_id"][:10])
         except Exception as push_exc:
             logger.warning("LINE push failed (non-blocking): %s", push_exc)
 

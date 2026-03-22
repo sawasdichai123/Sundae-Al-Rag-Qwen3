@@ -55,3 +55,7 @@ ollama_data/
 # ── Test Results / Output ────────────────────────────────────────
 test-results/
 frontend/test-results/
+
+# ── Internal Reports (ไม่ push ขึ้น Git) ────────────────────────
+Code Review Report.md
+UI Review and Implementation Plan.md

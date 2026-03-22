@@ -171,6 +171,10 @@ async def ask_question(
     # ── Security: verify user belongs to this org ────────────
     await verify_organization(user, organization_id)
 
+    # ── Security: prevent user impersonation on web platform ──
+    if platform_source == "web":
+        platform_user_id = user.id
+
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
 
@@ -370,6 +374,10 @@ async def ask_question_stream(
 
     # ── Security: verify user belongs to this org ────────────
     await verify_organization(user, organization_id)
+
+    # ── Security: prevent user impersonation on web platform ──
+    if platform_source == "web":
+        platform_user_id = user.id
 
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
@@ -642,6 +650,78 @@ async def request_human(
     except Exception as exc:
         logger.error("Handoff request failed (session=%s): %s", body.session_id, exc)
         raise HTTPException(status_code=500, detail="Handoff request failed. Please try again.")
+
+
+class CancelHandoffRequest(BaseModel):
+    """Request body for cancelling a human handoff."""
+
+    session_id: str
+    organization_id: str
+
+
+@router.post("/cancel-human", response_model=HandoffResponse)
+async def cancel_human(
+    body: CancelHandoffRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> HandoffResponse:
+    """User cancels a pending human handoff request.
+
+    Reverts session status back to 'active' so the bot resumes answering.
+    Only allowed when current status is 'human_takeover'.
+    """
+    await verify_organization(user, body.organization_id)
+    await verify_session_access(user, body.session_id, body.organization_id)
+    supabase = get_supabase()
+
+    try:
+        session_result = await (
+            supabase.table("chat_sessions")
+            .select("id, status")
+            .eq("id", body.session_id)
+            .eq("organization_id", body.organization_id)
+            .limit(1)
+        ).execute()
+
+        if not session_result.data:
+            raise HTTPException(status_code=404, detail="Session not found.")
+
+        if session_result.data[0]["status"] != "human_takeover":
+            raise HTTPException(status_code=400, detail="Session is not in human_takeover status.")
+
+        await (
+            supabase.table("chat_sessions")
+            .update({"status": "active", "last_message_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", body.session_id)
+            .eq("organization_id", body.organization_id)
+        ).execute()
+
+        system_msg = {
+            "id": str(uuid.uuid4()),
+            "session_id": body.session_id,
+            "organization_id": body.organization_id,
+            "role": "system",
+            "content": "ผู้ใช้ยกเลิกการเรียกเจ้าหน้าที่",
+            "metadata": {"handoff_cancelled_by": user.id},
+        }
+        await (supabase.table("chat_messages").insert(system_msg)).execute()
+
+        logger.info(
+            "Human handoff cancelled: session=%s, user=%s",
+            body.session_id,
+            user.id,
+        )
+
+        return HandoffResponse(
+            message="Handoff cancelled successfully.",
+            session_id=body.session_id,
+            new_status="active",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Cancel handoff failed (session=%s): %s", body.session_id, exc)
+        raise HTTPException(status_code=500, detail="Cancel handoff failed. Please try again.")
 
 
 # ── Send Plain Message (during handoff) ──────────────────────

@@ -150,7 +150,7 @@ async def approve_user(
                 # Check not already a member (safety)
                 existing = await (
                     supabase.table("org_members")
-                    .select("id")
+                    .select("user_id")
                     .eq("user_id", user_id)
                     .eq("organization_id", org_id)
                     .limit(1)

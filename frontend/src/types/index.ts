@@ -11,7 +11,10 @@
 export interface Organization {
     id: string;
     name: string;
+    slug?: string;
+    status?: string;
     created_at: string;
+    updated_at?: string;
 }
 
 /** Maps to user_profiles table — extends Supabase auth.users */

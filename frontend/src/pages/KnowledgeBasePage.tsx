@@ -129,6 +129,11 @@ export default function KnowledgeBasePage() {
         const file = e.target.files?.[0];
         if (!file || !orgId) return;
 
+        if (!file.type.includes("pdf")) {
+            toast("error", "Only PDF files are supported.");
+            return;
+        }
+
         setUploading(true);
         try {
             await documentsApi.upload(file, "", orgId);

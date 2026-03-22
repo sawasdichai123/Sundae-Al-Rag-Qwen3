@@ -260,6 +260,13 @@ export const chatApi = {
             bot_id: botId,
         }),
 
+    /** User cancels a pending human handoff request. */
+    cancelHuman: (sessionId: string, organizationId: string) =>
+        apiClient.post("/api/chat/cancel-human", {
+            session_id: sessionId,
+            organization_id: organizationId,
+        }),
+
     /** Send a plain user message (no RAG) — used during human_takeover. */
     sendMessage: (sessionId: string, organizationId: string, content: string) =>
         apiClient.post("/api/chat/send-message", {
