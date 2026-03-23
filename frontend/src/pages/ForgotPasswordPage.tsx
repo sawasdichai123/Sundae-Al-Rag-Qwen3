@@ -127,7 +127,7 @@ export default function ForgotPasswordPage() {
             )}
 
             <p className="text-[10px] text-steel-400 text-center mt-6">
-                &copy; 2025 SUNDAE &middot; Powered by Supabase Auth
+                &copy; 2026 SUNDAE &middot; Powered by Supabase Auth
             </p>
         </div>
     );

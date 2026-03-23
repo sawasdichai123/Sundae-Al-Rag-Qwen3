@@ -57,6 +57,18 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         let initialized = false;
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event, session) => {
+                // Skip recovery sessions — let ResetPasswordPage handle the flow.
+                // Setting session here would make the app think user is logged in
+                // and could interfere with the password reset redirect.
+                if (_event === "PASSWORD_RECOVERY") {
+                    if (!initialized) {
+                        initialized = true;
+                        clearTimeout(timeout);
+                        setLoading(false);
+                    }
+                    return;
+                }
+
                 setSession(session);
                 if (session?.user) {
                     await fetchProfile(session.user.id);

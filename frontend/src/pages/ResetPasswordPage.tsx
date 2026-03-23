@@ -1,13 +1,14 @@
 /**
  * ResetPasswordPage — Set new password after clicking email reset link
  *
- * Supabase redirects here with recovery token in URL hash.
- * onAuthStateChange fires PASSWORD_RECOVERY → session is set automatically.
- * User enters new password → supabase.auth.updateUser({ password }).
+ * Flow:
+ * 1. Supabase redirects here with recovery token in URL hash
+ * 2. detectSessionInUrl (supabaseClient) processes the hash → establishes session
+ * 3. onAuthStateChange fires PASSWORD_RECOVERY → we know session is ready
+ * 4. User enters new password → supabase.auth.updateUser({ password })
  *
- * If the link is expired/invalid, Supabase puts error info in the URL hash
- * (e.g. #error=access_denied&error_code=otp_expired) — we detect and show
- * a friendly message with a link to request a new reset email.
+ * If the link is expired/invalid, Supabase puts error info in the URL hash.
+ * We detect this and show a friendly message.
  */
 
 import { useState, useEffect, type FormEvent } from "react";
@@ -15,28 +16,81 @@ import { Link } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import Spinner from "../components/Spinner";
 
+type PageState = "loading" | "ready" | "expired";
+
 export default function ResetPasswordPage() {
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-    const [linkExpired, setLinkExpired] = useState(false);
+    const [pageState, setPageState] = useState<PageState>("loading");
 
-    // ── Check URL hash for Supabase error (expired/invalid link) ──
     useEffect(() => {
-        const hash = window.location.hash.substring(1); // remove '#'
+        const hash = window.location.hash.substring(1);
         const params = new URLSearchParams(hash);
         const errorCode = params.get("error_code");
         const errorDesc = params.get("error_description");
 
+        console.log("[ResetPassword] URL hash:", hash);
+        console.log("[ResetPassword] error_code:", errorCode, "error_description:", errorDesc);
+
+        // ── Case 1: URL hash has explicit error from Supabase ──
         if (errorCode || params.get("error")) {
-            setLinkExpired(true);
-            if (errorCode === "otp_expired" || errorDesc?.includes("expired")) {
-                setError("ลิงก์รีเซ็ตรหัสผ่านหมดอายุแล้ว กรุณาขอลิงก์ใหม่");
-            } else {
-                setError("ลิงก์ไม่ถูกต้องหรือถูกใช้งานไปแล้ว กรุณาขอลิงก์ใหม่");
-            }
+            console.log("[ResetPassword] Supabase returned error in URL hash");
+
+            // But still check if there's somehow a valid session (edge case)
+            supabase.auth.getSession().then(({ data }) => {
+                if (data.session) {
+                    console.log("[ResetPassword] Session found despite URL error — showing form");
+                    setPageState("ready");
+                } else {
+                    const msg = errorCode === "otp_expired" || errorDesc?.includes("expired")
+                        ? "ลิงก์รีเซ็ตรหัสผ่านหมดอายุแล้ว กรุณาขอลิงก์ใหม่"
+                        : "ลิงก์ไม่ถูกต้องหรือถูกใช้งานไปแล้ว กรุณาขอลิงก์ใหม่";
+                    setError(msg);
+                    setPageState("expired");
+                }
+            });
+            return;
         }
+
+        // ── Case 2: No error in URL — wait for recovery session ──
+        // detectSessionInUrl processes the hash asynchronously, so listen for
+        // PASSWORD_RECOVERY event or check session after a short delay.
+        let resolved = false;
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            console.log("[ResetPassword] onAuthStateChange:", event, !!session);
+            if (resolved) return;
+            if (event === "PASSWORD_RECOVERY" && session) {
+                resolved = true;
+                setPageState("ready");
+            }
+        });
+
+        // Also check existing session (in case event already fired before listener)
+        supabase.auth.getSession().then(({ data }) => {
+            console.log("[ResetPassword] getSession:", !!data.session);
+            if (resolved) return;
+            if (data.session) {
+                resolved = true;
+                setPageState("ready");
+            }
+        });
+
+        // Timeout: if no session after 8 seconds, assume expired
+        const timeout = setTimeout(() => {
+            if (resolved) return;
+            resolved = true;
+            console.log("[ResetPassword] Timeout — no recovery session found");
+            setError("ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่");
+            setPageState("expired");
+        }, 8000);
+
+        return () => {
+            subscription.unsubscribe();
+            clearTimeout(timeout);
+        };
     }, []);
 
     const handleSubmit = async (e: FormEvent) => {
@@ -55,9 +109,9 @@ export default function ResetPasswordPage() {
         setLoading(true);
         setError("");
 
-        // Timeout guard — prevent hanging if no valid session
+        // Timeout guard — 30s for slow Supabase free-tier
         const timeout = new Promise<{ error: { message: string } }>((resolve) =>
-            setTimeout(() => resolve({ error: { message: "session_timeout" } }), 10000),
+            setTimeout(() => resolve({ error: { message: "session_timeout" } }), 30000),
         );
 
         const result = await Promise.race([
@@ -70,7 +124,7 @@ export default function ResetPasswordPage() {
             const msg = err.message;
             if (msg === "session_timeout" || msg.includes("session")) {
                 setError("ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่");
-                setLinkExpired(true);
+                setPageState("expired");
             } else if (msg.includes("same password")) {
                 setError("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม");
             } else {
@@ -81,14 +135,8 @@ export default function ResetPasswordPage() {
             return;
         }
 
-        // Password changed successfully — redirect FIRST, then sign out.
-        // If we signOut() before redirecting, onAuthStateChange fires a React
-        // re-render that shows the "expired link" state before the browser
-        // processes the location change.  Hard-redirect is synchronous enough
-        // that the browser will navigate away before React can re-render.
+        // Password changed — redirect then sign out
         window.location.href = "/login?reset=success";
-        // Fire-and-forget signOut so the old session is cleaned up on the
-        // server side (the redirect above will already be in progress).
         supabase.auth.signOut().catch(() => {});
     };
 
@@ -105,12 +153,17 @@ export default function ResetPasswordPage() {
                 </div>
             </div>
 
-            {linkExpired ? (
+            {pageState === "loading" ? (
+                /* ── Loading State — waiting for recovery session ── */
+                <div className="flex items-center justify-center gap-2 py-12 text-steel-400">
+                    <Spinner /> <span className="text-sm">กำลังตรวจสอบลิงก์...</span>
+                </div>
+            ) : pageState === "expired" ? (
                 /* ── Expired/Invalid Link State ────────────────── */
                 <div className="space-y-4">
                     <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
                         <p className="text-sm text-red-700 font-medium mb-1">
-                            {error}
+                            {error || "ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่"}
                         </p>
                         <p className="text-xs text-red-600">
                             ลิงก์รีเซ็ตรหัสผ่านมีอายุจำกัด กรุณาขอลิงก์ใหม่แล้วกดลิงก์ทันที
@@ -196,9 +249,8 @@ export default function ResetPasswordPage() {
             )}
 
             <p className="text-[10px] text-steel-400 text-center mt-6">
-                &copy; 2025 SUNDAE &middot; Powered by Supabase Auth
+                &copy; 2026 SUNDAE &middot; Powered by Supabase Auth
             </p>
         </div>
     );
 }
-

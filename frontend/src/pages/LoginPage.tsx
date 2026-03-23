@@ -248,7 +248,7 @@ export default function LoginPage() {
             )}
 
             <p className="text-[10px] text-steel-400 text-center mt-6">
-                © 2025 SUNDAE · Powered by Supabase Auth
+                © 2026 SUNDAE · Powered by Supabase Auth
             </p>
         </div>
     );

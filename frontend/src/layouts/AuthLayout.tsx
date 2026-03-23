@@ -18,7 +18,7 @@ export default function AuthLayout() {
                     <Outlet />
                 </div>
                 <p className="text-center text-[11px] text-steel-400 mt-4">
-                    © 2025 SUNDAE · Enterprise AI Platform
+                    © 2026 SUNDAE · Enterprise AI Platform
                 </p>
             </div>
         </div>
