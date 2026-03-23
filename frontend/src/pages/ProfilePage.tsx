@@ -2,7 +2,7 @@
  * ProfilePage — User profile, org memberships, and pending invitations
  *
  * Sections:
- * A. Profile info (name, email, role badge)
+ * A. Profile info (name, email, role badge) — user role can edit name
  * B. My organizations (with "leave" button for members)
  * C. Pending invitations (accept/decline)
  */
@@ -17,6 +17,7 @@ import Spinner from "../components/Spinner";
 
 export default function ProfilePage() {
     const user = useAuthStore((s) => s.user);
+    const fetchProfile = useAuthStore((s) => s.fetchProfile);
     const orgs = useOrgStore((s) => s.orgs);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
     const toast = useToastStore((s) => s.addToast);
@@ -26,6 +27,14 @@ export default function ProfilePage() {
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
     const [decliningId, setDecliningId] = useState<string | null>(null);
     const [leavingOrgId, setLeavingOrgId] = useState<string | null>(null);
+
+    // Edit name state
+    const [editing, setEditing] = useState(false);
+    const [editFirstName, setEditFirstName] = useState("");
+    const [editLastName, setEditLastName] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    const isUser = user?.role === "user";
 
     // Load pending invitations
     useEffect(() => {
@@ -40,6 +49,36 @@ export default function ProfilePage() {
             }
         })();
     }, []);
+
+    const handleStartEdit = () => {
+        setEditFirstName(user?.first_name || "");
+        setEditLastName(user?.last_name || "");
+        setEditing(true);
+    };
+
+    const handleCancelEdit = () => {
+        setEditing(false);
+    };
+
+    const handleSaveProfile = async () => {
+        if (!editFirstName.trim()) {
+            toast("error", "กรุณาระบุชื่อ");
+            return;
+        }
+        setSaving(true);
+        try {
+            await orgApi.updateProfile(editFirstName.trim(), editLastName.trim());
+            toast("success", "บันทึกข้อมูลสำเร็จ");
+            setEditing(false);
+            // Refresh profile in store
+            if (user?.id) await fetchProfile(user.id);
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "บันทึกไม่สำเร็จ";
+            toast("error", msg);
+        } finally {
+            setSaving(false);
+        }
+    };
 
     const handleAccept = async (invitationId: string) => {
         setAcceptingId(invitationId);
@@ -89,7 +128,7 @@ export default function ProfilePage() {
     const roleBadge = (role: string) => {
         const styles: Record<string, string> = {
             admin: "bg-red-100 text-red-700",
-            support: "bg-amber-100 text-amber-700",
+            support: "bg-violet-100 text-violet-700",
             user: "bg-steel-100 text-steel-600",
         };
         return (
@@ -108,21 +147,83 @@ export default function ProfilePage() {
 
             {/* Section A: Profile Info */}
             <div className="bg-white rounded-2xl border border-steel-100 p-6 mb-6">
-                <h2 className="text-sm font-semibold text-steel-800 mb-4">ข้อมูลส่วนตัว</h2>
-                <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
-                        {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                            <p className="text-base font-semibold text-steel-900 truncate">
-                                {[user?.first_name, user?.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
-                            </p>
-                            {user?.role && roleBadge(user.role)}
-                        </div>
-                        <p className="text-sm text-steel-500">{user?.email}</p>
-                    </div>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-sm font-semibold text-steel-800">ข้อมูลส่วนตัว</h2>
+                    {isUser && !editing && (
+                        <button
+                            onClick={handleStartEdit}
+                            className="text-xs font-medium text-brand-600 hover:text-brand-700 cursor-pointer"
+                        >
+                            แก้ไข
+                        </button>
+                    )}
                 </div>
+
+                {editing ? (
+                    /* Edit Mode */
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-medium text-steel-600 mb-1">ชื่อ</label>
+                                <input
+                                    type="text"
+                                    value={editFirstName}
+                                    onChange={(e) => setEditFirstName(e.target.value)}
+                                    className="w-full px-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all"
+                                    placeholder="ชื่อ"
+                                    disabled={saving}
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-steel-600 mb-1">นามสกุล</label>
+                                <input
+                                    type="text"
+                                    value={editLastName}
+                                    onChange={(e) => setEditLastName(e.target.value)}
+                                    className="w-full px-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all"
+                                    placeholder="นามสกุล"
+                                    disabled={saving}
+                                />
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-steel-500">
+                            <span>อีเมล:</span>
+                            <span>{user?.email}</span>
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                            <button
+                                onClick={handleSaveProfile}
+                                disabled={saving}
+                                className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {saving ? <><Spinner /> บันทึก...</> : "บันทึก"}
+                            </button>
+                            <button
+                                onClick={handleCancelEdit}
+                                disabled={saving}
+                                className="px-4 py-2 bg-steel-100 text-steel-600 text-xs font-bold rounded-xl hover:bg-steel-200 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                ยกเลิก
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    /* View Mode */
+                    <div className="flex items-center gap-4">
+                        <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
+                            {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                                <p className="text-base font-semibold text-steel-900 truncate">
+                                    {[user?.first_name, user?.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
+                                </p>
+                                {user?.role && roleBadge(user.role)}
+                            </div>
+                            <p className="text-sm text-steel-500">{user?.email}</p>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Section B: My Organizations */}
@@ -145,11 +246,15 @@ export default function ProfilePage() {
                                     <p className="text-sm font-medium text-steel-800 truncate">{org.name}</p>
                                 </div>
                                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                    org.org_role === "owner"
-                                        ? "bg-brand-100 text-brand-700"
-                                        : "bg-steel-100 text-steel-500"
+                                    user?.role === "admin"
+                                        ? "bg-red-100 text-red-700"
+                                        : user?.role === "support"
+                                            ? "bg-violet-100 text-violet-700"
+                                            : org.org_role === "owner"
+                                                ? "bg-brand-100 text-brand-700"
+                                                : "bg-steel-100 text-steel-500"
                                 }`}>
-                                    {org.org_role}
+                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role}
                                 </span>
                                 {org.org_role === "member" && (
                                     <button

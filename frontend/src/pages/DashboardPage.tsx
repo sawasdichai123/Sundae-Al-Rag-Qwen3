@@ -180,11 +180,15 @@ function MemberManagement({ orgId }: { orgId: string }) {
                             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                                 m.org_role === "owner"
                                     ? "bg-brand-100 text-brand-700"
-                                    : "bg-steel-100 text-steel-500"
+                                    : m.role === "admin"
+                                        ? "bg-red-100 text-red-700"
+                                        : m.role === "support"
+                                            ? "bg-violet-100 text-violet-700"
+                                            : "bg-steel-100 text-steel-500"
                             }`}>
-                                {m.org_role}
+                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role}
                             </span>
-                            {m.org_role !== "owner" && (
+                            {m.org_role !== "owner" && m.role !== "admin" && m.role !== "support" && (
                                 <button
                                     onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                     disabled={removingId === m.user_id}

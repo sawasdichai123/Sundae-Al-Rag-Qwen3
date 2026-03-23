@@ -433,4 +433,11 @@ export const orgApi = {
     /** Leave an organization (member only, not owner). */
     leave: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/leave`),
+
+    /** Update current user's profile (name). */
+    updateProfile: (firstName: string, lastName: string) =>
+        apiClient.put<{ first_name: string | null; last_name: string | null; email: string }>(
+            "/api/orgs/profile/me",
+            { first_name: firstName, last_name: lastName },
+        ),
 };

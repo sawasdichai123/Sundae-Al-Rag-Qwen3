@@ -2280,6 +2280,100 @@ function readTokenFromStorage() {
 
 ---
 
+## 26. Profile Edit, Badge Fixes & Email Change Plan (23 มีนาคม 2569) ✅
+
+### 26.1 User Profile Edit — แก้ไขชื่อ-นามสกุล
+
+เฉพาะ role `user` เท่านั้นที่แก้ไขได้ (admin/support ไม่ต้อง)
+
+**Backend** — `PUT /api/orgs/profile/me`
+- รับ `first_name` + `last_name` → update `user_profiles`
+- Block admin/support ด้วย HTTP 400
+- Validate: `first_name` ห้ามว่าง
+
+**Frontend** — `ProfilePage.tsx`
+- เพิ่ม edit mode: กดปุ่ม "แก้ไข" → โชว์ form first_name/last_name → บันทึก/ยกเลิก
+- เรียก `orgApi.updateProfile()` แล้ว refresh profile ใน store
+
+### 26.2 Badge Color Fixes
+
+แก้สี badge ให้ตรงกับ DashboardLayout:
+- **admin** = `bg-red-100 text-red-700`
+- **support** = `bg-violet-100 text-violet-700` (เดิมเป็น amber ผิด)
+- **owner** = `bg-brand-100 text-brand-700`
+- **member** = `bg-steel-100 text-steel-500`
+
+แก้ใน:
+- `DashboardPage.tsx` — member list badges
+- `ProfilePage.tsx` — profile info badge + org list badges
+
+### 26.3 Admin/Support Badge แสดง Platform Role
+
+ใน Section B "องค์กรของฉัน" ของ ProfilePage และ member list ของ DashboardPage:
+- ถ้า user เป็น admin/support → badge แสดง platform role (admin/support) แทน org_role (member)
+- เพิ่ม `role` field ใน `OrgMemberResponse` (backend) และ `OrgMember` type (frontend)
+
+### 26.4 ซ่อนปุ่มลบ Admin/Support จาก Org
+
+ใน DashboardPage member list:
+- ถ้า member มี `role === "admin"` หรือ `role === "support"` → ไม่แสดงปุ่มลบ
+- ป้องกันการลบ platform admin/support ออกจากองค์กร
+
+### 26.5 Email Change — Implementation Plan
+
+สร้าง `Email implementation.md` เก็บแผนการเปลี่ยน email ของ user:
+- **สถานะ**: รอ production deploy (ต้องมี SMTP + production URL)
+- Backend endpoint: `POST /api/orgs/profile/me/change-email`
+- DB trigger: sync `auth.users.email` → `user_profiles.email`
+- Frontend: ปุ่ม "เปลี่ยนอีเมล" + modal + handle redirect หลังยืนยัน
+
+### 26.6 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **Backend** | |
+| `app/routers/organization.py` | เพิ่ม `PUT /api/orgs/profile/me`, เพิ่ม `role` ใน `OrgMemberResponse` |
+| **Frontend** | |
+| `pages/ProfilePage.tsx` | เพิ่ม edit mode, แก้ badge colors, แสดง platform role สำหรับ admin/support |
+| `pages/DashboardPage.tsx` | แก้ badge colors, ซ่อนปุ่มลบ admin/support |
+| `api/endpoints.ts` | เพิ่ม `orgApi.updateProfile()` |
+| `types/index.ts` | เพิ่ม `role` ใน `OrgMember` |
+| **Docs** | |
+| `Email implementation.md` | สร้างใหม่ — แผนเปลี่ยน email (รอ production) |
+
+---
+
+## 27. Knowledge Base — แสดงขนาดจริงใน DB (23 มีนาคม 2569) ✅
+
+### 27.1 ปัญหา
+
+หน้า Knowledge Base โชว์ `file_size_bytes` ซึ่งเป็นขนาดไฟล์ PDF ต้นฉบับ (เช่น 5,524 KB) แต่จริงๆ ใน Supabase DB เก็บเฉพาะ text chunks + embeddings ซึ่งเล็กกว่ามาก ทำให้ user เข้าใจผิดว่ากิน storage เยอะ
+
+### 27.2 แก้ไข
+
+**SQL Migration 015** — สร้าง function `get_doc_storage_sizes(p_org_id)`
+- คำนวณขนาดจริงต่อเอกสาร: `octet_length(text)` ของ parent chunks + child chunks + embeddings (1024 dim × 4 bytes ต่อ chunk)
+- ไม่สร้างตารางใหม่ — เป็นแค่ function ที่ query ตารางเดิม
+
+**Backend** — `document.py`
+- เพิ่ม `storage_bytes` ใน `DocumentResponse`
+- `GET /api/documents` เรียก RPC `get_doc_storage_sizes` แล้ว merge ขนาดจริงเข้า response
+
+**Frontend**
+- เพิ่ม `storage_bytes` ใน `Document` type
+- `KnowledgeBasePage.tsx` โชว์ `storage_bytes` แทน `file_size_bytes`
+
+### 27.3 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **SQL** | `backend/sql/015_doc_storage_sizes.sql` | สร้าง function `get_doc_storage_sizes` |
+| **Backend** | `app/routers/document.py` | เพิ่ม `storage_bytes` + เรียก RPC |
+| **Frontend** | `types/index.ts` | เพิ่ม `storage_bytes` ใน `Document` |
+| | `pages/KnowledgeBasePage.tsx` | โชว์ขนาดจริงใน DB แทนขนาดไฟล์ต้นฉบับ |
+
+---
+
 ### 20. Next Steps (อัพเดท 23 มี.ค. 2569)
 
 ### 🟡 งานที่เหลือ
@@ -2294,7 +2388,9 @@ function readTokenFromStorage() {
 | 14 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB |
 | 15 | **LINE Webhook — งานที่เหลือ** | SQL migration `bots.line_channel_secret`, IntegrationPage เชื่อม API, end-to-end test |
 | 16 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
-| 17 | **User profile edit** | ให้ user แก้ first_name / last_name ของตัวเอง |
+| ~~17~~ | ~~User profile edit~~ | ✅ แก้แล้ว (Section 26.1) — user แก้ first_name/last_name ได้ |
 | 18 | **Dark mode** | เพิ่ม theme switcher |
 | 19 | **Email notification สำหรับ invitation** | ปัจจุบันเชิญแค่สร้าง DB record — ยังไม่ส่ง email จริง |
 | 20 | **Code Review remaining ~95 issues** | 11 Critical, 4 High, 40 Medium, 40 Low (ดู Code Review Report.md) |
+| 21 | **Email change สำหรับ user** | รอ production deploy — ดูแผนใน `Email implementation.md` |
+| ~~22~~ | ~~Knowledge Base — แสดงขนาดจริงใน DB~~ | ✅ แก้แล้ว (Section 27) — โชว์ storage_bytes จาก RPC แทน file_size_bytes |

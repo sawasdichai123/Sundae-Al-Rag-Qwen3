@@ -291,9 +291,11 @@ export default function KnowledgeBasePage() {
                                         </h3>
                                         <p className="text-xs text-steel-400 mt-1 line-clamp-2">
                                             {doc.mime_type || "PDF Document"}
-                                            {doc.file_size_bytes
-                                                ? ` · ${(doc.file_size_bytes / 1024).toFixed(0)} KB`
-                                                : ""}
+                                            {doc.storage_bytes
+                                                ? ` · ${(doc.storage_bytes / 1024).toFixed(0)} KB`
+                                                : doc.file_size_bytes
+                                                    ? ` · ${(doc.file_size_bytes / 1024).toFixed(0)} KB`
+                                                    : ""}
                                         </p>
                                         <div className="flex items-center gap-3 mt-2">
                                             <StatusBadge status={doc.status} />

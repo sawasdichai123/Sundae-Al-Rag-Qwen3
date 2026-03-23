@@ -47,6 +47,7 @@ export interface OrgMember {
     email: string;
     first_name: string | null;
     last_name: string | null;
+    role: string | null;  // platform role (admin/support/user)
     org_role: OrgRole;
     joined_at: string;
 }
@@ -104,6 +105,7 @@ export interface Document {
     name: string;                       // renamed from filename
     file_path: string | null;
     file_size_bytes: number | null;
+    storage_bytes: number | null;       // actual DB storage (chunks + embeddings)
     mime_type: string | null;
     status: DocumentStatus;
     created_at: string;

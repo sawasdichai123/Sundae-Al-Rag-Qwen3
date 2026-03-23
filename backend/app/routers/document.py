@@ -61,6 +61,7 @@ class DocumentResponse(BaseModel):
     name: str
     file_path: Optional[str] = None
     file_size_bytes: Optional[int] = None
+    storage_bytes: Optional[int] = None
     mime_type: Optional[str] = None
     status: str
     created_at: str
@@ -99,7 +100,22 @@ async def list_documents(
             .order("created_at", desc=True)
         ).execute()
 
-        return [DocumentResponse(**doc) for doc in (result.data or [])]
+        # Fetch actual DB storage sizes per document
+        storage_map: dict[str, int] = {}
+        try:
+            sizes = await supabase.rpc(
+                "get_doc_storage_sizes",
+                {"p_org_id": organization_id},
+            ).execute()
+            for row in sizes.data or []:
+                storage_map[row["document_id"]] = row["storage_bytes"]
+        except Exception as size_exc:
+            logger.warning("Failed to fetch storage sizes: %s", size_exc)
+
+        return [
+            DocumentResponse(**{**doc, "storage_bytes": storage_map.get(doc["id"])})
+            for doc in (result.data or [])
+        ]
 
     except Exception as exc:
         logger.error("Failed to list documents (org=%s): %s", organization_id, exc)

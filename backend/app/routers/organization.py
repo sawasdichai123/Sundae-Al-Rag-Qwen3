@@ -84,6 +84,7 @@ class OrgMemberResponse(BaseModel):
     email: str
     first_name: str | None = None
     last_name: str | None = None
+    role: str | None = None  # platform role (admin/support/user)
     org_role: str
     joined_at: str | None = None
 
@@ -605,7 +606,7 @@ async def list_members(
     user_ids = [row["user_id"] for row in result.data]
     profiles_result = await (
         supabase.table("user_profiles")
-        .select("id, email, first_name, last_name")
+        .select("id, email, first_name, last_name, role")
         .in_("id", user_ids)
     ).execute()
 
@@ -620,6 +621,7 @@ async def list_members(
             email=profile.get("email", ""),
             first_name=profile.get("first_name"),
             last_name=profile.get("last_name"),
+            role=profile.get("role"),
             org_role=row["org_role"],
             joined_at=row.get("joined_at"),
         ))
@@ -741,3 +743,54 @@ async def remove_member(
 
     logger.info("Removed user %s from org %s by %s", member_user_id, org_id, user.email)
     return MessageResponse(message="Member removed successfully.")
+
+
+# ── Update Profile ──────────────────────────────────────────────
+
+
+class UpdateProfileRequest(BaseModel):
+    """Request body for updating user profile."""
+
+    first_name: str
+    last_name: str
+
+
+class ProfileResponse(BaseModel):
+    """Response after updating profile."""
+
+    first_name: str | None
+    last_name: str | None
+    email: str
+
+
+@router.put("/profile/me", response_model=ProfileResponse)
+async def update_my_profile(
+    body: UpdateProfileRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> ProfileResponse:
+    """Update current user's first_name and last_name. User role only."""
+    if user.role in ("admin", "support"):
+        raise HTTPException(400, "Admin/Support ไม่สามารถเปลี่ยนชื่อผ่านหน้านี้ได้")
+
+    first_name = body.first_name.strip()
+    last_name = body.last_name.strip()
+
+    if not first_name:
+        raise HTTPException(400, "กรุณาระบุชื่อ")
+    if len(first_name) > 100 or len(last_name) > 100:
+        raise HTTPException(400, "ชื่อหรือนามสกุลยาวเกินไป (สูงสุด 100 ตัวอักษร)")
+
+    supabase = get_supabase()
+    await (
+        supabase.table("user_profiles")
+        .update({"first_name": first_name, "last_name": last_name or None})
+        .eq("id", user.id)
+    ).execute()
+
+    logger.info("User %s updated profile: %s %s", user.email, first_name, last_name)
+
+    return ProfileResponse(
+        first_name=first_name,
+        last_name=last_name or None,
+        email=user.email,
+    )
