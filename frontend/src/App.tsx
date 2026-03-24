@@ -55,12 +55,28 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
         // INITIAL_SESSION fires immediately on registration with the stored session,
         // avoiding the race condition between getSession() and onAuthStateChange.
         let initialized = false;
+        let sawPasswordRecovery = false;
+        const isResetPage = window.location.pathname === "/reset-password";
+
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
             async (_event, session) => {
-                // Skip recovery sessions — let ResetPasswordPage handle the flow.
-                // Setting session here would make the app think user is logged in
-                // and could interfere with the password reset redirect.
+                // On /reset-password, skip ALL session-setting events so
+                // ResetPasswordPage can handle the recovery flow independently.
+                // Without this, SIGNED_IN/INITIAL_SESSION after PASSWORD_RECOVERY
+                // sets isAuthenticated=true and interferes with the reset form.
                 if (_event === "PASSWORD_RECOVERY") {
+                    sawPasswordRecovery = true;
+                    if (!initialized) {
+                        initialized = true;
+                        clearTimeout(timeout);
+                        setLoading(false);
+                    }
+                    return;
+                }
+
+                // On reset page, also skip the SIGNED_IN/INITIAL_SESSION that
+                // fires right after PASSWORD_RECOVERY (same recovery flow).
+                if (isResetPage && sawPasswordRecovery) {
                     if (!initialized) {
                         initialized = true;
                         clearTimeout(timeout);

@@ -16,7 +16,7 @@ import { Link } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import Spinner from "../components/Spinner";
 
-type PageState = "loading" | "ready" | "expired";
+type PageState = "loading" | "ready" | "expired" | "success";
 
 export default function ResetPasswordPage() {
     const [password, setPassword] = useState("");
@@ -55,37 +55,53 @@ export default function ResetPasswordPage() {
         }
 
         // ── Case 2: No error in URL — wait for recovery session ──
-        // detectSessionInUrl processes the hash asynchronously, so listen for
-        // PASSWORD_RECOVERY event or check session after a short delay.
+        // detectSessionInUrl processes the hash asynchronously. The
+        // PASSWORD_RECOVERY event may have already fired (before this component
+        // mounts), so we also accept INITIAL_SESSION and SIGNED_IN with a session.
         let resolved = false;
+
+        const markReady = (source: string) => {
+            if (resolved) return;
+            resolved = true;
+            console.log("[ResetPassword] Session found via:", source);
+            setPageState("ready");
+        };
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
             console.log("[ResetPassword] onAuthStateChange:", event, !!session);
             if (resolved) return;
-            if (event === "PASSWORD_RECOVERY" && session) {
-                resolved = true;
-                setPageState("ready");
+            // Accept any event that provides a valid session — PASSWORD_RECOVERY
+            // may have already fired before this listener was set up, in which case
+            // we receive INITIAL_SESSION or SIGNED_IN instead.
+            if (session && (event === "PASSWORD_RECOVERY" || event === "INITIAL_SESSION" || event === "SIGNED_IN")) {
+                markReady(`event:${event}`);
             }
         });
 
-        // Also check existing session (in case event already fired before listener)
-        supabase.auth.getSession().then(({ data }) => {
-            console.log("[ResetPassword] getSession:", !!data.session);
-            if (resolved) return;
-            if (data.session) {
-                resolved = true;
-                setPageState("ready");
-            }
-        });
+        // Check existing session (in case events already fired before listener).
+        // Retry after 1.5s if first check fails — detectSessionInUrl may still
+        // be processing the hash asynchronously.
+        const checkSession = (attempt: number) => {
+            supabase.auth.getSession().then(({ data }) => {
+                console.log("[ResetPassword] getSession (attempt", attempt, "):", !!data.session);
+                if (resolved) return;
+                if (data.session) {
+                    markReady(`getSession:attempt${attempt}`);
+                } else if (attempt < 3) {
+                    setTimeout(() => checkSession(attempt + 1), 1500);
+                }
+            });
+        };
+        checkSession(1);
 
-        // Timeout: if no session after 8 seconds, assume expired
+        // Timeout: if no session after 10 seconds, assume expired
         const timeout = setTimeout(() => {
             if (resolved) return;
             resolved = true;
             console.log("[ResetPassword] Timeout — no recovery session found");
             setError("ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่");
             setPageState("expired");
-        }, 8000);
+        }, 10000);
 
         return () => {
             subscription.unsubscribe();
@@ -135,8 +151,9 @@ export default function ResetPasswordPage() {
             return;
         }
 
-        // Password changed — redirect then sign out
-        window.location.href = "/login?reset=success";
+        // Password changed — show success state, then sign out in background
+        setPageState("success");
+        setLoading(false);
         supabase.auth.signOut().catch(() => {});
     };
 
@@ -157,6 +174,24 @@ export default function ResetPasswordPage() {
                 /* ── Loading State — waiting for recovery session ── */
                 <div className="flex items-center justify-center gap-2 py-12 text-steel-400">
                     <Spinner /> <span className="text-sm">กำลังตรวจสอบลิงก์...</span>
+                </div>
+            ) : pageState === "success" ? (
+                /* ── Success State ─────────────────────────────── */
+                <div className="space-y-4">
+                    <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                        <p className="text-sm text-emerald-700 font-medium mb-1">
+                            เปลี่ยนรหัสผ่านสำเร็จ
+                        </p>
+                        <p className="text-xs text-emerald-600">
+                            กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่ของคุณ
+                        </p>
+                    </div>
+                    <Link
+                        to="/login"
+                        className="block w-full text-center bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors shadow-md shadow-brand-200"
+                    >
+                        ไปหน้าเข้าสู่ระบบ
+                    </Link>
                 </div>
             ) : pageState === "expired" ? (
                 /* ── Expired/Invalid Link State ────────────────── */
