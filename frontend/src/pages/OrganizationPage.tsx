@@ -35,6 +35,7 @@ export default function OrganizationPage() {
     // Deletion
     const [requestingDeletion, setRequestingDeletion] = useState(false);
     const [confirmingDeletion, setConfirmingDeletion] = useState(false);
+    const [cancellingDeletion, setCancellingDeletion] = useState(false);
 
     const loadData = useCallback(async () => {
         if (!activeOrgId) return;
@@ -84,6 +85,22 @@ export default function OrganizationPage() {
             toast("error", msg);
         } finally {
             setRequestingDeletion(false);
+        }
+    };
+
+    const handleCancelDeletion = async () => {
+        if (!activeOrgId) return;
+        if (!confirm("ยกเลิกคำขอลบองค์กร?")) return;
+        setCancellingDeletion(true);
+        try {
+            await orgApi.cancelDeletion(activeOrgId);
+            toast("success", "ยกเลิกคำขอลบองค์กรสำเร็จ");
+            await loadData();
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ยกเลิกไม่สำเร็จ";
+            toast("error", msg);
+        } finally {
+            setCancellingDeletion(false);
         }
     };
 
@@ -161,19 +178,31 @@ export default function OrganizationPage() {
                         การลบองค์กรต้องได้รับการยืนยันจากทั้ง Owner และ Support/Admin
                     </p>
                     {orgStatus === "pending_deletion" ? (
-                        canConfirmDeletion ? (
-                            <button
-                                onClick={handleConfirmDeletion}
-                                disabled={confirmingDeletion}
-                                className="px-5 py-2.5 bg-red-600 text-white text-sm font-bold rounded-xl hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                                {confirmingDeletion ? <Spinner /> : "ยืนยันการลบองค์กร"}
-                            </button>
-                        ) : (
-                            <div className="text-xs text-steel-500">
-                                มีคำขอลบองค์กรแล้ว — รอ Support/Admin ยืนยัน
-                            </div>
-                        )
+                        <div className="flex items-center gap-3">
+                            {canConfirmDeletion && (
+                                <button
+                                    onClick={handleConfirmDeletion}
+                                    disabled={confirmingDeletion}
+                                    className="px-5 py-2.5 bg-red-600 text-white text-sm font-bold rounded-xl hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                    {confirmingDeletion ? <Spinner /> : "ยืนยันการลบองค์กร"}
+                                </button>
+                            )}
+                            {(canRequestDeletion || canConfirmDeletion) && (
+                                <button
+                                    onClick={handleCancelDeletion}
+                                    disabled={cancellingDeletion}
+                                    className="px-5 py-2.5 bg-steel-100 text-steel-700 text-sm font-bold rounded-xl hover:bg-steel-200 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                    {cancellingDeletion ? <Spinner /> : "ยกเลิกคำขอลบ"}
+                                </button>
+                            )}
+                            {!canConfirmDeletion && !canRequestDeletion && (
+                                <div className="text-xs text-steel-500">
+                                    มีคำขอลบองค์กรแล้ว — รอ Support/Admin ยืนยัน
+                                </div>
+                            )}
+                        </div>
                     ) : (
                         canRequestDeletion ? (
                             <button

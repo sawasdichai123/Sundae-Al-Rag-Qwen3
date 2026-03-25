@@ -99,11 +99,13 @@ function MetricCard({ icon, label, value, change, changeType, accentColor, disab
 
 function MemberManagement({ orgId }: { orgId: string }) {
     const toast = useToastStore((s) => s.addToast);
+    const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
     const [members, setMembers] = useState<OrgMember[]>([]);
     const [loading, setLoading] = useState(true);
     const [inviteEmail, setInviteEmail] = useState("");
     const [inviting, setInviting] = useState(false);
     const [removingId, setRemovingId] = useState<string | null>(null);
+    const [transferringId, setTransferringId] = useState<string | null>(null);
 
     const loadMembers = useCallback(async () => {
         try {
@@ -134,6 +136,22 @@ function MemberManagement({ orgId }: { orgId: string }) {
         }
         // Refresh member list separately — don't let this fail affect the invite toast
         loadMembers().catch(() => {});
+    };
+
+    const handleTransfer = async (userId: string, name: string) => {
+        if (!confirm(`โอนความเป็นเจ้าของให้ ${name}? คุณจะกลายเป็นสมาชิกปกติ`)) return;
+        setTransferringId(userId);
+        try {
+            await orgApi.transferOwnership(orgId, userId);
+            toast("success", `โอนความเป็นเจ้าของให้ ${name} สำเร็จ`);
+            await fetchOrgs();
+            await loadMembers();
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "โอนไม่สำเร็จ";
+            toast("error", msg);
+        } finally {
+            setTransferringId(null);
+        }
     };
 
     const handleRemove = async (userId: string, name: string) => {
@@ -189,13 +207,23 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                 {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role}
                             </span>
                             {m.org_role !== "owner" && m.role !== "admin" && m.role !== "support" && (
-                                <button
-                                    onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
-                                    disabled={removingId === m.user_id}
-                                    className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                    {removingId === m.user_id ? "..." : "ลบ"}
-                                </button>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => handleTransfer(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
+                                        disabled={transferringId === m.user_id}
+                                        className="text-xs text-brand-600 hover:text-brand-800 transition-colors cursor-pointer disabled:opacity-50"
+                                        title="โอนความเป็นเจ้าของ"
+                                    >
+                                        {transferringId === m.user_id ? "..." : "โอน"}
+                                    </button>
+                                    <button
+                                        onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
+                                        disabled={removingId === m.user_id}
+                                        className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                                    >
+                                        {removingId === m.user_id ? "..." : "ลบ"}
+                                    </button>
+                                </div>
                             )}
                         </div>
                     ))}

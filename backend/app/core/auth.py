@@ -266,6 +266,10 @@ async def require_org_owner(
 
     Admin role bypasses this check.
 
+    IMPORTANT: For endpoints that accept org_id as a path parameter,
+    use verify_org_owner(user, org_id) instead — this dependency only
+    checks against active_org_id from the header.
+
     Usage::
 
         @router.post("/bots")
@@ -297,6 +301,36 @@ async def require_org_owner(
         )
 
     return user
+
+
+async def verify_org_owner(user: CurrentUser, organization_id: str) -> None:
+    """Verify the user is an owner of the SPECIFIC org (not just active org).
+
+    Use this in endpoints that accept org_id as a path parameter to prevent
+    bypass via X-Active-Org header mismatch.
+
+    Admin role bypasses this check.
+
+    Raises:
+        HTTPException 403: User is not the owner of this org.
+    """
+    if user.role == "admin":
+        return
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", organization_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data or result.data[0].get("org_role") != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Org owner role required.",
+        )
 
 
 async def verify_session_access(
@@ -358,21 +392,44 @@ async def verify_session_access(
 
 async def verify_organization(user: CurrentUser, organization_id: str) -> None:
     """Verify the authenticated user belongs to the given organization
-    via the org_members table (many-to-many).
+    via the org_members table (many-to-many), AND the org is active.
 
-    Admin role bypasses this check.
+    Admin role bypasses membership check but org status is ALWAYS checked.
 
     This is the primary multi-tenant isolation check. Every endpoint that
     accepts organization_id MUST call this before proceeding.
 
     Raises:
         HTTPException 403: User does not belong to the organization.
+        HTTPException 404: Organization not found or deleted.
     """
-    # Support and Admin can access any organization
+    supabase = get_supabase()
+
+    # Always check org status — even admin/support cannot operate on deleted orgs
+    org_result = await (
+        supabase.table("organizations")
+        .select("status")
+        .eq("id", organization_id)
+        .limit(1)
+    ).execute()
+
+    if not org_result.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization not found.",
+        )
+
+    org_status = org_result.data[0].get("status", "active")
+    if org_status == "deleted":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Organization has been deleted.",
+        )
+
+    # Support and Admin can access any active organization
     if user.role in ("support", "admin"):
         return
 
-    supabase = get_supabase()
     result = await (
         supabase.table("org_members")
         .select("user_id")

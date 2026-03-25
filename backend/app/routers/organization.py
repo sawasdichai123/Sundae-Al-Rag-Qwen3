@@ -11,6 +11,8 @@ Endpoints:
     POST   /api/orgs/{org_id}/request-deletion    → Request deletion
     POST   /api/orgs/{org_id}/confirm-deletion    → Confirm deletion
     POST   /api/orgs/{org_id}/leave               → Leave org (member only)
+    POST   /api/orgs/{org_id}/transfer-ownership  → Transfer ownership
+    POST   /api/orgs/{org_id}/cancel-deletion     → Cancel pending deletion
     GET    /api/orgs/{org_id}/members             → List members
     POST   /api/orgs/{org_id}/invite              → Invite by email
     DELETE /api/orgs/{org_id}/members/{user_id}   → Remove member
@@ -28,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -38,13 +40,15 @@ from app.core.auth import (
     require_approved,
     require_role,
     require_org_owner,
+    verify_org_owner,
     verify_organization,
 )
 from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
 
-EMAIL_RE = re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+# Email regex: no leading/trailing dots, no consecutive dots, max 254 chars
+EMAIL_RE = re.compile(r'^(?!.*\.\.)(?![.])(?!.*[.]@)[a-zA-Z0-9._%+\-]{1,64}@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
 
 router = APIRouter(prefix="/api/orgs", tags=["Organizations"])
 
@@ -200,10 +204,11 @@ async def list_orgs(
     supabase = get_supabase()
 
     if user.role in ("support", "admin"):
-        # Support/Admin see every org
+        # Support/Admin see every active org (exclude deleted)
         all_orgs_result = await (
             supabase.table("organizations")
             .select("id, name, slug, created_at")
+            .neq("status", "deleted")
             .order("created_at", desc=False)
         ).execute()
 
@@ -245,7 +250,10 @@ async def list_orgs(
 async def my_invitations(
     user: CurrentUser = Depends(require_approved),
 ):
-    """List pending invitations for the current user."""
+    """List pending invitations for the current user.
+
+    Invitations older than 30 days are automatically expired (marked revoked).
+    """
     supabase = get_supabase()
 
     result = await (
@@ -255,8 +263,16 @@ async def my_invitations(
         .eq("status", "pending")
     ).execute()
 
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     items: list[MyInvitationResponse] = []
+    expired_ids: list[str] = []
+
     for row in result.data or []:
+        # Auto-expire invitations older than 30 days
+        if row.get("created_at", "") < cutoff:
+            expired_ids.append(row["id"])
+            continue
+
         org = row.get("organizations") or {}
         items.append(MyInvitationResponse(
             id=row["id"],
@@ -266,6 +282,18 @@ async def my_invitations(
             status=row["status"],
             created_at=row.get("created_at", ""),
         ))
+
+    # Bulk-expire old invitations in the background
+    if expired_ids:
+        try:
+            await (
+                supabase.table("org_invitations")
+                .update({"status": "revoked"})
+                .in_("id", expired_ids)
+            ).execute()
+            logger.info("Auto-expired %d old invitations", len(expired_ids))
+        except Exception as exc:
+            logger.warning("Failed to auto-expire invitations: %s", exc)
 
     return items
 
@@ -295,7 +323,17 @@ async def accept_invitation(
     org_id = inv["organization_id"]
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # 2. Check not already a member
+    # 2. Check invitation not expired (30 days)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    if inv.get("created_at", "") < cutoff:
+        await (
+            supabase.table("org_invitations")
+            .update({"status": "revoked"})
+            .eq("id", inv_id)
+        ).execute()
+        raise HTTPException(400, "คำเชิญนี้หมดอายุแล้ว (เกิน 30 วัน) กรุณาขอคำเชิญใหม่")
+
+    # 3. Check not already a member
     existing = await (
         supabase.table("org_members")
         .select("user_id")
@@ -312,15 +350,19 @@ async def accept_invitation(
         ).execute()
         return MessageResponse(message="You are already a member of this organization.")
 
-    # 3. Determine role: first member becomes owner, others become member
-    owner_check = await (
-        supabase.table("org_members")
-        .select("user_id")
-        .eq("organization_id", org_id)
-        .eq("org_role", "owner")
-        .limit(1)
-    ).execute()
-    assigned_role = "owner" if not owner_check.data else "member"
+    # 3. Determine role: first member becomes owner, others become member.
+    # Support/admin always join as member — they have platform-level access.
+    if user.role in ("support", "admin"):
+        assigned_role = "member"
+    else:
+        owner_check = await (
+            supabase.table("org_members")
+            .select("user_id")
+            .eq("organization_id", org_id)
+            .eq("org_role", "owner")
+            .limit(1)
+        ).execute()
+        assigned_role = "owner" if not owner_check.data else "member"
 
     await (
         supabase.table("org_members").insert({
@@ -420,10 +462,11 @@ async def get_org(
 async def update_org(
     org_id: str,
     body: UpdateOrgRequest,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_approved),
 ):
     """Update organization name. Owner only."""
     await verify_organization(user, org_id)
+    await verify_org_owner(user, org_id)
 
     updates: dict = {}
     if body.name and body.name.strip():
@@ -514,6 +557,8 @@ async def confirm_deletion(
         raise HTTPException(400, "Organization is not pending deletion.")
 
     requester = org.get("deletion_requested_by")
+    if not requester:
+        raise HTTPException(400, "ไม่มีผู้ขอลบองค์กรนี้ กรุณาให้ Owner ส่งคำขอก่อน")
     if requester == user.id:
         raise HTTPException(400, "Cannot confirm your own deletion request. Another party must confirm.")
 
@@ -524,15 +569,173 @@ async def confirm_deletion(
         .eq("id", org_id)
     ).execute()
 
-    # Clean up org_members
+    # Clean up org_members and pending invitations
     await (
         supabase.table("org_members")
         .delete()
         .eq("organization_id", org_id)
     ).execute()
+    await (
+        supabase.table("org_invitations")
+        .update({"status": "revoked"})
+        .eq("organization_id", org_id)
+        .eq("status", "pending")
+    ).execute()
 
-    logger.info("Org %s deleted, confirmed by %s", org_id, user.email)
+    logger.info("Org %s soft-deleted, confirmed by %s", org_id, user.email)
     return MessageResponse(message="Organization deleted successfully.")
+
+
+# ── Hard Delete (commented out — enable when needed) ─────────────
+#
+# Hard delete permanently removes the organization and ALL related data
+# from the database. This is irreversible.
+#
+# Cascade order:
+#   1. chat_messages      (via chat_sessions.organization_id)
+#   2. chat_sessions      (organization_id)
+#   3. document_child_chunks (via document_parent_chunks → documents)
+#   4. document_parent_chunks (via documents)
+#   5. documents          (organization_id, via bots)
+#   6. bots               (organization_id)
+#   7. org_invitations    (organization_id)
+#   8. org_members        (organization_id)
+#   9. organizations      (id)
+#
+# @router.post("/{org_id}/hard-delete", response_model=MessageResponse)
+# async def hard_delete_org(
+#     org_id: str,
+#     user: CurrentUser = Depends(require_role("admin")),
+# ):
+#     """Permanently delete org and ALL related data. Admin only.
+#
+#     WARNING: This is irreversible. All bots, documents, chunks,
+#     chat sessions, messages, members, and invitations will be
+#     permanently removed from the database.
+#     """
+#     supabase = get_supabase()
+#
+#     # Verify org exists
+#     org_result = await (
+#         supabase.table("organizations")
+#         .select("id, name, status")
+#         .eq("id", org_id)
+#         .single()
+#     ).execute()
+#
+#     if not org_result.data:
+#         raise HTTPException(404, "Organization not found.")
+#
+#     org_name = org_result.data.get("name", org_id)
+#
+#     # 1. Get all bot IDs for this org (needed for document cascade)
+#     bots_result = await (
+#         supabase.table("bots")
+#         .select("id")
+#         .eq("organization_id", org_id)
+#     ).execute()
+#     bot_ids = [b["id"] for b in (bots_result.data or [])]
+#
+#     # 2. Get all document IDs for these bots
+#     doc_ids: list[str] = []
+#     if bot_ids:
+#         docs_result = await (
+#             supabase.table("documents")
+#             .select("id")
+#             .in_("bot_id", bot_ids)
+#         ).execute()
+#         doc_ids = [d["id"] for d in (docs_result.data or [])]
+#
+#     # 3. Get all parent chunk IDs for these documents
+#     parent_chunk_ids: list[str] = []
+#     if doc_ids:
+#         pc_result = await (
+#             supabase.table("document_parent_chunks")
+#             .select("id")
+#             .in_("document_id", doc_ids)
+#         ).execute()
+#         parent_chunk_ids = [pc["id"] for pc in (pc_result.data or [])]
+#
+#     # 4. Delete child chunks
+#     if parent_chunk_ids:
+#         await (
+#             supabase.table("document_child_chunks")
+#             .delete()
+#             .in_("parent_chunk_id", parent_chunk_ids)
+#         ).execute()
+#
+#     # 5. Delete parent chunks
+#     if doc_ids:
+#         await (
+#             supabase.table("document_parent_chunks")
+#             .delete()
+#             .in_("document_id", doc_ids)
+#         ).execute()
+#
+#     # 6. Delete documents
+#     if bot_ids:
+#         await (
+#             supabase.table("documents")
+#             .delete()
+#             .in_("bot_id", bot_ids)
+#         ).execute()
+#
+#     # 7. Delete chat messages (via sessions)
+#     sessions_result = await (
+#         supabase.table("chat_sessions")
+#         .select("id")
+#         .eq("organization_id", org_id)
+#     ).execute()
+#     session_ids = [s["id"] for s in (sessions_result.data or [])]
+#     if session_ids:
+#         await (
+#             supabase.table("chat_messages")
+#             .delete()
+#             .in_("session_id", session_ids)
+#         ).execute()
+#
+#     # 8. Delete chat sessions
+#     await (
+#         supabase.table("chat_sessions")
+#         .delete()
+#         .eq("organization_id", org_id)
+#     ).execute()
+#
+#     # 9. Delete bots
+#     await (
+#         supabase.table("bots")
+#         .delete()
+#         .eq("organization_id", org_id)
+#     ).execute()
+#
+#     # 10. Delete invitations
+#     await (
+#         supabase.table("org_invitations")
+#         .delete()
+#         .eq("organization_id", org_id)
+#     ).execute()
+#
+#     # 11. Delete members
+#     await (
+#         supabase.table("org_members")
+#         .delete()
+#         .eq("organization_id", org_id)
+#     ).execute()
+#
+#     # 12. Delete the organization itself
+#     await (
+#         supabase.table("organizations")
+#         .delete()
+#         .eq("id", org_id)
+#     ).execute()
+#
+#     logger.warning(
+#         "HARD DELETE: Org '%s' (%s) permanently removed by admin %s",
+#         org_name, org_id, user.email,
+#     )
+#     return MessageResponse(
+#         message=f"องค์กร '{org_name}' และข้อมูลทั้งหมดถูกลบถาวรแล้ว",
+#     )
 
 
 # ── Leave Organization ────────────────────────────────────────────
@@ -578,6 +781,114 @@ async def leave_organization(
 
     logger.info("User %s left org %s", user.email, org_id)
     return MessageResponse(message="You have left the organization.")
+
+
+# ── Transfer Ownership ───────────────────────────────────────────
+
+
+class TransferOwnershipRequest(BaseModel):
+    new_owner_user_id: str
+
+
+@router.post("/{org_id}/transfer-ownership", response_model=MessageResponse)
+async def transfer_ownership(
+    org_id: str,
+    body: TransferOwnershipRequest,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Transfer ownership to another member. Current owner becomes member."""
+    await verify_organization(user, org_id)
+    await verify_org_owner(user, org_id)
+
+    new_owner_id = body.new_owner_user_id
+    if new_owner_id == user.id:
+        raise HTTPException(400, "คุณเป็นเจ้าของอยู่แล้ว")
+
+    supabase = get_supabase()
+
+    # Verify new owner is a member of this org
+    target = await (
+        supabase.table("org_members")
+        .select("user_id, org_role")
+        .eq("user_id", new_owner_id)
+        .eq("organization_id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not target.data:
+        raise HTTPException(404, "ไม่พบสมาชิกคนนี้ในองค์กร")
+
+    # Demote current owner to member
+    await (
+        supabase.table("org_members")
+        .update({"org_role": "member"})
+        .eq("user_id", user.id)
+        .eq("organization_id", org_id)
+    ).execute()
+
+    # Promote new owner
+    await (
+        supabase.table("org_members")
+        .update({"org_role": "owner"})
+        .eq("user_id", new_owner_id)
+        .eq("organization_id", org_id)
+    ).execute()
+
+    logger.info(
+        "Ownership transferred: org %s from %s to %s",
+        org_id, user.email, new_owner_id,
+    )
+    return MessageResponse(message="โอนความเป็นเจ้าของสำเร็จ")
+
+
+# ── Cancel Pending Deletion ──────────────────────────────────────
+
+@router.post("/{org_id}/cancel-deletion", response_model=MessageResponse)
+async def cancel_deletion(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Cancel a pending org deletion. Owner or support/admin."""
+    supabase = get_supabase()
+
+    # Fetch org status
+    org_result = await (
+        supabase.table("organizations")
+        .select("status")
+        .eq("id", org_id)
+        .single()
+    ).execute()
+
+    if not org_result.data:
+        raise HTTPException(404, "Organization not found.")
+
+    if org_result.data.get("status") != "pending_deletion":
+        raise HTTPException(400, "องค์กรนี้ไม่ได้อยู่ในสถานะรอลบ")
+
+    # Only org owner or support/admin can cancel
+    if user.role not in ("admin", "support"):
+        member = await (
+            supabase.table("org_members")
+            .select("org_role")
+            .eq("user_id", user.id)
+            .eq("organization_id", org_id)
+            .limit(1)
+        ).execute()
+        if not member.data or member.data[0].get("org_role") != "owner":
+            raise HTTPException(403, "เฉพาะ Owner หรือ Support/Admin เท่านั้นที่ยกเลิกได้")
+
+    await (
+        supabase.table("organizations")
+        .update({
+            "status": "active",
+            "deletion_requested_by": None,
+            "deletion_requested_at": None,
+        })
+        .eq("id", org_id)
+    ).execute()
+
+    logger.info("Deletion cancelled for org %s by %s", org_id, user.email)
+    return MessageResponse(message="ยกเลิกคำขอลบองค์กรสำเร็จ")
 
 
 # ── Members ──────────────────────────────────────────────────────
@@ -637,25 +948,15 @@ async def invite_member(
 ):
     """Invite a user to the organization by email. Admin/support/org-owner."""
     await verify_organization(user, org_id)
-
-    # Allow platform admin/support or org owner
-    if user.role not in ("admin", "support"):
-        supabase_check = get_supabase()
-        owner_check = await (
-            supabase_check.table("org_members")
-            .select("org_role")
-            .eq("user_id", user.id)
-            .eq("organization_id", org_id)
-            .limit(1)
-        ).execute()
-        if not owner_check.data or owner_check.data[0].get("org_role") != "owner":
-            raise HTTPException(403, "ต้องเป็นเจ้าของ (owner) ขององค์กรถึงจะเชิญสมาชิกได้")
+    await verify_org_owner(user, org_id)
 
     email = body.email.strip().lower()
     if not email:
-        raise HTTPException(400, "Email is required.")
+        raise HTTPException(400, "กรุณาระบุ email")
+    if len(email) > 254:
+        raise HTTPException(400, "Email ยาวเกินไป (สูงสุด 254 ตัวอักษร)")
     if not EMAIL_RE.match(email):
-        raise HTTPException(status_code=400, detail="Invalid email format.")
+        raise HTTPException(400, "รูปแบบ email ไม่ถูกต้อง")
 
     supabase = get_supabase()
 
@@ -721,11 +1022,12 @@ async def invite_member(
 async def remove_member(
     org_id: str,
     member_user_id: str,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_approved),
 ):
     """Remove a member from the organization. Owner only.
     Cannot remove yourself if you are the only owner."""
     await verify_organization(user, org_id)
+    await verify_org_owner(user, org_id)
 
     if member_user_id == user.id:
         raise HTTPException(400, "Cannot remove yourself. Transfer ownership first.")

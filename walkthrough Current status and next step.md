@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 23 มีนาคม 2569
+> **อัพเดทล่าสุด**: 25 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -2374,17 +2374,196 @@ function readTokenFromStorage() {
 
 ---
 
-### 20. Next Steps (อัพเดท 23 มี.ค. 2569)
+## 28. Reset Password — แก้ success state + session detection (24 มีนาคม 2569) ✅
+
+### 28.1 ปัญหา
+
+หลังกด reset link จาก email รหัสผ่านถูกเปลี่ยนสำเร็จใน Supabase แต่ UI แสดง "ลิงก์หมดอายุหรือไม่ถูกต้อง" แทนที่จะขึ้น "เปลี่ยนรหัสผ่านสำเร็จ" — มี 2 สาเหตุ:
+
+1. **Event timing race**: `PASSWORD_RECOVERY` event fire ก่อน ResetPasswordPage mount → listener ตั้งไม่ทัน → event ที่ได้จริงคือ `INITIAL_SESSION`/`SIGNED_IN` แต่ code ตรวจแค่ `PASSWORD_RECOVERY`
+2. **Redirect race**: หลัง `updateUser` สำเร็จ ใช้ `window.location.href` redirect แต่ `signOut()` trigger React re-render ก่อน navigation เสร็จ
+
+### 28.2 แก้ไข
+
+**App.tsx — AuthProvider**
+- เพิ่ม `sawPasswordRecovery` flag + `isResetPage` check
+- เมื่ออยู่บน `/reset-password` → skip `SIGNED_IN`/`INITIAL_SESSION` ที่ตามหลัง `PASSWORD_RECOVERY` ป้องกัน `isAuthenticated=true` รบกวน flow
+
+**ResetPasswordPage.tsx**
+- Accept ทั้ง `PASSWORD_RECOVERY`, `INITIAL_SESSION`, `SIGNED_IN` events (ไม่ใช่แค่ `PASSWORD_RECOVERY`)
+- เพิ่ม retry `getSession()` สูงสุด 3 ครั้ง (ห่าง 1.5 วิ) กรณี `detectSessionInUrl` ยังประมวลผล hash ไม่เสร็จ
+- เพิ่ม `"success"` page state — แสดง "เปลี่ยนรหัสผ่านสำเร็จ" สีเขียวพร้อมปุ่มไป login แทน redirect
+- เพิ่ม timeout เป็น 10 วินาที
+
+### 28.3 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **Frontend** | `App.tsx` | Skip recovery-related events บน `/reset-password` |
+| | `pages/ResetPasswordPage.tsx` | Accept multi-events + retry getSession + success state |
+
+---
+
+## 29. Organization Flow — แก้ 4 ปัญหาสำคัญ (25 มีนาคม 2569) ✅
+
+### 29.1 ปัญหาที่พบจาก Code Review
+
+1. **Approval ใส่ role ผิด**: `approve_user()` ตั้ง `org_role="member"` เสมอ ไม่ตรวจว่าเป็นคนแรกของ Org (ควรเป็น `"owner"`)
+2. **โอน Ownership ไม่ได้**: ไม่มี endpoint สำหรับเปลี่ยน Owner → ถ้า Owner ออก Org จะไม่มีใครจัดการได้
+3. **Invitation ไม่มีวันหมดอายุ**: คำเชิญค้างตลอดไป สร้างปัญหาความปลอดภัย
+4. **ยกเลิก Pending Deletion ไม่ได้**: ถ้า Org ถูก request deletion ไม่มีทางเปลี่ยนกลับเป็น active
+
+### 29.2 แก้ไข
+
+**1. Approval Owner Role** (`approval.py`)
+- `approve_user()` ตอนนี้ตรวจ `org_members` ว่า Org มี owner แล้วหรือยัง
+- ถ้ายังไม่มี → assign `"owner"` ให้คนแรก (ตรงกับ logic ของ `accept_invitation()`)
+
+**2. Transfer Ownership** (`organization.py` + `DashboardPage.tsx`)
+- เพิ่ม `POST /api/orgs/{org_id}/transfer-ownership` — Owner เลือกสมาชิก → โอน → ตัวเองกลายเป็น member
+- Frontend: ปุ่ม "โอน" ข้างปุ่ม "ลบ" ในรายชื่อสมาชิก + confirm dialog
+
+**3. Invitation Expiration 30 วัน** (`organization.py`)
+- `my_invitations()` กรองคำเชิญเกิน 30 วันออก + auto-revoke ใน background
+- `accept_invitation()` ตรวจก่อน accept ถ้าเกิน 30 วัน → reject + revoke
+
+**4. Cancel Pending Deletion** (`organization.py` + `OrganizationPage.tsx`)
+- เพิ่ม `POST /api/orgs/{org_id}/cancel-deletion` — Owner หรือ Support/Admin ยกเลิกได้ → status กลับเป็น `active`
+- Frontend: ปุ่ม "ยกเลิกคำขอลบ" ใน Danger Zone เมื่อ status = `pending_deletion`
+
+### 29.3 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **Backend** | `app/routers/approval.py` | Fix owner role assignment on approval |
+| | `app/routers/organization.py` | เพิ่ม transfer-ownership, cancel-deletion, invitation expiry |
+| **Frontend** | `api/endpoints.ts` | เพิ่ม `transferOwnership()`, `cancelDeletion()` |
+| | `pages/DashboardPage.tsx` | ปุ่ม "โอน" ownership ในรายชื่อสมาชิก |
+| | `pages/OrganizationPage.tsx` | ปุ่ม "ยกเลิกคำขอลบ" ใน Danger Zone |
+
+---
+
+## 30. Organization Security Hardening — แก้ 7 ช่องโหว่ (25 มีนาคม 2569) ✅
+
+### 30.1 ปัญหาที่พบจาก Code Review รอบ 2
+
+จาก deep code review พบ 15 issues — แก้ 7 ตัวสำคัญ (2 CRITICAL, 3 HIGH, 2 MEDIUM):
+
+#### CRITICAL
+1. **Owner check ใช้ X-Active-Org header แทน path parameter**: `require_org_owner` dependency ตรวจ ownership กับ `active_org_id` จาก header → ผู้โจมตีเปลี่ยน header เป็น org ที่ตัวเองเป็น owner แล้วแก้ไข org อื่นได้
+2. **Soft-deleted org ยังเข้าถึงได้**: `verify_organization()` ตรวจแค่ membership ไม่ตรวจ org status → สมาชิกยังเรียก API ของ org ที่ถูกลบแล้วได้
+
+#### HIGH
+3. **Race condition — หลาย owner ต่อ org**: ไม่มี DB constraint ป้องกัน concurrent `accept_invitation()` ที่ assign owner ซ้ำ
+4. **Support/Admin join org เป็น owner**: ถ้า org ยังไม่มี owner แล้ว support/admin accept invitation → ได้ role "owner" ทั้งที่ไม่ควร
+5. **confirm_deletion ไม่ตรวจว่ามี requester**: ไม่ check `deletion_requested_by` → อาจ confirm ลบโดยไม่มีใคร request + ไม่ cleanup invitations
+
+#### MEDIUM
+6. **Email validation อ่อน**: Regex เดิมรับ email ผิด format เช่น `..@`, `.@`, `a@b..c`
+7. **Admin เห็น deleted orgs ในรายการ**: `list_orgs()` ไม่กรอง status=deleted ออก
+
+### 30.2 แก้ไข
+
+**CRITICAL #1 — verify_org_owner()** (`auth.py`)
+- สร้างฟังก์ชันใหม่ `verify_org_owner(user, organization_id)` ที่รับ org_id จาก path parameter โดยตรง
+- เปลี่ยนทุก endpoint ที่รับ `org_id` เป็น path param ให้ใช้ `Depends(require_approved)` + `await verify_org_owner(user, org_id)` แทน `Depends(require_org_owner)`
+- Admin bypass ได้
+
+**CRITICAL #2 — verify_organization() ตรวจ org status** (`auth.py`)
+- เพิ่ม query `organizations.status` ก่อนตรวจ membership
+- ถ้า status = `"deleted"` → return 404 "Organization has been deleted"
+- แม้ admin/support ก็เข้า deleted org ไม่ได้
+
+**HIGH #3 — Partial unique index** (`016_org_single_owner.sql`)
+- เพิ่ม SQL migration: `CREATE UNIQUE INDEX idx_org_single_owner ON org_members (organization_id) WHERE org_role = 'owner'`
+- DB enforce ได้สูงสุด 1 owner ต่อ org → concurrent request จะ fail ที่ DB level
+
+**HIGH #4 — Support/Admin เป็นได้แค่ member** (`organization.py`)
+- `accept_invitation()`: ถ้า user.role เป็น support/admin → force `org_role = "member"` เสมอ
+
+**HIGH #5 — confirm_deletion ตรวจ requester** (`organization.py`)
+- ตรวจ `deletion_requested_by IS NOT NULL` ก่อน confirm
+- หลัง soft-delete → revoke invitations ที่ค้างอยู่ทั้งหมด
+
+**MEDIUM #6 — Email regex ใหม่** (`organization.py`)
+- Regex ใหม่ป้องกัน: double dots, leading/trailing dots, dot before @
+- จำกัดความยาว local part ≤ 64, total ≤ 254 ตัวอักษร
+
+**MEDIUM #7 — ซ่อน deleted orgs** (`organization.py`)
+- `list_orgs()` เพิ่ม `.neq("status", "deleted")` สำหรับ admin/support view
+
+### 30.3 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **Backend** | `app/core/auth.py` | เพิ่ม `verify_org_owner()` + `verify_organization()` ตรวจ org status |
+| | `app/routers/organization.py` | ใช้ `verify_org_owner` ทุก endpoint, email regex, filter deleted orgs, confirm_deletion hardening |
+| | `app/routers/approval.py` | owner check สำหรับคนแรกของ org |
+| **SQL** | `sql/016_org_single_owner.sql` | Partial unique index — 1 owner ต่อ org |
+
+### 30.4 SQL Migration ที่ต้อง Run
+
+```sql
+-- 016: ต้อง run บน Supabase SQL Editor
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_single_owner
+    ON org_members (organization_id)
+    WHERE org_role = 'owner';
+```
+
+## 31. Hard Delete Organization — ร่างระบบสำรอง (25 มีนาคม 2569) 📝
+
+### 31.1 สิ่งที่ทำ
+
+ร่าง endpoint `POST /api/orgs/{org_id}/hard-delete` ไว้เป็น **commented-out code** ใน `organization.py` เพื่อใช้งานในอนาคต — ปัจจุบันระบบใช้ **Soft Delete** (เปลี่ยน status เป็น `deleted`)
+
+### 31.2 Hard Delete vs Soft Delete
+
+| | Soft Delete (ปัจจุบัน) | Hard Delete (ร่างไว้) |
+|---|---|---|
+| **วิธี** | เปลี่ยน `status = 'deleted'` | ลบ row ออกจาก DB จริง |
+| **กู้คืน** | ได้ — แก้ status กลับ | ไม่ได้ — ข้อมูลหายถาวร |
+| **สิทธิ์** | Owner request + Support/Admin confirm | **Admin only** |
+| **ข้อมูลที่ลบ** | แค่ org_members + revoke invitations | ทุกอย่าง: chunks, documents, bots, sessions, messages, members, invitations, org |
+
+### 31.3 Cascade order ของ Hard Delete
+
+```
+1. document_child_chunks  (via parent_chunks → documents → bots)
+2. document_parent_chunks (via documents → bots)
+3. documents              (via bots)
+4. chat_messages          (via chat_sessions)
+5. chat_sessions          (organization_id)
+6. bots                   (organization_id)
+7. org_invitations        (organization_id)
+8. org_members            (organization_id)
+9. organizations          (id)
+```
+
+### 31.4 วิธีเปิดใช้งาน
+
+Uncomment block ใน `backend/app/routers/organization.py` (บรรทัด ~605-738) แล้ว restart backend
+
+### 31.5 ไฟล์ที่แก้ไข
+
+| กลุ่ม | ไฟล์ | รายละเอียด |
+|-------|------|-----------|
+| **Backend** | `app/routers/organization.py` | เพิ่ม commented-out `hard_delete_org()` endpoint |
+
+---
+
+### 20. Next Steps (อัพเดท 25 มี.ค. 2569)
 
 ### 🟡 งานที่เหลือ
 
+| # | งาน | รายละเอียด |
+|---|------|-----------|
 | # | งาน | รายละเอียด |
 |---|------|-----------|
 | ~~9~~ | ~~แยก Registration form เป็น first_name / last_name~~ | ✅ แก้แล้ว (Section 25.2) — form แยก 2 ช่อง + required + trigger อัพเดท |
 | 10 | **ทดสอบ RAG Page Tracking** | Upload PDF ใหม่ → ถามคำถาม → ดูว่า source pills แสดงชื่อเอกสาร + หน้า |
 | ~~11~~ | ~~ทดสอบ Multi-Org Flow end-to-end~~ | ✅ ทดสอบแล้ว — invite ทำงาน, duplicate check ทำงาน |
 | 12 | **ทดสอบ Org Deletion Flow** | Owner request → Support/Admin confirm → org cascade delete |
-| 13 | **ทดสอบ Forgot Password บน server จริง** | Deploy แล้วทดสอบว่า email link + redirect ทำงาน |
+| ~~13~~ | ~~Reset Password~~ | ✅ แก้แล้ว (Section 28) — success state + session detection fix |
 | 14 | **Integration Page เชื่อม API จริง** | ให้ toggle บันทึกค่า `is_web_enabled` / `is_line_enabled` ลง DB |
 | 15 | **LINE Webhook — งานที่เหลือ** | SQL migration `bots.line_channel_secret`, IntegrationPage เชื่อม API, end-to-end test |
 | 16 | **Docker deployment** | ทดสอบ build + run บน Docker สำหรับ production |
@@ -2394,3 +2573,5 @@ function readTokenFromStorage() {
 | 20 | **Code Review remaining ~95 issues** | 11 Critical, 4 High, 40 Medium, 40 Low (ดู Code Review Report.md) |
 | 21 | **Email change สำหรับ user** | รอ production deploy — ดูแผนใน `Email implementation.md` |
 | ~~22~~ | ~~Knowledge Base — แสดงขนาดจริงใน DB~~ | ✅ แก้แล้ว (Section 27) — โชว์ storage_bytes จาก RPC แทน file_size_bytes |
+| ~~23~~ | ~~Org Flow fixes~~ | ✅ แก้แล้ว (Section 29) — approval owner role + transfer ownership + invitation expiry + cancel deletion |
+| ~~24~~ | ~~Org Security Hardening~~ | ✅ แก้แล้ว (Section 30) — 2 CRITICAL auth bypass + 3 HIGH + 2 MEDIUM fixes |

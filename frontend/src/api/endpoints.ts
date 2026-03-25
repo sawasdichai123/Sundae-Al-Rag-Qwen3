@@ -434,6 +434,14 @@ export const orgApi = {
     leave: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/leave`),
 
+    /** Transfer ownership to another member. */
+    transferOwnership: (orgId: string, newOwnerUserId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/transfer-ownership`, { new_owner_user_id: newOwnerUserId }),
+
+    /** Cancel pending deletion request. */
+    cancelDeletion: (orgId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/cancel-deletion`),
+
     /** Update current user's profile (name). */
     updateProfile: (firstName: string, lastName: string) =>
         apiClient.put<{ first_name: string | null; last_name: string | null; email: string }>(
