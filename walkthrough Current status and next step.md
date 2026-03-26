@@ -2575,3 +2575,49 @@ Uncomment block ใน `backend/app/routers/organization.py` (บรรทัด
 | ~~22~~ | ~~Knowledge Base — แสดงขนาดจริงใน DB~~ | ✅ แก้แล้ว (Section 27) — โชว์ storage_bytes จาก RPC แทน file_size_bytes |
 | ~~23~~ | ~~Org Flow fixes~~ | ✅ แก้แล้ว (Section 29) — approval owner role + transfer ownership + invitation expiry + cancel deletion |
 | ~~24~~ | ~~Org Security Hardening~~ | ✅ แก้แล้ว (Section 30) — 2 CRITICAL auth bypass + 3 HIGH + 2 MEDIUM fixes |
+
+---
+
+## 32. ระบบรูปโปรไฟล์ (Profile Pictures) (26 มีนาคม 2569) 🖼️
+
+เพิ่มความสามารถในการจัดการรูปภาพโปรไฟล์ของผู้ใช้งาน (Avatar) และ โลโก้องค์กร (Organization Logo) แบบ Full-stack โดยการจัดการผ่าน Supabase Storage แบบตรง (Direct Upload).
+
+### 32.1 ภาพรวมสถาปัตยกรรม (Storage Architecture)
+
+- **Storage Bucket**: ใช้ Supabase Storage สร้าง bucket จำนวน 2 ตัว ได้แก่ `avatars` และ `org_logos`.
+- **Public Access**: รูปภาพที่ถูกอัปโหลดจะสามารถเข้าถึงได้ผ่าน Public URL (ไม่ต้องใช้ Signed URL).
+- **Upload Flow**: 
+  1. Frontend อัปโหลดไฟล์ตรงไปที่ `avatars` หรือ `org_logos` (จำกัดขนาดฝั่ง Frontend ไว้ที่ 2MB).
+  2. รับ Public URL ของไฟล์คืนมา
+  3. นำ URL แจ้งอัปเดตไปที่ Backend ผ่าน API (เช่น `PUT /api/orgs/profile/me` โดยส่งค่า `avatar_url` ไปด้วย)
+  4. Backend เก็บค่า Public URL ลงบน Field `avatar_url` / `logo_url` ในฐานข้อมูล.
+
+### 32.2 Database Changes (Migration 015)
+
+สร้าง SQL ไฟล์ `015_add_profile_pictures.sql`
+- `ALTER TABLE user_profiles ADD COLUMN avatar_url TEXT;`
+- `ALTER TABLE organizations ADD COLUMN logo_url TEXT;`
+- สคริปต์สั่งสร้าง bucket `avatars` และ `org_logos` ให้ public = true.
+- แทรก RLS Insert, Update, Select, Delete ให้ bucket `avatars` และ `org_logos` เฉพาะ owner ถึงสามารถอัปโหลดและแก้ไขลบรูปโปรไฟล์ของตนเองได้.
+
+### 32.3 Backend Updates
+
+| ไฟล์ | การเปลี่ยนแปลงหลัก |
+|------|--------------------|
+| `core/auth.py` | เพิ่ม `avatar_url` ให้ Dataclass `CurrentUser` และ Query ดึงค่า Profile |
+| `routers/organization.py` | อัปเดต Schema ของ `OrgMemberResponse`, `OrgResponse`, `OrgListItem` รับส่ง `avatar_url` และ `logo_url`. อัปเดต `update_my_profile` รับ Optional `avatar_url` |
+| `routers/approval.py` | อัปเดต `PendingUserResponse` ให้รวมเอา `avatar_url` ตอนส่งให้ Admin |
+
+### 32.4 Frontend Updates
+
+| ไฟล์ | การเปลี่ยนแปลงหลัก |
+|------|--------------------|
+| `types/index.ts` | เสริม Type Definition ของ Backend โดยมี String Field สำหรับ `avatar_url` และ `logo_url` |
+| `store/authStore.ts` | แมป `avatar_url` ตอน `fetchProfile()` |
+| `api/endpoints.ts` | `updateProfile(...)` สามารถรับ `avatarUrl?` เข้ามาตอน Save ได้ |
+| `pages/ProfilePage.tsx` | - สร้าง UI ตัวคลิกเพื่อ Upload ทับบนวงกลม Profile ถ้าอัปโหลดจะแสดงตัว Spinner.<br>- ตรวจสอบเรื่อง Type(`image/*`) และ ขนาด(`<= 2MB`).<br>- Push file ลง Supabase ข้ามไปที่ Storage `avatars`<br>- ผูก UUID กับชื่อไฟล์ แล้วนำไปอัปเดต API ผ่าน `orgApi.updateProfile(...)` |
+| `layouts/DashboardLayout.tsx` | อัปเดต Sidebar Card มุมซ้ายล่างให้แสดง `img` ถ้า user มี `avatar_url` หรือ fallback เป็นอักษรย่อ |
+
+### 32.5 Next Steps สำหรับ Profile Pictures
+- [ ] นำฟังก์ชันแบบเดียวกับ `ProfilePage.tsx` ไปใส่ให้เมนู **ตั้งค่าองค์กร** (Organization Settings) เพื่ออัปโหลด `logo_url`
+- [ ] เปิดใช้งาน (Run) Scripts `015_add_profile_pictures.sql` เข้าฐานข้อมูล Supabase ของวงปัจจุบัน.

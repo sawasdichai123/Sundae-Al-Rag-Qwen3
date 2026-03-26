@@ -442,10 +442,10 @@ export const orgApi = {
     cancelDeletion: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/cancel-deletion`),
 
-    /** Update current user's profile (name). */
-    updateProfile: (firstName: string, lastName: string) =>
-        apiClient.put<{ first_name: string | null; last_name: string | null; email: string }>(
+    /** Update current user's profile (name + avatar). */
+    updateProfile: (firstName: string, lastName: string, avatarUrl?: string | null) =>
+        apiClient.put<{ first_name: string | null; last_name: string | null; avatar_url: string | null; email: string }>(
             "/api/orgs/profile/me",
-            { first_name: firstName, last_name: lastName },
+            { first_name: firstName, last_name: lastName, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) },
         ),
 };

@@ -49,6 +49,7 @@ class CurrentUser:
     organization_id: str | None   # DEPRECATED — use org_members table
     first_name: str | None
     last_name: str | None
+    avatar_url: str | None = None
     active_org_id: str | None = None  # from X-Active-Org header
 
 
@@ -197,6 +198,7 @@ async def get_current_user(request: Request) -> CurrentUser:
         organization_id=profile.get("organization_id"),
         first_name=profile.get("first_name"),
         last_name=profile.get("last_name"),
+        avatar_url=profile.get("avatar_url"),
         active_org_id=active_org_id,
     )
 

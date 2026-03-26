@@ -72,6 +72,7 @@ class OrgResponse(BaseModel):
     name: str
     slug: str | None = None
     status: str | None = None
+    logo_url: str | None = None
     created_at: str
 
 
@@ -79,6 +80,7 @@ class OrgListItem(BaseModel):
     id: str
     name: str
     slug: str | None = None
+    logo_url: str | None = None
     org_role: str
     created_at: str
 
@@ -88,6 +90,7 @@ class OrgMemberResponse(BaseModel):
     email: str
     first_name: str | None = None
     last_name: str | None = None
+    avatar_url: str | None = None
     role: str | None = None  # platform role (admin/support/user)
     org_role: str
     joined_at: str | None = None
@@ -917,7 +920,7 @@ async def list_members(
     user_ids = [row["user_id"] for row in result.data]
     profiles_result = await (
         supabase.table("user_profiles")
-        .select("id, email, first_name, last_name, role")
+        .select("id, email, first_name, last_name, avatar_url, role")
         .in_("id", user_ids)
     ).execute()
 
@@ -932,6 +935,7 @@ async def list_members(
             email=profile.get("email", ""),
             first_name=profile.get("first_name"),
             last_name=profile.get("last_name"),
+            avatar_url=profile.get("avatar_url"),
             role=profile.get("role"),
             org_role=row["org_role"],
             joined_at=row.get("joined_at"),
@@ -1055,6 +1059,7 @@ class UpdateProfileRequest(BaseModel):
 
     first_name: str
     last_name: str
+    avatar_url: str | None = None
 
 
 class ProfileResponse(BaseModel):
@@ -1062,6 +1067,7 @@ class ProfileResponse(BaseModel):
 
     first_name: str | None
     last_name: str | None
+    avatar_url: str | None = None
     email: str
 
 
@@ -1082,10 +1088,14 @@ async def update_my_profile(
     if len(first_name) > 100 or len(last_name) > 100:
         raise HTTPException(400, "ชื่อหรือนามสกุลยาวเกินไป (สูงสุด 100 ตัวอักษร)")
 
+    update_data: dict = {"first_name": first_name, "last_name": last_name or None}
+    if body.avatar_url is not None:
+        update_data["avatar_url"] = body.avatar_url or None
+
     supabase = get_supabase()
     await (
         supabase.table("user_profiles")
-        .update({"first_name": first_name, "last_name": last_name or None})
+        .update(update_data)
         .eq("id", user.id)
     ).execute()
 
@@ -1094,5 +1104,6 @@ async def update_my_profile(
     return ProfileResponse(
         first_name=first_name,
         last_name=last_name or None,
+        avatar_url=body.avatar_url,
         email=user.email,
     )

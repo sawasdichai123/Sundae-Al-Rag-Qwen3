@@ -144,6 +144,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             email,
             first_name: profile.first_name ?? null,
             last_name: profile.last_name ?? null,
+            avatar_url: profile.avatar_url ?? null,
             role: profile.role as UserRole,
             is_approved: profile.is_approved ?? false,
             created_at: profile.created_at,

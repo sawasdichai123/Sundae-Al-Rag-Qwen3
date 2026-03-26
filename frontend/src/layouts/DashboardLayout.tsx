@@ -264,9 +264,13 @@ export default function DashboardLayout() {
                 {/* User Card */}
                 <div className="px-3 pb-4 border-t border-white/[0.08] pt-3">
                     <div className={`flex items-center gap-3 ${collapsed ? "justify-center" : ""}`}>
-                        <div className="w-8 h-8 rounded-full bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0">
-                            {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
-                        </div>
+                        {user?.avatar_url ? (
+                            <img src={user.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover shrink-0" />
+                        ) : (
+                            <div className="w-8 h-8 rounded-full bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0">
+                                {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                            </div>
+                        )}
                         {!collapsed && (
                             <div className="flex-1 min-w-0 animate-fade-in">
                                 <div className="flex items-center gap-2">

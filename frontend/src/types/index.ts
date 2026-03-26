@@ -13,6 +13,7 @@ export interface Organization {
     name: string;
     slug?: string;
     status?: string;
+    logo_url?: string | null;
     created_at: string;
     updated_at?: string;
 }
@@ -27,6 +28,7 @@ export interface UserProfile {
     email: string;                      // also in user_profiles table
     first_name: string | null;
     last_name: string | null;
+    avatar_url: string | null;
     role: UserRole;
     is_approved: boolean;
     created_at: string;
@@ -47,6 +49,7 @@ export interface OrgMember {
     email: string;
     first_name: string | null;
     last_name: string | null;
+    avatar_url: string | null;
     role: string | null;  // platform role (admin/support/user)
     org_role: OrgRole;
     joined_at: string;
@@ -75,6 +78,7 @@ export interface PendingUser {
     email: string;
     first_name: string | null;
     last_name: string | null;
+    avatar_url: string | null;
     role: string;
     is_approved: boolean;
     created_at: string;

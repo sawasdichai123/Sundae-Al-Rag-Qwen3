@@ -2,16 +2,17 @@
  * ProfilePage — User profile, org memberships, and pending invitations
  *
  * Sections:
- * A. Profile info (name, email, role badge) — user role can edit name
+ * A. Profile info (name, email, role badge, avatar upload) — user role can edit
  * B. My organizations (with "leave" button for members)
  * C. Pending invitations (accept/decline)
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import { orgApi } from "../api/endpoints";
+import { supabase } from "../api/supabaseClient";
 import type { MyInvitation } from "../types";
 import Spinner from "../components/Spinner";
 
@@ -33,6 +34,10 @@ export default function ProfilePage() {
     const [editFirstName, setEditFirstName] = useState("");
     const [editLastName, setEditLastName] = useState("");
     const [saving, setSaving] = useState(false);
+
+    // Avatar upload state
+    const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const isUser = user?.role === "user";
 
@@ -77,6 +82,65 @@ export default function ProfilePage() {
             toast("error", msg);
         } finally {
             setSaving(false);
+        }
+    };
+
+    // ── Avatar Upload ───────────────────────────────────────────
+    const handleAvatarClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !user?.id) return;
+
+        // Validate
+        const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+        if (file.size > MAX_SIZE) {
+            toast("error", "ไฟล์รูปภาพต้องไม่เกิน 2MB");
+            return;
+        }
+        if (!file.type.startsWith("image/")) {
+            toast("error", "กรุณาเลือกไฟล์รูปภาพ (JPG, PNG, etc.)");
+            return;
+        }
+
+        setUploadingAvatar(true);
+        try {
+            // File path: avatars/{user_id}.{ext}
+            const ext = file.name.split(".").pop() || "jpg";
+            const filePath = `${user.id}.${ext}`;
+
+            // Upload to Supabase Storage (upsert = overwrite if exists)
+            const { error: uploadError } = await supabase.storage
+                .from("avatars")
+                .upload(filePath, file, { cacheControl: "3600", upsert: true });
+
+            if (uploadError) throw uploadError;
+
+            // Get public URL
+            const { data: urlData } = supabase.storage
+                .from("avatars")
+                .getPublicUrl(filePath);
+
+            const publicUrl = urlData.publicUrl + `?t=${Date.now()}`; // cache bust
+
+            // Save URL to profile via API
+            await orgApi.updateProfile(
+                user.first_name || "",
+                user.last_name || "",
+                publicUrl,
+            );
+
+            toast("success", "อัปโหลดรูปโปรไฟล์สำเร็จ");
+            if (user.id) await fetchProfile(user.id);
+        } catch (err: unknown) {
+            console.error("[Profile] Avatar upload error:", err);
+            toast("error", "อัปโหลดรูปโปรไฟล์ไม่สำเร็จ");
+        } finally {
+            setUploadingAvatar(false);
+            // Reset file input
+            if (fileInputRef.current) fileInputRef.current.value = "";
         }
     };
 
@@ -162,6 +226,45 @@ export default function ProfilePage() {
                 {editing ? (
                     /* Edit Mode */
                     <div className="space-y-3">
+                        {/* Avatar in edit mode */}
+                        <div className="flex justify-center mb-2">
+                            <button
+                                type="button"
+                                onClick={handleAvatarClick}
+                                disabled={uploadingAvatar}
+                                className="relative group cursor-pointer"
+                            >
+                                {user?.avatar_url ? (
+                                    <img
+                                        src={user.avatar_url}
+                                        alt="avatar"
+                                        className="w-20 h-20 rounded-full object-cover border-2 border-steel-200 group-hover:border-brand-400 transition-colors"
+                                    />
+                                ) : (
+                                    <div className="w-20 h-20 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-2xl border-2 border-steel-200 group-hover:border-brand-400 transition-colors">
+                                        {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                                    </div>
+                                )}
+                                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {uploadingAvatar ? (
+                                        <Spinner />
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" className="w-5 h-5">
+                                            <path d="M1 8a7 7 0 1 1 14 0A7 7 0 0 1 1 8Zm15.657-3.343a.75.75 0 0 0-1.061-1.061l-.707.707a.75.75 0 0 0 1.06 1.06l.708-.706ZM18 8a.75.75 0 0 0-.75-.75h-1a.75.75 0 0 0 0 1.5h1A.75.75 0 0 0 18 8ZM8 1a.75.75 0 0 0-.75.75v1a.75.75 0 0 0 1.5 0v-1A.75.75 0 0 0 8 1Z" />
+                                        </svg>
+                                    )}
+                                </div>
+                            </button>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/*"
+                                onChange={handleAvatarUpload}
+                                className="hidden"
+                            />
+                        </div>
+                        <p className="text-center text-[10px] text-steel-400 -mt-1">คลิกรูปเพื่อเปลี่ยน (สูงสุด 2MB)</p>
+
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-xs font-medium text-steel-600 mb-1">ชื่อ</label>
@@ -210,8 +313,18 @@ export default function ProfilePage() {
                 ) : (
                     /* View Mode */
                     <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
-                            {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                        <div className="relative group">
+                            {user?.avatar_url ? (
+                                <img
+                                    src={user.avatar_url}
+                                    alt="avatar"
+                                    className="w-14 h-14 rounded-full object-cover border-2 border-steel-100"
+                                />
+                            ) : (
+                                <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
+                                    {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "?"}
+                                </div>
+                            )}
                         </div>
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
