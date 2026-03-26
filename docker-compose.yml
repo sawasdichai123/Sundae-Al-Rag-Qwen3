@@ -21,10 +21,12 @@ services:
       args:
         # Backend URL — points to the Docker backend service (host-mapped port)
         VITE_API_BASE_URL: http://localhost:8001
-        # Supabase — set these in your shell or .env before building
+        # Supabase — read from frontend/.env automatically
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     container_name: sundae-frontend
+    env_file:
+      - ./frontend/.env
     ports:
       - "3000:80"
     depends_on:
@@ -42,7 +44,7 @@ services:
     ports:
       - "8001:8000"
     env_file:
-      - ./backend/.env
+      - ./.env
     environment:
       # Override Ollama URL to point to the Docker service name
       - OLLAMA_BASE_URL=http://ollama:11434
