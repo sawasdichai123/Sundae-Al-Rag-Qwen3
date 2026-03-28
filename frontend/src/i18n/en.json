@@ -211,6 +211,7 @@
   "approvals.rejectSuccess": "User rejected",
   "approvals.rejectFailed": "Failed to reject",
   "approvals.pendingCount": "{n} pending",
+  "approvals.loadFailed": "Failed to load data",
 
   "org.title": "Organization",
   "org.desc": "Manage your organization",

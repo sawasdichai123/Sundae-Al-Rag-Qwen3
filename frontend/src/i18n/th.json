@@ -211,6 +211,7 @@
   "approvals.rejectSuccess": "ปฏิเสธผู้ใช้สำเร็จ",
   "approvals.rejectFailed": "ปฏิเสธไม่สำเร็จ",
   "approvals.pendingCount": "รออนุมัติ {n} คน",
+  "approvals.loadFailed": "โหลดข้อมูลไม่สำเร็จ",
 
   "org.title": "องค์กร",
   "org.desc": "จัดการองค์กรของคุณ",

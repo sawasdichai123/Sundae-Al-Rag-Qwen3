@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { create } from "zustand";
 import thJson from "./th.json";
 import enJson from "./en.json";
@@ -33,6 +34,8 @@ export const useLocaleStore = create<LocaleState>((set, get) => ({
 
 export function useT() {
     const locale = useLocaleStore((s) => s.locale);
-    const dict = translations[locale];
-    return (key: string): string => dict[key] ?? key;
+    return useCallback(
+        (key: string): string => translations[locale]?.[key] ?? key,
+        [locale],
+    );
 }
