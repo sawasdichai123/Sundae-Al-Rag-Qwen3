@@ -19,6 +19,7 @@ import { chatApi, botsApi, inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import type { Bot, SessionStatus, SourceReference } from "../types";
+import { useT } from "../i18n";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ function ChevronDownIcon() {
 // ── Component ───────────────────────────────────────────────────
 
 export default function WebChatPage() {
+    const t = useT();
     const [messages, setMessages] = useState<ChatBubble[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -316,7 +318,7 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: "เจ้าหน้าที่คืนร่างให้ AI แล้ว — สามารถถามคำถามได้ตามปกติ",
+                                content: t("chat.staffReturnedAI"),
                                 timestamp: new Date(),
                             },
                         ]);
@@ -326,7 +328,7 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: "เจ้าหน้าที่ช่วยเหลือเรียบร้อยแล้ว — หากต้องการติดต่ออีกครั้งสามารถกดเรียกเจ้าหน้าที่ได้",
+                                content: t("chat.staffHelped"),
                                 timestamp: new Date(),
                             },
                         ]);
@@ -336,7 +338,7 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: "เจ้าหน้าที่ปิดเคสแล้ว — ขอบคุณที่ใช้บริการ",
+                                content: t("chat.staffClosed"),
                                 timestamp: new Date(),
                             },
                         ]);
@@ -364,7 +366,7 @@ export default function WebChatPage() {
                 {
                     id: crypto.randomUUID(),
                     role: "system",
-                    content: "ไม่สามารถเรียกเจ้าหน้าที่ได้ กรุณาลองอีกครั้ง",
+                    content: t("chat.handoffFailed"),
                     timestamp: new Date(),
                 },
             ]);
@@ -383,7 +385,7 @@ export default function WebChatPage() {
             {
                 id: crypto.randomUUID(),
                 role: "system",
-                content: "กำลังเรียกเจ้าหน้าที่... กรุณารอสักครู่",
+                content: t("chat.callingStaff"),
                 timestamp: new Date(),
             },
         ]);
@@ -400,7 +402,7 @@ export default function WebChatPage() {
                 {
                     id: crypto.randomUUID(),
                     role: "system",
-                    content: "ยกเลิกการเรียกเจ้าหน้าที่แล้ว — กลับสู่โหมด AI",
+                    content: t("chat.cancelledHandoff"),
                     timestamp: new Date(),
                 },
             ]);
@@ -555,7 +557,7 @@ export default function WebChatPage() {
                         {
                             id: assistantId,
                             role: "assistant",
-                            content: `ขออภัย ไม่สามารถเชื่อมต่อได้: ${error}`,
+                            content: `${t("chat.connectionError")} ${error}`,
                             timestamp: new Date(),
                         },
                     ]);
@@ -599,12 +601,12 @@ export default function WebChatPage() {
         if (isNaN(d.getTime())) return "";
         const diff = Date.now() - d.getTime();
         const mins = Math.floor(diff / 60000);
-        if (mins < 1) return "เมื่อกี้";
-        if (mins < 60) return `${mins} นาทีก่อน`;
+        if (mins < 1) return t("chat.justNow");
+        if (mins < 60) return t("chat.minutesAgo").replace("{n}", String(mins));
         const hrs = Math.floor(mins / 60);
-        if (hrs < 24) return `${hrs} ชม.ก่อน`;
+        if (hrs < 24) return t("chat.hoursAgo").replace("{n}", String(hrs));
         const days = Math.floor(hrs / 24);
-        return `${days} วันก่อน`;
+        return t("chat.daysAgo").replace("{n}", String(days));
     };
 
     return (
@@ -614,12 +616,12 @@ export default function WebChatPage() {
                 <aside className="w-72 border-r border-steel-100 bg-white flex flex-col shrink-0">
                     {/* Sidebar Header */}
                     <div className="px-4 h-14 border-b border-steel-100 flex items-center justify-between">
-                        <h2 className="text-sm font-semibold text-steel-800">ประวัติแชท</h2>
+                        <h2 className="text-sm font-semibold text-steel-800">{t("chat.history")}</h2>
                         <div className="flex items-center gap-1">
                             <button
                                 onClick={() => setSidebarOpen(false)}
                                 className="p-1.5 text-steel-400 hover:text-steel-600 transition-colors cursor-pointer"
-                                title="ซ่อน sidebar"
+                                title={t("chat.hideSidebar")}
                             >
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                                     <path fillRule="evenodd" d="M12.78 7.47a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 8.53a.75.75 0 0 1 1.06-1.06L8 11.19l3.72-3.72a.75.75 0 0 1 1.06 0Z" clipRule="evenodd" transform="rotate(90 8 8)" />
@@ -631,7 +633,7 @@ export default function WebChatPage() {
                     {/* Session List */}
                     <div className="flex-1 overflow-y-auto">
                         {historySessions.length === 0 ? (
-                            <p className="px-4 py-8 text-xs text-steel-400 text-center">ยังไม่มีประวัติการสนทนา</p>
+                            <p className="px-4 py-8 text-xs text-steel-400 text-center">{t("chat.noHistory")}</p>
                         ) : (
                             historySessions.map((hist) => (
                                 <button
@@ -647,7 +649,7 @@ export default function WebChatPage() {
                                             hist.status === "human_takeover" ? "bg-amber-50 text-amber-600" :
                                                 "bg-steel-100 text-steel-500"
                                             }`}>
-                                            {hist.status === "active" ? "Active" : hist.status === "human_takeover" ? "รับเรื่อง" : "ปิดแล้ว"}
+                                            {hist.status === "active" ? t("chat.statusActive") : hist.status === "human_takeover" ? t("chat.statusTakeover") : t("chat.statusResolved")}
                                         </span>
                                     </div>
                                     <p className="text-[11px] text-steel-400">
@@ -668,7 +670,7 @@ export default function WebChatPage() {
                         <button
                             onClick={() => setSidebarOpen(true)}
                             className="p-1.5 text-steel-400 hover:text-steel-600 transition-colors cursor-pointer"
-                            title="แสดงประวัติแชท"
+                            title={t("chat.showHistory")}
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                                 <path fillRule="evenodd" d="M2 3.75A.75.75 0 0 1 2.75 3h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 3.75ZM2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Zm0 4.25a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
@@ -680,14 +682,14 @@ export default function WebChatPage() {
                             onClick={() => setBotDropdownOpen(!botDropdownOpen)}
                             className="flex items-center gap-2 px-3 py-1.5 bg-white border border-steel-200 rounded-lg text-sm font-medium text-steel-800 hover:border-brand-400 transition-colors cursor-pointer"
                         >
-                            <span>{selectedBot?.name || "Select Bots"}</span>
+                            <span>{selectedBot?.name || t("chat.selectBot")}</span>
                             <ChevronDownIcon />
                         </button>
 
                         {botDropdownOpen && (
                             <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-steel-200 rounded-xl shadow-lg z-20 py-1 animate-fade-in">
                                 {bots.length === 0 ? (
-                                    <p className="px-4 py-3 text-xs text-steel-400">ไม่พบ Bot — กรุณาสร้าง Bot ก่อน</p>
+                                    <p className="px-4 py-3 text-xs text-steel-400">{t("chat.noBots")}</p>
                                 ) : (
                                     bots.map((bot) => (
                                         <button
@@ -718,7 +720,7 @@ export default function WebChatPage() {
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
                                 <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z" />
                             </svg>
-                            แชทใหม่
+                            {t("chat.newChat")}
                         </button>
                     )}
                 </div>
@@ -733,20 +735,20 @@ export default function WebChatPage() {
                                     S
                                 </div>
                                 <h2 className="text-xl font-bold text-steel-900 mb-2">
-                                    Welcome to SUNDAE LLM
+                                    {t("chat.welcome")}
                                 </h2>
                                 <p className="text-sm text-steel-500 max-w-sm mb-8 leading-relaxed">
                                     {selectedBot
-                                        ? (selectedBot.description || `ถามคำถามกับ ${selectedBot.name}`)
-                                        : "เลือก Bot จาก dropdown ด้านบนเพื่อเริ่มสนทนา"}
+                                        ? (selectedBot.description || t("chat.welcomeBot").replace("{name}", selectedBot.name))
+                                        : t("chat.welcomeSelectBot")}
                                 </p>
 
                                 {/* Suggestion Cards */}
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-lg">
                                     {[
-                                        { icon: "📋", text: "นโยบายการลาหยุด\nเป็นอย่างไร?" },
-                                        { icon: "💼", text: "สวัสดิการพนักงาน\nมีอะไรบ้าง?" },
-                                        { icon: "💰", text: "วิธีการเบิก\nค่าใช้จ่าย" },
+                                        { icon: "📋", text: t("chat.suggestion1") },
+                                        { icon: "💼", text: t("chat.suggestion2") },
+                                        { icon: "💰", text: t("chat.suggestion3") },
                                     ].map((s) => (
                                         <button
                                             key={s.text}
@@ -810,7 +812,7 @@ export default function WebChatPage() {
                                                 }`}
                                         >
                                             {isAdmin && (
-                                                <p className="text-[10px] font-semibold text-blue-500 mb-1">เจ้าหน้าที่</p>
+                                                <p className="text-[10px] font-semibold text-blue-500 mb-1">{t("chat.staffLabel")}</p>
                                             )}
                                             <p className="text-[14px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
 
@@ -819,15 +821,15 @@ export default function WebChatPage() {
                                                 <div className="mt-3 pt-3 border-t border-steel-100">
                                                     <div className="flex items-center gap-1.5 mb-2">
                                                         <SourceIcon />
-                                                        <span className="text-[11px] font-medium text-steel-400">อ้างอิงจากเอกสาร</span>
+                                                        <span className="text-[11px] font-medium text-steel-400">{t("chat.sourcesLabel")}</span>
                                                     </div>
                                                     <div className="flex flex-wrap gap-1.5">
                                                         {msg.sources.map((src, i) => {
                                                             const docLabel = src.document_name ?? `${src.document_id.slice(0, 8)}…`;
                                                             const pageLabel = src.page_start != null
                                                                 ? src.page_start === src.page_end || src.page_end == null
-                                                                    ? `หน้า ${src.page_start}`
-                                                                    : `หน้า ${src.page_start}–${src.page_end}`
+                                                                    ? `${t("chat.page")} ${src.page_start}`
+                                                                    : `${t("chat.page")} ${src.page_start}–${src.page_end}`
                                                                 : null;
                                                             return (
                                                                 <span
@@ -878,10 +880,10 @@ export default function WebChatPage() {
                                             {loadingSeconds >= 3 && (
                                                 <span className="text-[11px] text-steel-400 ml-1">
                                                     {loadingSeconds < 10
-                                                        ? "กำลังค้นหาเอกสาร..."
+                                                        ? t("chat.searching")
                                                         : loadingSeconds < 30
-                                                            ? "กำลังวิเคราะห์คำตอบ..."
-                                                            : `กำลังประมวลผล (${loadingSeconds}s)...`}
+                                                            ? t("chat.analyzing")
+                                                            : t("chat.processingTime").replace("{n}", String(loadingSeconds))}
                                                 </span>
                                             )}
                                         </div>
@@ -893,7 +895,7 @@ export default function WebChatPage() {
                             {sessionStatus === "resolved" && (
                                 <div className="flex flex-col items-center gap-3 py-6 animate-fade-in">
                                     <div className="bg-steel-50 text-steel-500 text-xs font-medium px-4 py-2 rounded-full border border-steel-200">
-                                        เคสนี้ถูกปิดแล้ว
+                                        {t("chat.caseResolved")}
                                     </div>
                                     <button
                                         onClick={handleNewChat}
@@ -902,7 +904,7 @@ export default function WebChatPage() {
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
                                             <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z" />
                                         </svg>
-                                        เริ่มแชทใหม่
+                                        {t("chat.startNewChat")}
                                     </button>
                                 </div>
                             )}
@@ -916,13 +918,13 @@ export default function WebChatPage() {
                 {sessionStatus === "human_takeover" && (
                     <div className="bg-blue-50 border-t border-blue-200 px-4 py-2.5 flex items-center justify-center gap-3">
                         <span className="text-xs font-medium text-blue-700">
-                            เจ้าหน้าที่กำลังดูแลคุณอยู่ — สามารถพิมพ์ข้อความเพิ่มเติมได้
+                            {t("chat.staffCaring")}
                         </span>
                         <button
                             onClick={handleCancelHuman}
                             className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full hover:bg-red-100 transition-colors cursor-pointer"
                         >
-                            ยกเลิกการเรียกเจ้าหน้าที่
+                            {t("chat.cancelHuman")}
                         </button>
                     </div>
                 )}
@@ -940,7 +942,7 @@ export default function WebChatPage() {
                                         className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-full hover:bg-amber-100 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         <span>🙋</span>
-                                        {handoffRequesting ? "กำลังเรียกเจ้าหน้าที่..." : "ขอพูดคุยกับเจ้าหน้าที่"}
+                                        {handoffRequesting ? t("chat.requestingHuman") : t("chat.requestHuman")}
                                     </button>
                                 </div>
                             )}
@@ -951,7 +953,7 @@ export default function WebChatPage() {
                                     value={input}
                                     onChange={handleInputChange}
                                     onKeyDown={handleKeyDown}
-                                    placeholder={sessionStatus === "human_takeover" ? "พิมพ์ข้อความถึงเจ้าหน้าที่..." : "How can I help today?..."}
+                                    placeholder={sessionStatus === "human_takeover" ? t("chat.placeholderHuman") : t("chat.placeholder")}
                                     disabled={(isLoading && sessionStatus !== "human_takeover") || !selectedBotId || !sessionId}
                                     rows={1}
                                     className="flex-1 bg-transparent text-sm text-steel-800 placeholder:text-steel-400 resize-none outline-none max-h-[150px] py-1 leading-relaxed disabled:opacity-50"
@@ -960,7 +962,7 @@ export default function WebChatPage() {
                                     <button
                                         onClick={handleCancel}
                                         className="w-9 h-9 bg-red-500 text-white rounded-xl flex items-center justify-center hover:bg-red-600 transition-all duration-200 cursor-pointer shrink-0"
-                                        title="ยกเลิกคำขอ"
+                                        title={t("chat.cancelRequest")}
                                     >
                                         <StopIcon />
                                     </button>
@@ -975,7 +977,7 @@ export default function WebChatPage() {
                                 )}
                             </div>
                             <p className="text-center text-[11px] text-steel-400 mt-2.5">
-                                SUNDAE ตอบจากเอกสารที่อัปโหลดในระบบเท่านั้น · Powered by RAG + Qwen
+                                {t("chat.footer")}
                             </p>
                         </div>
                     </div>

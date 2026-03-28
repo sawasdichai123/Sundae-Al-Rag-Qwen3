@@ -12,6 +12,8 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore, selectIsOrgOwner, selectHasOrgs } from "../store/orgStore";
 import OrgSwitcher from "../components/OrgSwitcher";
+import LanguageToggle from "../components/LanguageToggle";
+import { useT } from "../i18n";
 
 // ── SVG Icons ───────────────────────────────────────────────────
 
@@ -119,7 +121,7 @@ function DangerZoneIcon() {
 
 interface NavItem {
     to: string;
-    label: string;
+    labelKey: string;
     icon: React.FC;
     end?: boolean;
     /** Platform roles that can see this item */
@@ -129,30 +131,30 @@ interface NavItem {
 }
 
 const allNavItems: NavItem[] = [
-    { to: "/", label: "Dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support", "user"], requireOwner: true },
-    { to: "/knowledge-base", label: "Knowledge Base", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/bots", label: "Bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/inbox", label: "Inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/integration", label: "Integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/organization", label: "Organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOwner: true },
-    { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
-    { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
-    { to: "/profile", label: "Profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
-    { to: "/danger-zone", label: "Danger Zone", icon: DangerZoneIcon, visibleTo: ["user", "support", "admin"], requireOwner: true },
+    { to: "/", labelKey: "nav.dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support", "user"], requireOwner: true },
+    { to: "/knowledge-base", labelKey: "nav.knowledgeBase", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/bots", labelKey: "nav.bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/inbox", labelKey: "nav.inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/integration", labelKey: "nav.integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
+    { to: "/organization", labelKey: "nav.organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOwner: true },
+    { to: "/approvals", labelKey: "nav.approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
+    { to: "/chat", labelKey: "nav.webChat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
+    { to: "/profile", labelKey: "nav.profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
+    { to: "/danger-zone", labelKey: "nav.dangerZone", icon: DangerZoneIcon, visibleTo: ["user", "support", "admin"], requireOwner: true },
 ];
 
-const routeLabels: Record<string, string> = {
-    "/": "Dashboard",
-    "/knowledge-base": "Knowledge Base",
-    "/bots": "Bots",
-    "/inbox": "Inbox",
-    "/integration": "Integration",
-    "/organization": "Organization",
-    "/create-org": "Create Organization",
-    "/approvals": "Approvals",
-    "/chat": "Web Chat",
-    "/profile": "Profile",
-    "/danger-zone": "Danger Zone",
+const routeLabelKeys: Record<string, string> = {
+    "/": "nav.dashboard",
+    "/knowledge-base": "nav.knowledgeBase",
+    "/bots": "nav.bots",
+    "/inbox": "nav.inbox",
+    "/integration": "nav.integration",
+    "/organization": "nav.organization",
+    "/create-org": "nav.createOrg",
+    "/approvals": "nav.approvals",
+    "/chat": "nav.webChat",
+    "/profile": "nav.profile",
+    "/danger-zone": "nav.dangerZone",
 };
 
 // ── Component ───────────────────────────────────────────────────
@@ -163,6 +165,7 @@ export default function DashboardLayout() {
     const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
     const signOut = useAuthStore((s) => s.signOut);
+    const t = useT();
 
     const role = user?.role ?? "user";
     const isOrgOwner = useOrgStore(selectIsOrgOwner);
@@ -176,7 +179,7 @@ export default function DashboardLayout() {
     // This prevents showing lockout before profile finishes loading.
     const isUnapproved = !!user && role === "user" && !user.is_approved;
 
-    const currentLabel = routeLabels[location.pathname] || "Dashboard";
+    const currentLabel = t(routeLabelKeys[location.pathname] || "nav.dashboard");
 
     // B2B privacy: admin/support viewing external org → only Danger Zone
     // External org = activeOrgId differs from user's home org (organization_id)
@@ -223,12 +226,12 @@ export default function DashboardLayout() {
 
     // Role badge — show org role for regular users
     const roleBadge = role === "admin"
-        ? { label: "Admin", color: "bg-brand-400 text-steel-900" }
+        ? { label: t("role.admin"), color: "bg-brand-400 text-steel-900" }
         : role === "support"
-            ? { label: "Support", color: "bg-violet-100 text-violet-700" }
+            ? { label: t("role.support"), color: "bg-violet-100 text-violet-700" }
             : isOrgOwner
-                ? { label: "Admin ORG", color: "bg-brand-100 text-brand-700" }
-                : { label: "Member", color: "bg-steel-100 text-steel-600" };
+                ? { label: t("role.adminOrg"), color: "bg-brand-100 text-brand-700" }
+                : { label: t("role.member"), color: "bg-steel-100 text-steel-600" };
 
     return (
         <div className="flex h-screen bg-steel-50">
@@ -254,9 +257,9 @@ export default function DashboardLayout() {
                 <nav className="flex-1 px-3 py-4 space-y-1">
                     {isUnapproved && !collapsed && (
                         <div className="px-3 py-8 text-center">
-                            <div className="text-2xl mb-2">⏳</div>
+                            <div className="text-2xl mb-2">��</div>
                             <p className="text-xs text-steel-500 leading-relaxed">
-                                บัญชีรออนุมัติ
+                                {t("layout.pendingApprovalSidebar")}
                             </p>
                         </div>
                     )}
@@ -273,7 +276,7 @@ export default function DashboardLayout() {
                                 }
                             >
                                 <span className="shrink-0"><Icon /></span>
-                                {!collapsed && <span className="truncate">{item.label}</span>}
+                                {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
                             </NavLink>
                         );
                     })}
@@ -283,7 +286,7 @@ export default function DashboardLayout() {
                 <button onClick={() => setCollapsed(!collapsed)}
                     className="mx-3 mb-2 flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-steel-400 hover:bg-white/[0.06] hover:text-white transition-colors cursor-pointer text-xs">
                     <CollapseIcon isCollapsed={collapsed} />
-                    {!collapsed && <span>Collapse</span>}
+                    {!collapsed && <span>{t("layout.collapse")}</span>}
                 </button>
 
                 {/* User Card */}
@@ -308,7 +311,7 @@ export default function DashboardLayout() {
                             </div>
                         )}
                         {(!collapsed || isUnapproved) && (
-                            <button onClick={handleLogout} className="text-steel-400 hover:text-red-400 transition-colors cursor-pointer" title="Logout">
+                            <button onClick={handleLogout} className="text-steel-400 hover:text-red-400 transition-colors cursor-pointer" title={t("layout.logout")}>
                                 <LogoutIcon />
                             </button>
                         )}
@@ -325,18 +328,19 @@ export default function DashboardLayout() {
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 text-steel-300">
                             <path fillRule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
                         </svg>
-                        <span className="font-semibold text-steel-800">{isUnapproved ? "รออนุมัติ" : currentLabel}</span>
+                        <span className="font-semibold text-steel-800">{isUnapproved ? t("layout.pendingApproval") : currentLabel}</span>
                     </div>
 
                     <div className="flex items-center gap-3">
                         {isUnapproved && (
                             <span className="inline-flex items-center gap-1.5 text-xs font-medium bg-amber-50 text-amber-700 px-3 py-1.5 rounded-full">
-                                ⏳ รออนุมัติ
+                                ⏳ {t("layout.pendingApproval")}
                             </span>
                         )}
+                        <LanguageToggle />
                         <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-full">
                             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
-                            <span className="text-xs font-medium text-emerald-700">Online</span>
+                            <span className="text-xs font-medium text-emerald-700">{t("layout.online")}</span>
                         </div>
                     </div>
                 </header>
@@ -356,6 +360,7 @@ export default function DashboardLayout() {
 function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
     const session = useAuthStore((s) => s.session);
     const fetchProfile = useAuthStore((s) => s.fetchProfile);
+    const t = useT();
 
     useEffect(() => {
         if (!session?.user?.id) return;
@@ -386,23 +391,22 @@ function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
                     ⏳
                 </div>
                 <h2 className="text-xl font-bold text-steel-900 mb-2">
-                    บัญชีกำลังรอการอนุมัติ
+                    {t("layout.pendingTitle")}
                 </h2>
-                <p className="text-sm text-steel-500 leading-relaxed mb-6">
-                    บัญชีของคุณกำลังรอการอนุมัติจากเจ้าหน้าที่ Support<br />
-                    คุณจะสามารถใช้ฟีเจอร์ทั้งหมดได้หลังจากได้รับการอนุมัติ
+                <p className="text-sm text-steel-500 leading-relaxed mb-6 whitespace-pre-line">
+                    {t("layout.pendingDesc")}
                 </p>
                 <div className="p-4 bg-steel-50 rounded-2xl border border-steel-200 mb-6">
-                    <p className="text-xs text-steel-500 mb-3 font-medium">สิ่งที่จะทำได้หลังอนุมัติ:</p>
+                    <p className="text-xs text-steel-500 mb-3 font-medium">{t("layout.pendingWhat")}</p>
                     <div className="space-y-2 text-left">
                         <div className="flex items-center gap-2 text-sm text-steel-400">
-                            <span>✗</span><span>อัปโหลดเอกสาร</span>
+                            <span>✗</span><span>{t("layout.pendingUpload")}</span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-steel-400">
-                            <span>✗</span><span>จัดการ Bot</span>
+                            <span>✗</span><span>{t("layout.pendingBots")}</span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-steel-400">
-                            <span>✗</span><span>ดู Inbox & Dashboard</span>
+                            <span>✗</span><span>{t("layout.pendingInbox")}</span>
                         </div>
                     </div>
                 </div>
@@ -410,7 +414,7 @@ function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
                     onClick={onLogout}
                     className="px-6 py-2.5 bg-steel-200 text-steel-700 rounded-xl text-sm font-medium hover:bg-steel-300 transition-colors cursor-pointer"
                 >
-                    ออกจากระบบ
+                    {t("layout.pendingLogout")}
                 </button>
             </div>
         </div>

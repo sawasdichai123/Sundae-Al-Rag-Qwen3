@@ -6,8 +6,10 @@ import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useOrgStore } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
+import { useT } from "../i18n";
 
 export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
+    const t = useT();
     const [open, setOpen] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
@@ -44,7 +46,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                 {!collapsed && (
                     <>
                         <span className="text-xs text-white truncate flex-1">
-                            {activeOrg?.name || "Select Org"}
+                            {activeOrg?.name || t("orgSwitcher.selectOrg")}
                         </span>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
                             className={`w-3.5 h-3.5 text-steel-400 transition-transform ${open ? "rotate-180" : ""}`}>
@@ -75,7 +77,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                                 {org.name?.[0]?.toUpperCase() || "O"}
                             </div>
                             <span className="truncate flex-1 text-left">{org.name}</span>
-                            <span className="text-[9px] text-steel-500">{org.org_role === "owner" ? "Admin ORG" : org.org_role}</span>
+                            <span className="text-[9px] text-steel-500">{org.org_role === "owner" ? t("role.adminOrg") : org.org_role}</span>
                         </button>
                     ))}
                     {(role === "support" || role === "admin") && (
@@ -85,7 +87,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-steel-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
                             >
                                 <span className="text-sm">+</span>
-                                <span>Create Organization</span>
+                                <span>{t("orgSwitcher.createOrg")}</span>
                             </button>
                         </div>
                     )}

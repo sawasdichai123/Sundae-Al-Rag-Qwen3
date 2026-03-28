@@ -14,8 +14,10 @@ import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import type { MyInvitation } from "../types";
 import Spinner from "../components/Spinner";
+import { useT } from "../i18n";
 
 export default function CreateOrgPage() {
+    const t = useT();
     const navigate = useNavigate();
     const toast = useToastStore((s) => s.addToast);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
@@ -50,12 +52,12 @@ export default function CreateOrgPage() {
         setCreating(true);
         try {
             await orgApi.create(orgName.trim());
-            toast("success", "สร้างองค์กรสำเร็จ");
+            toast("success", t("createOrg.createSuccess"));
             await fetchOrgs();
             navigate("/", { replace: true });
         } catch (err: unknown) {
             console.error("[CreateOrg] Failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "สร้างองค์กรไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.createFailed");
             toast("error", msg);
         } finally {
             setCreating(false);
@@ -66,12 +68,12 @@ export default function CreateOrgPage() {
         setAcceptingId(invitationId);
         try {
             await orgApi.acceptInvitation(invitationId);
-            toast("success", "เข้าร่วมองค์กรสำเร็จ");
+            toast("success", t("createOrg.acceptSuccess"));
             await fetchOrgs();
             navigate("/", { replace: true });
         } catch (err: unknown) {
             console.error("[CreateOrg] Accept failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "เข้าร่วมองค์กรไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.acceptFailed");
             toast("error", msg);
         } finally {
             setAcceptingId(null);
@@ -79,15 +81,15 @@ export default function CreateOrgPage() {
     };
 
     const handleDecline = async (invitationId: string) => {
-        if (!confirm("ปฏิเสธคำเชิญนี้?")) return;
+        if (!confirm(t("createOrg.declineConfirm"))) return;
         setDecliningId(invitationId);
         try {
             await orgApi.declineInvitation(invitationId);
-            toast("success", "ปฏิเสธคำเชิญแล้ว");
+            toast("success", t("createOrg.declineSuccess"));
             setInvitations((prev) => prev.filter((inv) => inv.id !== invitationId));
         } catch (err: unknown) {
             console.error("[CreateOrg] Decline failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ปฏิเสธคำเชิญไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.declineFailed");
             toast("error", msg);
         } finally {
             setDecliningId(null);
@@ -104,14 +106,14 @@ export default function CreateOrgPage() {
                     🏢
                 </div>
                 <h1 className="text-2xl font-bold text-steel-900">
-                    {isAdmin ? "สร้างองค์กร" : "คำเชิญเข้าร่วมองค์กร"}
+                    {isAdmin ? t("createOrg.titleAdmin") : t("createOrg.titleUser")}
                 </h1>
                 <p className="text-sm text-steel-500 mt-1">
                     {isAdmin
-                        ? "สร้างองค์กรใหม่หรือเข้าร่วมองค์กรที่ได้รับเชิญ"
+                        ? t("createOrg.descAdmin")
                         : hasInvitations
-                            ? "คุณได้รับคำเชิญเข้าร่วมองค์กร"
-                            : "กรุณารอคำเชิญจากผู้ดูแลระบบ"}
+                            ? t("createOrg.descInvite")
+                            : t("createOrg.descWait")}
                 </p>
             </div>
 
@@ -120,7 +122,7 @@ export default function CreateOrgPage() {
                 <div className="flex items-center justify-center py-12">
                     <div className="flex items-center gap-3 text-steel-400">
                         <Spinner />
-                        <span className="text-sm">กำลังโหลด...</span>
+                        <span className="text-sm">{t("common.loading")}</span>
                     </div>
                 </div>
             )}
@@ -129,7 +131,7 @@ export default function CreateOrgPage() {
             {hasInvitations && (
                 <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
                     <div className="px-6 py-4 border-b border-steel-100">
-                        <h2 className="text-sm font-semibold text-steel-800">คำเชิญที่รอดำเนินการ</h2>
+                        <h2 className="text-sm font-semibold text-steel-800">{t("createOrg.pendingInvitations")}</h2>
                     </div>
                     <div className="divide-y divide-steel-100">
                         {invitations.map((inv) => (
@@ -139,7 +141,7 @@ export default function CreateOrgPage() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-steel-800">{inv.org_name}</p>
-                                    <p className="text-xs text-steel-400">เชิญไปที่ {inv.invited_email}</p>
+                                    <p className="text-xs text-steel-400">{t("createOrg.invitedTo").replace("{email}", inv.invited_email)}</p>
                                 </div>
                                 <div className="flex gap-2">
                                     <button
@@ -147,14 +149,14 @@ export default function CreateOrgPage() {
                                         disabled={acceptingId === inv.id || decliningId === inv.id}
                                         className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
                                     >
-                                        {acceptingId === inv.id ? "กำลัง..." : "เข้าร่วม"}
+                                        {acceptingId === inv.id ? t("common.processing") : t("profile.accept")}
                                     </button>
                                     <button
                                         onClick={() => handleDecline(inv.id)}
                                         disabled={acceptingId === inv.id || decliningId === inv.id}
                                         className="px-4 py-2 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
                                     >
-                                        {decliningId === inv.id ? "กำลัง..." : "ปฏิเสธ"}
+                                        {decliningId === inv.id ? t("common.processing") : t("profile.decline")}
                                     </button>
                                 </div>
                             </div>
@@ -172,10 +174,10 @@ export default function CreateOrgPage() {
                         </svg>
                     </div>
                     <h3 className="text-sm font-semibold text-steel-800 mb-2">
-                        ยังไม่มีคำเชิญ
+                        {t("createOrg.noInvitations")}
                     </h3>
                     <p className="text-xs text-steel-500 leading-relaxed">
-                        กรุณาติดต่อผู้ดูแลระบบเพื่อรับคำเชิญเข้าร่วมองค์กร
+                        {t("createOrg.contactAdmin")}
                     </p>
                 </div>
             )}
@@ -183,11 +185,11 @@ export default function CreateOrgPage() {
             {/* Create Org Form — support/admin only */}
             {isAdmin && !loadingInvites && (
                 <div className="bg-white rounded-2xl border border-steel-100 p-6">
-                    <h2 className="text-sm font-semibold text-steel-800 mb-4">สร้างองค์กรใหม่</h2>
+                    <h2 className="text-sm font-semibold text-steel-800 mb-4">{t("createOrg.createNew")}</h2>
                     <form onSubmit={handleCreate} className="space-y-4">
                         <div>
                             <label htmlFor="org-name" className="block text-xs font-medium text-steel-600 mb-1.5">
-                                ชื่อองค์กร
+                                {t("createOrg.orgName")}
                             </label>
                             <input
                                 id="org-name"
@@ -206,7 +208,7 @@ export default function CreateOrgPage() {
                             disabled={creating || !orgName.trim()}
                             className="w-full bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors cursor-pointer shadow-md shadow-brand-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
-                            {creating ? <><Spinner /> กำลังสร้าง...</> : "สร้างองค์กร"}
+                            {creating ? <><Spinner /> {t("createOrg.creating")}</> : t("createOrg.createButton")}
                         </button>
                     </form>
                 </div>

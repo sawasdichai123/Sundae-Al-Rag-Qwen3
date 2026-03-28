@@ -3,6 +3,7 @@
  */
 
 import { Outlet } from "react-router-dom";
+import LanguageToggle from "../components/LanguageToggle";
 
 export default function AuthLayout() {
     return (
@@ -11,6 +12,11 @@ export default function AuthLayout() {
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute top-1/4 right-1/4 w-96 h-96 bg-brand-400/8 rounded-full blur-3xl"></div>
                 <div className="absolute bottom-1/4 left-1/4 w-96 h-96 bg-steel-500/10 rounded-full blur-3xl"></div>
+            </div>
+
+            {/* Language Toggle — top right */}
+            <div className="absolute top-4 right-4 z-10">
+                <LanguageToggle />
             </div>
 
             <div className="w-full max-w-sm relative">

@@ -12,8 +12,10 @@ import { useOrgStore, selectIsOrgOwner } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import Spinner from "../components/Spinner";
+import { useT } from "../i18n";
 
 export default function DangerZonePage() {
+    const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const isOwner = useOrgStore(selectIsOrgOwner);
@@ -44,7 +46,7 @@ export default function DangerZonePage() {
             setOrgStatus(data.status);
         } catch (err) {
             console.error("[DangerZone] Load failed:", err);
-            toast("error", "โหลดข้อมูลองค์กรไม่สำเร็จ");
+            toast("error", t("org.loadFailed"));
         } finally {
             setLoading(false);
         }
@@ -56,14 +58,14 @@ export default function DangerZonePage() {
 
     const handleRequestDeletion = async () => {
         if (!activeOrgId) return;
-        if (!confirm("ขอลบองค์กร? การดำเนินการนี้ต้องได้รับการยืนยันจากอีกฝ่าย")) return;
+        if (!confirm(t("dangerZone.requestConfirm"))) return;
         setRequestingDeletion(true);
         try {
             await orgApi.requestDeletion(activeOrgId);
-            toast("success", "ส่งคำขอลบองค์กรสำเร็จ — รอการยืนยัน");
+            toast("success", t("dangerZone.requestSuccess"));
             await loadData();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ส่งคำขอไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.requestFailed");
             toast("error", msg);
         } finally {
             setRequestingDeletion(false);
@@ -72,14 +74,14 @@ export default function DangerZonePage() {
 
     const handleCancelDeletion = async () => {
         if (!activeOrgId) return;
-        if (!confirm("ยกเลิกคำขอลบองค์กร?")) return;
+        if (!confirm(t("dangerZone.cancelConfirm"))) return;
         setCancellingDeletion(true);
         try {
             await orgApi.cancelDeletion(activeOrgId);
-            toast("success", "ยกเลิกคำขอลบองค์กรสำเร็จ");
+            toast("success", t("dangerZone.cancelSuccess"));
             await loadData();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ยกเลิกไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.cancelFailed");
             toast("error", msg);
         } finally {
             setCancellingDeletion(false);
@@ -88,15 +90,15 @@ export default function DangerZonePage() {
 
     const handleConfirmDeletion = async () => {
         if (!activeOrgId) return;
-        if (!confirm("ยืนยันการลบองค์กร? การดำเนินการนี้ไม่สามารถย้อนกลับได้")) return;
+        if (!confirm(t("dangerZone.confirmPrompt"))) return;
         setConfirmingDeletion(true);
         try {
             await orgApi.confirmDeletion(activeOrgId);
-            toast("success", "ลบองค์กรสำเร็จ");
+            toast("success", t("dangerZone.confirmSuccess"));
             await fetchOrgs();
             window.location.href = "/create-org";
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ยืนยันการลบไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.confirmFailed");
             toast("error", msg);
         } finally {
             setConfirmingDeletion(false);
@@ -106,7 +108,7 @@ export default function DangerZonePage() {
     if (!activeOrgId) {
         return (
             <div className="animate-fade-in text-center py-12">
-                <p className="text-steel-400">กรุณาเลือกองค์กรก่อน</p>
+                <p className="text-steel-400">{t("common.selectOrgFirst")}</p>
             </div>
         );
     }
@@ -115,10 +117,10 @@ export default function DangerZonePage() {
         <div className="animate-fade-in max-w-2xl">
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-red-700 tracking-tight">
-                    Danger Zone
+                    {t("dangerZone.title")}
                 </h1>
                 <p className="text-sm text-steel-500 mt-1">
-                    การดำเนินการที่ไม่สามารถย้อนกลับได้
+                    {t("dangerZone.desc")}
                 </p>
             </div>
 
@@ -131,10 +133,10 @@ export default function DangerZonePage() {
             {!loading && isMainOrg && (
                 <div className="bg-white rounded-2xl border border-steel-200 p-6">
                     <h2 className="text-sm font-semibold text-steel-700 mb-2">
-                        ลบองค์กร {orgName && `"${orgName}"`}
+                        {t("dangerZone.deleteOrg")} {orgName && `"${orgName}"`}
                     </h2>
                     <p className="text-xs text-steel-500">
-                        ไม่สามารถลบองค์กรนี้ได้เนื่องจากเป็นองค์กรหลักของระบบ
+                        {t("dangerZone.mainOrgNotice")}
                     </p>
                 </div>
             )}
@@ -142,10 +144,10 @@ export default function DangerZonePage() {
             {!loading && !isMainOrg && (canRequestDeletion || canConfirmDeletion) && (
                 <div className="bg-white rounded-2xl border border-red-200 p-6">
                     <h2 className="text-sm font-semibold text-red-700 mb-2">
-                        ลบองค์กร {orgName && `"${orgName}"`}
+                        {t("dangerZone.deleteOrg")} {orgName && `"${orgName}"`}
                     </h2>
                     <p className="text-xs text-steel-500 mb-4">
-                        การลบองค์กรต้องได้รับการยืนยันจากทั้ง Admin ORG และ Support/Admin
+                        {t("dangerZone.deleteNotice")}
                     </p>
                     {orgStatus === "pending_deletion" ? (
                         <div className="flex items-center gap-3">
@@ -155,7 +157,7 @@ export default function DangerZonePage() {
                                     disabled={confirmingDeletion}
                                     className="px-5 py-2.5 bg-red-600 text-white text-sm font-bold rounded-xl hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
                                 >
-                                    {confirmingDeletion ? <Spinner /> : "ยืนยันการลบองค์กร"}
+                                    {confirmingDeletion ? <Spinner /> : t("dangerZone.confirmDeletion")}
                                 </button>
                             )}
                             {(canRequestDeletion || canConfirmDeletion) && (
@@ -164,12 +166,12 @@ export default function DangerZonePage() {
                                     disabled={cancellingDeletion}
                                     className="px-5 py-2.5 bg-steel-100 text-steel-700 text-sm font-bold rounded-xl hover:bg-steel-200 transition-colors cursor-pointer disabled:opacity-50"
                                 >
-                                    {cancellingDeletion ? <Spinner /> : "ยกเลิกคำขอลบ"}
+                                    {cancellingDeletion ? <Spinner /> : t("dangerZone.cancelDeletion")}
                                 </button>
                             )}
                             {!canConfirmDeletion && !canRequestDeletion && (
                                 <div className="text-xs text-steel-500">
-                                    มีคำขอลบองค์กรแล้ว — รอ Support/Admin ยืนยัน
+                                    {t("dangerZone.pendingInfo")}
                                 </div>
                             )}
                         </div>
@@ -180,11 +182,11 @@ export default function DangerZonePage() {
                                 disabled={requestingDeletion}
                                 className="px-5 py-2.5 bg-red-100 text-red-700 text-sm font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
                             >
-                                {requestingDeletion ? <Spinner /> : "ขอลบองค์กร"}
+                                {requestingDeletion ? <Spinner /> : t("dangerZone.requestDeletion")}
                             </button>
                         ) : (
                             <div className="text-xs text-steel-500">
-                                เฉพาะ Admin ORG เท่านั้นที่ส่งคำขอลบองค์กรได้
+                                {t("dangerZone.ownerOnly")}
                             </div>
                         )
                     )}

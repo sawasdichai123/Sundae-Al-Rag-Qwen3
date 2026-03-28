@@ -14,6 +14,7 @@ import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Document } from "../types";
+import { useT } from "../i18n";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -59,41 +60,42 @@ function UploadCloudIcon() {
 
 // ── Status Badge ────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: string }) {
-    const config: Record<string, { label: string; className: string }> = {
-        pending: { label: "รอดำเนินการ", className: "bg-steel-100 text-steel-500" },
-        processing: { label: "กำลังประมวลผล", className: "bg-amber-50 text-amber-600" },
-        ready: { label: "พร้อมใช้", className: "bg-emerald-50 text-emerald-600" },
-        error: { label: "ข้อผิดพลาด", className: "bg-red-50 text-red-600" },
+function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
+    const config: Record<string, { labelKey: string; className: string }> = {
+        pending: { labelKey: "kb.statusPending", className: "bg-steel-100 text-steel-500" },
+        processing: { labelKey: "kb.statusProcessing", className: "bg-amber-50 text-amber-600" },
+        ready: { labelKey: "kb.statusReady", className: "bg-emerald-50 text-emerald-600" },
+        error: { labelKey: "kb.statusError", className: "bg-red-50 text-red-600" },
     };
-    const { label, className } = config[status] || config.pending;
+    const { labelKey, className } = config[status] || config.pending;
     return (
         <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full ${className}`}>
             {status === "processing" && <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />}
             {status === "ready" && <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />}
-            {label}
+            {t(labelKey)}
         </span>
     );
 }
 
 // ── Time Format ─────────────────────────────────────────────────
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: (key: string) => string): string {
     const parsed = new Date(dateStr).getTime();
-    if (isNaN(parsed)) return "ไม่ทราบเวลา";
+    if (isNaN(parsed)) return t("kb.unknownTime");
     const diff = Date.now() - parsed;
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "เมื่อสักครู่";
-    if (mins < 60) return `${mins} นาทีก่อน`;
+    if (mins < 1) return t("kb.justNow");
+    if (mins < 60) return t("kb.minutesAgo").replace("{n}", String(mins));
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours} ชม. ก่อน`;
+    if (hours < 24) return t("kb.hoursAgo").replace("{n}", String(hours));
     const days = Math.floor(hours / 24);
-    return `${days} วันก่อน`;
+    return t("kb.daysAgo").replace("{n}", String(days));
 }
 
 // ── Component ───────────────────────────────────────────────────
 
 export default function KnowledgeBasePage() {
+    const t = useT();
     const [documents, setDocuments] = useState<Document[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
@@ -130,7 +132,7 @@ export default function KnowledgeBasePage() {
         if (!file || !orgId) return;
 
         if (!file.type.includes("pdf")) {
-            toast("error", "Only PDF files are supported.");
+            toast("error", t("kb.onlyPdf"));
             return;
         }
 
@@ -140,7 +142,7 @@ export default function KnowledgeBasePage() {
             await loadDocuments();
         } catch (err) {
             console.error("[Knowledge] Upload failed:", err);
-            toast("error", "อัปโหลดล้มเหลว กรุณาลองอีกครั้ง");
+            toast("error", t("kb.uploadFailed"));
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
@@ -156,7 +158,7 @@ export default function KnowledgeBasePage() {
             await loadDocuments();
         } catch (err) {
             console.error("[Knowledge] Delete failed:", err);
-            toast("error", "ลบไม่สำเร็จ กรุณาลองอีกครั้ง");
+            toast("error", t("kb.deleteFailed"));
         }
     };
 
@@ -169,7 +171,7 @@ export default function KnowledgeBasePage() {
         const file = e.dataTransfer.files?.[0];
         if (!file || !orgId) return;
         if (file.type !== "application/pdf") {
-            toast("warning", "กรุณาอัปโหลดไฟล์ PDF เท่านั้น");
+            toast("warning", t("kb.onlyPdfWarning"));
             return;
         }
         setUploading(true);
@@ -178,7 +180,7 @@ export default function KnowledgeBasePage() {
             await loadDocuments();
         } catch (err) {
             console.error("[Knowledge] Drop upload failed:", err);
-            toast("error", "อัปโหลดล้มเหลว");
+            toast("error", t("kb.uploadFailedShort"));
         } finally {
             setUploading(false);
         }
@@ -194,14 +196,14 @@ export default function KnowledgeBasePage() {
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-steel-900">Knowledge</h1>
+                <h1 className="text-2xl font-bold text-steel-900">{t("kb.title")}</h1>
                 <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
                     className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-5 py-2.5 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                 >
                     <PlusIcon />
-                    {uploading ? "กำลังอัปโหลด..." : "Add knowledge collection"}
+                    {uploading ? t("kb.uploading") : t("kb.addCollection")}
                 </button>
                 <input
                     ref={fileInputRef}
@@ -219,7 +221,7 @@ export default function KnowledgeBasePage() {
                 </span>
                 <input
                     type="text"
-                    placeholder="Search Models"
+                    placeholder={t("kb.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full max-w-md pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
@@ -234,7 +236,7 @@ export default function KnowledgeBasePage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        <span className="text-sm">กำลังโหลด...</span>
+                        <span className="text-sm">{t("common.loading")}</span>
                     </div>
                 </div>
             )}
@@ -251,17 +253,17 @@ export default function KnowledgeBasePage() {
                 >
                     <UploadCloudIcon />
                     <p className="text-sm text-steel-500 mt-4 mb-1 font-medium">
-                        {searchQuery ? "ไม่พบเอกสารที่ค้นหา" : "ยังไม่มีเอกสาร"}
+                        {searchQuery ? t("kb.noResults") : t("kb.empty")}
                     </p>
                     <p className="text-xs text-steel-400">
-                        {searchQuery ? "ลองค้นหาด้วยคำอื่น" : "Drag and drop a file to upload or select a file to view"}
+                        {searchQuery ? t("kb.tryOther") : t("kb.dragDrop")}
                     </p>
                     {!searchQuery && (
                         <button
                             onClick={() => fileInputRef.current?.click()}
                             className="mt-4 text-sm text-brand-600 hover:text-brand-700 font-medium cursor-pointer"
                         >
-                            เลือกไฟล์
+                            {t("kb.selectFile")}
                         </button>
                     )}
                 </div>
@@ -298,9 +300,9 @@ export default function KnowledgeBasePage() {
                                                     : ""}
                                         </p>
                                         <div className="flex items-center gap-3 mt-2">
-                                            <StatusBadge status={doc.status} />
+                                            <StatusBadge status={doc.status} t={t} />
                                             <span className="text-[11px] text-steel-400">
-                                                Update ล่าสุด {timeAgo(doc.created_at)}
+                                                {t("kb.lastUpdate")} {timeAgo(doc.created_at, t)}
                                             </span>
                                         </div>
                                     </div>
@@ -314,20 +316,20 @@ export default function KnowledgeBasePage() {
                                                 onClick={() => handleDelete(doc.id)}
                                                 className="text-xs text-red-600 font-medium hover:text-red-700 cursor-pointer"
                                             >
-                                                ยืนยันลบ
+                                                {t("common.confirmDelete")}
                                             </button>
                                             <button
                                                 onClick={() => setDeleteConfirm(null)}
                                                 className="text-xs text-steel-400 hover:text-steel-600 cursor-pointer"
                                             >
-                                                ยกเลิก
+                                                {t("common.cancel")}
                                             </button>
                                         </div>
                                     ) : (
                                         <button
                                             onClick={() => setDeleteConfirm(doc.id)}
                                             className="opacity-0 group-hover:opacity-100 text-steel-300 hover:text-red-500 transition-all cursor-pointer p-1"
-                                            title="ลบเอกสาร"
+                                            title={t("kb.deleteDoc")}
                                         >
                                             <TrashIcon />
                                         </button>
@@ -340,7 +342,7 @@ export default function KnowledgeBasePage() {
                     {/* Drop zone indicator */}
                     {dragOver && (
                         <div className="flex items-center justify-center py-8 border-2 border-dashed border-brand-400 rounded-2xl bg-brand-50 transition-colors">
-                            <p className="text-sm text-brand-600 font-medium">วางไฟล์ที่นี่เพื่ออัปโหลด</p>
+                            <p className="text-sm text-brand-600 font-medium">{t("kb.dropHere")}</p>
                         </div>
                     )}
                 </div>
@@ -354,8 +356,8 @@ export default function KnowledgeBasePage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        <p className="text-sm font-medium text-steel-800">กำลังอัปโหลดและประมวลผล...</p>
-                        <p className="text-xs text-steel-400">อาจใช้เวลาสักครู่ในการ chunk และ embed</p>
+                        <p className="text-sm font-medium text-steel-800">{t("kb.uploadProcessing")}</p>
+                        <p className="text-xs text-steel-400">{t("kb.uploadProcessingNote")}</p>
                     </div>
                 </div>
             )}

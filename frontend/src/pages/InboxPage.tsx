@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { inboxApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
+import { useT } from "../i18n";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -69,15 +70,15 @@ function platformIcon(source: string): string {
 function statusConfig(status: string) {
     switch (status) {
         case "active":
-            return { label: "Active", className: "bg-emerald-50 text-emerald-600", dot: "bg-emerald-500" };
+            return { labelKey: "inbox.statusActive", className: "bg-emerald-50 text-emerald-600", dot: "bg-emerald-500" };
         case "human_takeover":
-            return { label: "รับเรื่อง", className: "bg-amber-50 text-amber-600", dot: "bg-amber-500" };
+            return { labelKey: "inbox.statusTakeover", className: "bg-amber-50 text-amber-600", dot: "bg-amber-500" };
         case "helped":
-            return { label: "ช่วยเหลือเรียบร้อย", className: "bg-blue-50 text-blue-600", dot: "bg-blue-500" };
+            return { labelKey: "inbox.statusHelped", className: "bg-blue-50 text-blue-600", dot: "bg-blue-500" };
         case "resolved":
-            return { label: "ปิดแล้ว", className: "bg-steel-100 text-steel-500", dot: "bg-steel-400" };
+            return { labelKey: "inbox.statusResolved", className: "bg-steel-100 text-steel-500", dot: "bg-steel-400" };
         default:
-            return { label: status, className: "bg-steel-100 text-steel-500", dot: "bg-steel-400" };
+            return { labelKey: status, className: "bg-steel-100 text-steel-500", dot: "bg-steel-400" };
     }
 }
 
@@ -98,6 +99,7 @@ function timeAgo(dateStr: string | null): string {
 // ── Component ───────────────────────────────────────────────────
 
 export default function InboxPage() {
+    const t = useT();
     const [sessions, setSessions] = useState<Session[]>([]);
     const [messages, setMessages] = useState<Message[]>([]);
     const [selectedSession, setSelectedSession] = useState<Session | null>(null);
@@ -278,7 +280,7 @@ export default function InboxPage() {
                         </span>
                         <input
                             type="text"
-                            placeholder="ค้นหาเซสชัน..."
+                            placeholder={t("inbox.searchPlaceholder")}
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-9 pr-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-xs placeholder:text-steel-400 focus:outline-none focus:border-brand-400 transition-all"
@@ -296,7 +298,7 @@ export default function InboxPage() {
                         </div>
                     ) : filtered.length === 0 ? (
                         <div className="p-6 text-center text-xs text-steel-400">
-                            {searchQuery ? "ไม่พบเซสชัน" : "ยังไม่มีแชท"}
+                            {searchQuery ? t("inbox.noResults") : t("inbox.empty")}
                         </div>
                     ) : (
                         filtered.map((session) => {
@@ -323,7 +325,7 @@ export default function InboxPage() {
                                     <div className="flex items-center gap-2">
                                         <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${sc.className}`}>
                                             <span className={`w-1 h-1 rounded-full ${sc.dot}`} />
-                                            {sc.label}
+                                            {t(sc.labelKey)}
                                         </span>
                                         <span className="text-[10px] text-steel-400 capitalize">{session.platform_source}</span>
                                     </div>
@@ -340,7 +342,7 @@ export default function InboxPage() {
                     <div className="flex items-center justify-center h-full text-steel-400">
                         <div className="text-center">
                             <div className="text-4xl mb-3">💬</div>
-                            <p className="text-sm">เลือกเซสชันจากด้านซ้ายเพื่อดูข้อความ</p>
+                            <p className="text-sm">{t("inbox.selectSession")}</p>
                         </div>
                     </div>
                 ) : (
@@ -359,7 +361,7 @@ export default function InboxPage() {
                                 </div>
                                 <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-2.5 py-1 rounded-full ${statusConfig(selectedSession.status).className}`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${statusConfig(selectedSession.status).dot}`} />
-                                    {statusConfig(selectedSession.status).label}
+                                    {t(statusConfig(selectedSession.status).labelKey)}
                                 </span>
                             </div>
 
@@ -370,7 +372,7 @@ export default function InboxPage() {
                                         onClick={() => handleStatusChange("human_takeover")}
                                         className="px-3 py-1.5 bg-amber-50 text-amber-700 text-xs font-medium rounded-lg hover:bg-amber-100 transition-colors cursor-pointer"
                                     >
-                                        🙋 รับเรื่อง
+                                        {t("inbox.takeover")}
                                     </button>
                                 )}
                                 {selectedSession.status === "human_takeover" && (
@@ -378,7 +380,7 @@ export default function InboxPage() {
                                         onClick={() => handleStatusChange("active")}
                                         className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer"
                                     >
-                                        🤖 คืนร่างให้ AI
+                                        {t("inbox.returnToAI")}
                                     </button>
                                 )}
                                 {selectedSession.status !== "resolved" && selectedSession.status !== "helped" && (
@@ -386,7 +388,7 @@ export default function InboxPage() {
                                         onClick={() => handleStatusChange("helped")}
                                         className="px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-medium rounded-lg hover:bg-blue-100 transition-colors cursor-pointer"
                                     >
-                                        ✓ ช่วยเหลือเรียบร้อย
+                                        {t("inbox.markHelped")}
                                     </button>
                                 )}
                                 {selectedSession.status === "helped" && (
@@ -394,7 +396,7 @@ export default function InboxPage() {
                                         onClick={() => handleStatusChange("active")}
                                         className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer"
                                     >
-                                        🔄 ยังต้องช่วยเหลือ
+                                        {t("inbox.needMoreHelp")}
                                     </button>
                                 )}
                                 {selectedSession.status === "resolved" && (
@@ -402,7 +404,7 @@ export default function InboxPage() {
                                         onClick={() => handleStatusChange("active")}
                                         className="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-medium rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer"
                                     >
-                                        🔄 เปิดใหม่
+                                        {t("inbox.reopen")}
                                     </button>
                                 )}
                             </div>
@@ -418,7 +420,7 @@ export default function InboxPage() {
                                     </svg>
                                 </div>
                             ) : messages.length === 0 ? (
-                                <div className="text-center py-12 text-xs text-steel-400">ไม่มีข้อความ</div>
+                                <div className="text-center py-12 text-xs text-steel-400">{t("inbox.noMessages")}</div>
                             ) : (
                                 <div className="space-y-4">
                                     {messages.map((msg) => {
@@ -463,21 +465,21 @@ export default function InboxPage() {
                                             >
                                                 {!isRight && (
                                                     <p className="text-[9px] font-semibold text-steel-400 mb-1">
-                                                        {msg.role === "assistant" ? "AI (SUNDAE)" : "ลูกค้า"}
+                                                        {msg.role === "assistant" ? t("inbox.aiLabel") : t("inbox.customerLabel")}
                                                     </p>
                                                 )}
                                                 {msg.content}
                                                 {/* Source References */}
                                                 {msg.role === "assistant" && msg.metadata?.sources && msg.metadata.sources.length > 0 && (
                                                     <div className="mt-2 pt-2 border-t border-steel-200/50">
-                                                        <p className="text-[9px] font-medium text-steel-400 mb-1">อ้างอิงจากเอกสาร</p>
+                                                        <p className="text-[9px] font-medium text-steel-400 mb-1">{t("inbox.sourcesLabel")}</p>
                                                         <div className="flex flex-wrap gap-1">
                                                             {msg.metadata.sources.map((src, i) => {
                                                                 const docLabel = src.document_name ?? `${src.document_id.slice(0, 8)}…`;
                                                                 const pageLabel = src.page_start != null
                                                                     ? src.page_start === src.page_end || src.page_end == null
-                                                                        ? `หน้า ${src.page_start}`
-                                                                        : `หน้า ${src.page_start}–${src.page_end}`
+                                                                        ? `${t("inbox.page")} ${src.page_start}`
+                                                                        : `${t("inbox.page")} ${src.page_start}–${src.page_end}`
                                                                     : null;
                                                                 return (
                                                                     <span
@@ -527,7 +529,7 @@ export default function InboxPage() {
                                             el.style.height = Math.min(el.scrollHeight, 120) + "px";
                                         }}
                                         onKeyDown={handleReplyKeyDown}
-                                        placeholder="พิมพ์ข้อความตอบกลับ..."
+                                        placeholder={t("inbox.replyPlaceholder")}
                                         disabled={sendingReply}
                                         rows={1}
                                         className="flex-1 bg-transparent text-sm text-steel-800 placeholder:text-steel-400 resize-none outline-none max-h-[120px] py-1 leading-relaxed disabled:opacity-50"
@@ -543,7 +545,7 @@ export default function InboxPage() {
                                     </button>
                                 </div>
                                 <p className="text-[10px] text-steel-400 mt-1.5 text-center">
-                                    Enter เพื่อส่ง · Shift+Enter ขึ้นบรรทัดใหม่
+                                    {t("inbox.replyHint")}
                                 </p>
                             </div>
                         )}

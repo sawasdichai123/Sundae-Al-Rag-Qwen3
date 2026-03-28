@@ -15,10 +15,12 @@ import { useState, useEffect, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "../api/supabaseClient";
 import Spinner from "../components/Spinner";
+import { useT } from "../i18n";
 
 type PageState = "loading" | "ready" | "expired" | "success";
 
 export default function ResetPasswordPage() {
+    const t = useT();
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [loading, setLoading] = useState(false);
@@ -45,8 +47,8 @@ export default function ResetPasswordPage() {
                     setPageState("ready");
                 } else {
                     const msg = errorCode === "otp_expired" || errorDesc?.includes("expired")
-                        ? "ลิงก์รีเซ็ตรหัสผ่านหมดอายุแล้ว กรุณาขอลิงก์ใหม่"
-                        : "ลิงก์ไม่ถูกต้องหรือถูกใช้งานไปแล้ว กรุณาขอลิงก์ใหม่";
+                        ? t("resetPassword.linkExpired")
+                        : t("resetPassword.linkInvalid");
                     setError(msg);
                     setPageState("expired");
                 }
@@ -99,7 +101,7 @@ export default function ResetPasswordPage() {
             if (resolved) return;
             resolved = true;
             console.log("[ResetPassword] Timeout — no recovery session found");
-            setError("ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่");
+            setError(t("resetPassword.sessionExpired"));
             setPageState("expired");
         }, 10000);
 
@@ -114,11 +116,11 @@ export default function ResetPasswordPage() {
         if (!password.trim() || !confirmPassword.trim()) return;
 
         if (password !== confirmPassword) {
-            setError("รหัสผ่านไม่ตรงกัน กรุณากรอกใหม่");
+            setError(t("resetPassword.mismatch"));
             return;
         }
         if (password.length < 6) {
-            setError("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
+            setError(t("resetPassword.tooShort"));
             return;
         }
 
@@ -139,10 +141,10 @@ export default function ResetPasswordPage() {
         if (err) {
             const msg = err.message;
             if (msg === "session_timeout" || msg.includes("session")) {
-                setError("ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่");
+                setError(t("resetPassword.sessionExpired"));
                 setPageState("expired");
             } else if (msg.includes("same password")) {
-                setError("รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม");
+                setError(t("resetPassword.samePassword"));
             } else {
                 console.error("[ResetPassword] updateUser error:", msg);
                 setError(`ไม่สามารถเปลี่ยนรหัสผ่านได้: ${msg}`);
@@ -165,7 +167,7 @@ export default function ResetPasswordPage() {
                     S
                 </div>
                 <div>
-                    <h2 className="text-lg font-bold text-steel-900">ตั้งรหัสผ่านใหม่</h2>
+                    <h2 className="text-lg font-bold text-steel-900">{t("resetPassword.title")}</h2>
                     <p className="text-xs text-steel-400">SUNDAE Admin Dashboard</p>
                 </div>
             </div>
@@ -173,24 +175,24 @@ export default function ResetPasswordPage() {
             {pageState === "loading" ? (
                 /* ── Loading State — waiting for recovery session ── */
                 <div className="flex items-center justify-center gap-2 py-12 text-steel-400">
-                    <Spinner /> <span className="text-sm">กำลังตรวจสอบลิงก์...</span>
+                    <Spinner /> <span className="text-sm">{t("resetPassword.verifying")}</span>
                 </div>
             ) : pageState === "success" ? (
                 /* ── Success State ─────────────────────────────── */
                 <div className="space-y-4">
                     <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
                         <p className="text-sm text-emerald-700 font-medium mb-1">
-                            เปลี่ยนรหัสผ่านสำเร็จ
+                            {t("resetPassword.success")}
                         </p>
                         <p className="text-xs text-emerald-600">
-                            กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่ของคุณ
+                            {t("resetPassword.successDesc")}
                         </p>
                     </div>
                     <Link
                         to="/login"
                         className="block w-full text-center bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors shadow-md shadow-brand-200"
                     >
-                        ไปหน้าเข้าสู่ระบบ
+                        {t("resetPassword.goToLogin")}
                     </Link>
                 </div>
             ) : pageState === "expired" ? (
@@ -198,30 +200,30 @@ export default function ResetPasswordPage() {
                 <div className="space-y-4">
                     <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
                         <p className="text-sm text-red-700 font-medium mb-1">
-                            {error || "ลิงก์หมดอายุหรือไม่ถูกต้อง กรุณาขอลิงก์ใหม่"}
+                            {error || t("resetPassword.expired")}
                         </p>
                         <p className="text-xs text-red-600">
-                            ลิงก์รีเซ็ตรหัสผ่านมีอายุจำกัด กรุณาขอลิงก์ใหม่แล้วกดลิงก์ทันที
+                            {t("resetPassword.expiredNote")}
                         </p>
                     </div>
                     <Link
                         to="/forgot-password"
                         className="block w-full text-center bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors shadow-md shadow-brand-200"
                     >
-                        ขอลิงก์รีเซ็ตใหม่
+                        {t("resetPassword.requestNew")}
                     </Link>
                     <Link
                         to="/login"
                         className="block text-center text-sm text-steel-400 hover:text-brand-500 transition-colors"
                     >
-                        กลับไปหน้าเข้าสู่ระบบ
+                        {t("forgotPassword.backToLogin")}
                     </Link>
                 </div>
             ) : (
                 /* ── Form State ─────────────────────────────────── */
                 <>
                     <p className="text-sm text-steel-500 mb-5">
-                        กรอกรหัสผ่านใหม่ที่ต้องการใช้งาน (อย่างน้อย 6 ตัวอักษร)
+                        {t("resetPassword.desc")}
                     </p>
 
                     {error && (
@@ -235,14 +237,14 @@ export default function ResetPasswordPage() {
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div>
                             <label htmlFor="new-password" className="block text-xs font-medium text-steel-600 mb-1.5">
-                                รหัสผ่านใหม่
+                                {t("resetPassword.newPassword")}
                             </label>
                             <input
                                 id="new-password"
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="อย่างน้อย 6 ตัวอักษร"
+                                placeholder={t("resetPassword.min6")}
                                 required
                                 minLength={6}
                                 autoComplete="new-password"
@@ -253,14 +255,14 @@ export default function ResetPasswordPage() {
                         </div>
                         <div>
                             <label htmlFor="confirm-password" className="block text-xs font-medium text-steel-600 mb-1.5">
-                                ยืนยันรหัสผ่านใหม่
+                                {t("resetPassword.confirmPassword")}
                             </label>
                             <input
                                 id="confirm-password"
                                 type="password"
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                placeholder="กรอกรหัสผ่านอีกครั้ง"
+                                placeholder={t("resetPassword.confirmPlaceholder")}
                                 required
                                 minLength={6}
                                 autoComplete="new-password"
@@ -274,9 +276,9 @@ export default function ResetPasswordPage() {
                             className="w-full bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors cursor-pointer shadow-md shadow-brand-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                         >
                             {loading ? (
-                                <><Spinner /> กำลังเปลี่ยนรหัสผ่าน...</>
+                                <><Spinner /> {t("resetPassword.changing")}</>
                             ) : (
-                                "ตั้งรหัสผ่านใหม่"
+                                t("resetPassword.submit")
                             )}
                         </button>
                     </form>

@@ -15,10 +15,12 @@ import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import type { OrgMember } from "../types";
 import Spinner from "../components/Spinner";
+import { useT } from "../i18n";
 
 // ── Member Management Section ──────────────────────────────────
 
 function MemberManagement({ orgId }: { orgId: string }) {
+    const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
     const isOrgOwner = useOrgStore(selectIsOrgOwner);
@@ -50,10 +52,10 @@ function MemberManagement({ orgId }: { orgId: string }) {
         setInviting(true);
         try {
             await orgApi.invite(orgId, inviteEmail.trim());
-            toast("success", `ส่งคำเชิญไปที่ ${inviteEmail.trim()} แล้ว`);
+            toast("success", t("org.inviteSuccess").replace("{email}", inviteEmail.trim()));
             setInviteEmail("");
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ส่งคำเชิญไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.inviteFailed");
             toast("error", msg);
         } finally {
             setInviting(false);
@@ -62,15 +64,15 @@ function MemberManagement({ orgId }: { orgId: string }) {
     };
 
     const handleTransfer = async (userId: string, name: string) => {
-        if (!confirm(`โอนความเป็นเจ้าของให้ ${name}? คุณจะกลายเป็นสมาชิกปกติ`)) return;
+        if (!confirm(t("org.transferConfirm").replace("{name}", name))) return;
         setTransferringId(userId);
         try {
             await orgApi.transferOwnership(orgId, userId);
-            toast("success", `โอนความเป็นเจ้าของให้ ${name} สำเร็จ`);
+            toast("success", t("org.transferSuccess").replace("{name}", name));
             await fetchOrgs();
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "โอนไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.transferFailed");
             toast("error", msg);
         } finally {
             setTransferringId(null);
@@ -78,14 +80,14 @@ function MemberManagement({ orgId }: { orgId: string }) {
     };
 
     const handleRemove = async (userId: string, name: string) => {
-        if (!confirm(`ลบ ${name} ออกจากองค์กร?`)) return;
+        if (!confirm(t("org.removeConfirm").replace("{name}", name))) return;
         setRemovingId(userId);
         try {
             await orgApi.removeMember(orgId, userId);
-            toast("success", "ลบสมาชิกสำเร็จ");
+            toast("success", t("org.removeSuccess"));
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ลบสมาชิกไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.removeFailed");
             toast("error", msg);
         } finally {
             setRemovingId(null);
@@ -96,14 +98,14 @@ function MemberManagement({ orgId }: { orgId: string }) {
         <div className="bg-white rounded-2xl border border-steel-100 p-6">
             <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-semibold text-steel-800">
-                    สมาชิกในองค์กร ({loading ? "..." : members.length})
+                    {t("org.members")} ({loading ? "..." : members.length})
                 </h2>
             </div>
 
             {/* Member List */}
             {loading ? (
                 <div className="flex items-center gap-2 text-steel-400 py-4">
-                    <Spinner /> <span className="text-sm">กำลังโหลด...</span>
+                    <Spinner /> <span className="text-sm">{t("common.loading")}</span>
                 </div>
             ) : (
                 <div className="divide-y divide-steel-100 mb-5">
@@ -114,7 +116,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-steel-800 truncate">
-                                    {[m.first_name, m.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
+                                    {[m.first_name, m.last_name].filter(Boolean).join(" ") || t("common.noName")}
                                 </p>
                                 <p className="text-xs text-steel-400 truncate">{m.email}</p>
                             </div>
@@ -127,7 +129,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                             ? "bg-violet-100 text-violet-700"
                                             : "bg-steel-100 text-steel-500"
                             }`}>
-                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role === "owner" ? "Admin ORG" : m.org_role}
+                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role === "owner" ? t("role.adminOrg") : m.org_role}
                             </span>
                             {canManage && m.org_role !== "owner" && m.role !== "admin" && m.role !== "support" && (
                                 <div className="flex items-center gap-2">
@@ -137,9 +139,9 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                             onClick={() => handleTransfer(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                             disabled={transferringId === m.user_id}
                                             className="text-xs text-brand-600 hover:text-brand-800 transition-colors cursor-pointer disabled:opacity-50"
-                                            title="โอนสิทธิ์ Admin ORG"
+                                            title={t("org.transferTitle")}
                                         >
-                                            {transferringId === m.user_id ? "..." : "โอน"}
+                                            {transferringId === m.user_id ? "..." : t("org.transfer")}
                                         </button>
                                     )}
                                     <button
@@ -147,7 +149,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                         disabled={removingId === m.user_id}
                                         className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
                                     >
-                                        {removingId === m.user_id ? "..." : "ลบ"}
+                                        {removingId === m.user_id ? "..." : t("common.delete")}
                                     </button>
                                 </div>
                             )}
@@ -158,7 +160,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
 
             {/* Invite Form */}
             <div className="border-t border-steel-100 pt-4">
-                <p className="text-xs font-medium text-steel-600 mb-2">เชิญสมาชิก</p>
+                <p className="text-xs font-medium text-steel-600 mb-2">{t("org.invite")}</p>
                 <form onSubmit={handleInvite} className="flex gap-2">
                     <input
                         type="email"
@@ -174,7 +176,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                         disabled={inviting || !inviteEmail.trim()}
                         className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                     >
-                        {inviting ? <><Spinner /> ส่ง...</> : "ส่งคำเชิญ"}
+                        {inviting ? <><Spinner /> {t("org.inviteSending")}</> : t("org.sendInvite")}
                     </button>
                 </form>
             </div>
@@ -185,6 +187,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
 // ── Page ────────────────────────────────────────────────────────
 
 export default function OrganizationPage() {
+    const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const isOwner = useOrgStore(selectIsOrgOwner);
@@ -207,11 +210,11 @@ export default function OrganizationPage() {
             setOrgName(data.name);
         } catch (err) {
             console.error("[Org] Load failed:", err);
-            toast("error", "โหลดข้อมูลองค์กรไม่สำเร็จ");
+            toast("error", t("org.loadFailed"));
         } finally {
             setLoading(false);
         }
-    }, [activeOrgId, toast]);
+    }, [activeOrgId, toast, t]);
 
     useEffect(() => {
         loadData();
@@ -223,10 +226,10 @@ export default function OrganizationPage() {
         setSaving(true);
         try {
             await orgApi.update(activeOrgId, orgName.trim());
-            toast("success", "อัปเดตชื่อองค์กรสำเร็จ");
+            toast("success", t("org.updateSuccess"));
             await fetchOrgs();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "อัปเดตไม่สำเร็จ";
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.updateFailed");
             toast("error", msg);
         } finally {
             setSaving(false);
@@ -236,7 +239,7 @@ export default function OrganizationPage() {
     if (!activeOrgId) {
         return (
             <div className="animate-fade-in text-center py-12">
-                <p className="text-steel-400">กรุณาเลือกองค์กรก่อน</p>
+                <p className="text-steel-400">{t("common.selectOrgFirst")}</p>
             </div>
         );
     }
@@ -245,10 +248,10 @@ export default function OrganizationPage() {
         <div className="animate-fade-in">
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-steel-900 tracking-tight">
-                    จัดการองค์กร
+                    {t("org.title")}
                 </h1>
                 <p className="text-sm text-steel-500 mt-1">
-                    ตั้งค่าองค์กรและจัดการสมาชิก
+                    {t("org.desc")}
                 </p>
             </div>
 
@@ -262,7 +265,7 @@ export default function OrganizationPage() {
             {/* 1. Org Settings */}
             {!loading && canManage && (
                 <div className="bg-white rounded-2xl border border-steel-100 p-6 mb-6">
-                    <h2 className="text-sm font-semibold text-steel-800 mb-4">ตั้งค่าองค์กร</h2>
+                    <h2 className="text-sm font-semibold text-steel-800 mb-4">{t("org.settings")}</h2>
                     <form onSubmit={handleUpdateName} className="flex gap-3">
                         <input
                             type="text"
@@ -276,7 +279,7 @@ export default function OrganizationPage() {
                             disabled={saving || !orgName.trim()}
                             className="px-5 py-2.5 bg-brand-400 text-steel-900 text-sm font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
                         >
-                            {saving ? <Spinner /> : "บันทึก"}
+                            {saving ? <Spinner /> : t("common.save")}
                         </button>
                     </form>
                 </div>

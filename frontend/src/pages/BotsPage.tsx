@@ -15,6 +15,7 @@ import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Bot, Document } from "../types";
+import { useT } from "../i18n";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ function BotAvatar({ name: _name }: { name: string }) {
 type ViewMode = "list" | "create" | "edit";
 
 export default function BotsPage() {
+    const t = useT();
     const [bots, setBots] = useState<Bot[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
@@ -150,7 +152,7 @@ export default function BotsPage() {
             });
         } catch (err) {
             console.error("[Bots] Failed to toggle document link:", err);
-            toast("error", "เชื่อมต่อเอกสารไม่สำเร็จ");
+            toast("error", t("bots.linkFailed"));
         } finally {
             setLinkingDocId(null);
         }
@@ -214,7 +216,7 @@ export default function BotsPage() {
             goBack();
         } catch (err) {
             console.error("[Bots] Save failed:", err);
-            toast("error", "บันทึกไม่สำเร็จ กรุณาลองอีกครั้ง");
+            toast("error", t("bots.saveFailed"));
         } finally {
             setSaving(false);
         }
@@ -229,7 +231,7 @@ export default function BotsPage() {
             await loadBots();
         } catch (err) {
             console.error("[Bots] Delete failed:", err);
-            toast("error", "ลบไม่สำเร็จ กรุณาลองอีกครั้ง");
+            toast("error", t("bots.deleteFailed"));
         }
     };
 
@@ -247,7 +249,7 @@ export default function BotsPage() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-steel-100 flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-steel-900">เลือกเอกสารเชื่อมต่อกับ Bot</h3>
+                    <h3 className="text-sm font-bold text-steel-900">{t("bots.selectDocs")}</h3>
                     <button
                         onClick={() => setShowKnowledgeModal(false)}
                         className="text-steel-400 hover:text-steel-800 transition-colors cursor-pointer text-lg"
@@ -268,8 +270,8 @@ export default function BotsPage() {
                     ) : allDocuments.length === 0 ? (
                         <div className="text-center py-12">
                             <div className="text-3xl mb-3">📄</div>
-                            <p className="text-sm text-steel-500">ยังไม่มีเอกสาร</p>
-                            <p className="text-xs text-steel-400 mt-1">อัปโหลด PDF ใน Knowledge Base ก่อน</p>
+                            <p className="text-sm text-steel-500">{t("bots.noDocs")}</p>
+                            <p className="text-xs text-steel-400 mt-1">{t("bots.uploadFirst")}</p>
                         </div>
                     ) : (
                         <div className="space-y-2">
@@ -316,7 +318,7 @@ export default function BotsPage() {
                                                             : doc.status === "error" ? "bg-red-50 text-red-600"
                                                                 : "bg-steel-100 text-steel-500"
                                                         }`}>
-                                                        {doc.status === "ready" ? "พร้อมใช้" : doc.status === "processing" ? "กำลังประมวลผล" : doc.status === "error" ? "ข้อผิดพลาด" : doc.status}
+                                                        {doc.status === "ready" ? t("kb.statusReady") : doc.status === "processing" ? t("kb.statusProcessing") : doc.status === "error" ? t("kb.statusError") : doc.status}
                                                     </span>
                                                     {doc.file_size_bytes && (
                                                         <span className="text-[10px] text-steel-400">
@@ -324,10 +326,10 @@ export default function BotsPage() {
                                                         </span>
                                                     )}
                                                     {isLinkedToOther && (
-                                                        <span className="text-[10px] text-steel-400">เชื่อมกับ Bot อื่น</span>
+                                                        <span className="text-[10px] text-steel-400">{t("bots.linkedToOther")}</span>
                                                     )}
                                                     {isNotReady && !isLinkedToOther && (
-                                                        <span className="text-[10px] text-red-400">ใช้งานไม่ได้</span>
+                                                        <span className="text-[10px] text-red-400">{t("bots.notAvailable")}</span>
                                                     )}
                                                 </div>
                                             </div>
@@ -348,13 +350,13 @@ export default function BotsPage() {
                 {/* Footer */}
                 <div className="px-6 py-3 border-t border-steel-100 flex justify-between items-center">
                     <p className="text-xs text-steel-400">
-                        เลือกแล้ว {linkedDocIds.size} เอกสาร
+                        {t("bots.selectedCount").replace("{n}", String(linkedDocIds.size))}
                     </p>
                     <button
                         onClick={() => setShowKnowledgeModal(false)}
                         className="bg-brand-400 text-steel-900 px-5 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
                     >
-                        เสร็จสิ้น
+                        {t("bots.done")}
                     </button>
                 </div>
             </div>
@@ -374,7 +376,7 @@ export default function BotsPage() {
                     className="flex items-center gap-2 text-sm text-steel-500 hover:text-steel-800 transition-colors mb-6 cursor-pointer"
                 >
                     <BackIcon />
-                    <span>Back</span>
+                    <span>{t("bots.back")}</span>
                 </button>
 
                 {/* Bot Avatar + Name */}
@@ -385,22 +387,22 @@ export default function BotsPage() {
                             type="text"
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
-                            placeholder="ชื่อบอท"
+                            placeholder={t("bots.botName")}
                             className="text-xl font-bold text-steel-900 bg-transparent border-none outline-none placeholder:text-steel-300 w-full"
                         />
                         <p className="text-xs text-steel-400 mt-0.5">
-                            {editingBot ? `รหัส: ${editingBot.id.slice(0, 8)}...` : "รหัสโมเดล (สร้างอัตโนมัติ)"}
+                            {editingBot ? `${t("bots.botIdPrefix")} ${editingBot.id.slice(0, 8)}...` : t("bots.botIdAuto")}
                         </p>
                     </div>
                 </div>
 
                 {/* Description */}
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-steel-800 mb-2">คำอธิบาย</label>
+                    <label className="block text-sm font-bold text-steel-800 mb-2">{t("bots.description")}</label>
                     <textarea
                         value={formDescription}
                         onChange={(e) => setFormDescription(e.target.value)}
-                        placeholder="เพิ่มคำอธิบายสั้น ๆ สำหรับโมเดลที่ทำ"
+                        placeholder={t("bots.descriptionPlaceholder")}
                         rows={3}
                         className="w-full px-4 py-3 bg-white border border-steel-200 rounded-2xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all resize-none"
                     />
@@ -408,12 +410,12 @@ export default function BotsPage() {
 
                 {/* System Prompt */}
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-steel-800 mb-1">พารามิเตอร์ของบอท</label>
-                    <p className="text-xs text-steel-400 mb-2">ระบบพรอมต์</p>
+                    <label className="block text-sm font-bold text-steel-800 mb-1">{t("bots.parameters")}</label>
+                    <p className="text-xs text-steel-400 mb-2">{t("bots.systemPrompt")}</p>
                     <textarea
                         value={formPrompt}
                         onChange={(e) => setFormPrompt(e.target.value)}
-                        placeholder="เพิ่มคำอธิบายสั้น ๆ สำหรับโมเดลที่ทำ"
+                        placeholder={t("bots.descriptionPlaceholder")}
                         rows={6}
                         className="w-full px-4 py-3 bg-white border border-steel-200 rounded-2xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all resize-none"
                     />
@@ -422,8 +424,8 @@ export default function BotsPage() {
                 {/* Web Enabled Toggle */}
                 <div className="mb-6 flex items-center justify-between p-4 bg-white rounded-2xl border border-steel-200">
                     <div>
-                        <p className="text-sm font-bold text-steel-800">เปิดใช้ Web Chat</p>
-                        <p className="text-xs text-steel-400 mt-0.5">อนุญาตให้ใช้ bot ผ่าน Web Chat</p>
+                        <p className="text-sm font-bold text-steel-800">{t("bots.webChatEnabled")}</p>
+                        <p className="text-xs text-steel-400 mt-0.5">{t("bots.webChatEnabledDesc")}</p>
                     </div>
                     <button
                         onClick={() => setFormWebEnabled(!formWebEnabled)}
@@ -435,9 +437,9 @@ export default function BotsPage() {
 
                 {/* Knowledge Link */}
                 <div className="mb-6">
-                    <label className="block text-sm font-bold text-steel-800 mb-1">Knowledge Base</label>
+                    <label className="block text-sm font-bold text-steel-800 mb-1">{t("bots.knowledgeBase")}</label>
                     <p className="text-xs text-steel-400 mb-3">
-                        To connect to the knowledge base here, add information to the "Knowledge" workspace first.
+                        {t("bots.knowledgeBaseDesc")}
                     </p>
                     <button
                         onClick={() => {
@@ -445,12 +447,12 @@ export default function BotsPage() {
                                 loadDocuments(editingBot.id);
                                 setShowKnowledgeModal(true);
                             } else {
-                                toast("warning", "กรุณาสร้าง Bot ก่อน แล้วจึงเชื่อมต่อเอกสาร");
+                                toast("warning", t("bots.createBotFirst"));
                             }
                         }}
                         className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-4 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
                     >
-                        Select Knowledge Base
+                        {t("bots.selectKnowledge")}
                     </button>
 
                     {/* Linked documents chips */}
@@ -481,13 +483,13 @@ export default function BotsPage() {
                         disabled={saving || !formName.trim()}
                         className="bg-brand-400 text-steel-900 px-8 py-2.5 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50 shadow-sm"
                     >
-                        {saving ? "กำลังบันทึก..." : viewMode === "create" ? "สร้าง Bot" : "บันทึก"}
+                        {saving ? t("bots.saving") : viewMode === "create" ? t("bots.create") : t("common.save")}
                     </button>
                     <button
                         onClick={goBack}
                         className="px-6 py-2.5 text-steel-500 hover:text-steel-800 text-sm font-medium transition-colors cursor-pointer"
                     >
-                        ยกเลิก
+                        {t("common.cancel")}
                     </button>
                 </div>
             </div>
@@ -499,12 +501,12 @@ export default function BotsPage() {
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-steel-900">Bots</h1>
+                <h1 className="text-2xl font-bold text-steel-900">{t("bots.title")}</h1>
                 <button
                     onClick={openCreate}
                     className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-5 py-2.5 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer shadow-sm"
                 >
-                    Create bot
+                    {t("bots.createBot")}
                     <PlusIcon />
                 </button>
             </div>
@@ -516,7 +518,7 @@ export default function BotsPage() {
                 </span>
                 <input
                     type="text"
-                    placeholder="Search Models"
+                    placeholder={t("bots.searchPlaceholder")}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full max-w-md pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
@@ -531,7 +533,7 @@ export default function BotsPage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        <span className="text-sm">กำลังโหลด...</span>
+                        <span className="text-sm">{t("common.loading")}</span>
                     </div>
                 </div>
             )}
@@ -541,17 +543,17 @@ export default function BotsPage() {
                 <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-dashed border-steel-200">
                     <div className="text-4xl mb-4">🤖</div>
                     <p className="text-sm text-steel-500 font-medium mb-1">
-                        {searchQuery ? "ไม่พบ Bot ที่ค้นหา" : "ยังไม่มี Bot"}
+                        {searchQuery ? t("bots.noResults") : t("bots.empty")}
                     </p>
                     <p className="text-xs text-steel-400 mb-4">
-                        {searchQuery ? "ลองค้นหาด้วยชื่ออื่น" : "สร้าง Bot แรกของคุณเพื่อเริ่มใช้งาน"}
+                        {searchQuery ? t("bots.tryOther") : t("bots.createFirst")}
                     </p>
                     {!searchQuery && (
                         <button
                             onClick={openCreate}
                             className="text-sm text-brand-600 hover:text-brand-700 font-medium cursor-pointer"
                         >
-                            + สร้าง Bot ใหม่
+                            {t("bots.createNew")}
                         </button>
                     )}
                 </div>
@@ -572,7 +574,7 @@ export default function BotsPage() {
                                         <h3 className="text-sm font-bold text-steel-900">{bot.name}</h3>
                                         {!bot.is_active && (
                                             <span className="text-[10px] font-medium bg-steel-100 text-steel-400 px-2 py-0.5 rounded-full">
-                                                ปิดใช้งาน
+                                                {t("bots.disabled")}
                                             </span>
                                         )}
                                         {bot.is_web_enabled && (
@@ -582,7 +584,7 @@ export default function BotsPage() {
                                         )}
                                     </div>
                                     <p className="text-xs text-steel-500 line-clamp-2">
-                                        {bot.system_prompt || bot.description || "ไม่มีคำอธิบาย"}
+                                        {bot.system_prompt || bot.description || t("bots.noDescription")}
                                     </p>
                                 </div>
 
@@ -594,20 +596,20 @@ export default function BotsPage() {
                                                 onClick={() => handleDelete(bot.id)}
                                                 className="text-xs text-red-600 font-medium hover:text-red-700 cursor-pointer"
                                             >
-                                                ยืนยันลบ
+                                                {t("common.confirmDelete")}
                                             </button>
                                             <button
                                                 onClick={() => setDeleteConfirm(null)}
                                                 className="text-xs text-steel-400 hover:text-steel-600 cursor-pointer"
                                             >
-                                                ยกเลิก
+                                                {t("common.cancel")}
                                             </button>
                                         </div>
                                     ) : (
                                         <button
                                             onClick={() => setDeleteConfirm(bot.id)}
                                             className="opacity-0 group-hover:opacity-100 text-steel-300 hover:text-red-500 transition-all cursor-pointer p-1"
-                                            title="ลบ Bot"
+                                            title={t("bots.deleteBot")}
                                         >
                                             <TrashIcon />
                                         </button>

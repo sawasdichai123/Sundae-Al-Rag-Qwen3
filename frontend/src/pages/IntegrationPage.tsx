@@ -12,6 +12,7 @@
 
 import { useState } from "react";
 import { useToastStore } from "../store/toastStore";
+import { useT } from "../i18n";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -96,21 +97,22 @@ function IntegrationCard({ icon, name, description, enabled, onToggle }: Integra
 // ── Component ───────────────────────────────────────────────────
 
 export default function IntegrationPage() {
+    const t = useT();
     const [lineEnabled, setLineEnabled] = useState(false);
     const [webEnabled, setWebEnabled] = useState(true);
     const toast = useToastStore((s) => s.addToast);
 
     const handleToggle = (name: string, setter: React.Dispatch<React.SetStateAction<boolean>>) => {
         setter((prev) => !prev);
-        toast("info", `${name}: ฟีเจอร์นี้ยังอยู่ระหว่างพัฒนา — การตั้งค่าจะยังไม่ถูกบันทึก`);
+        toast("info", `${name}: ${t("integration.devNotice")}`);
     };
 
     return (
         <div className="animate-fade-in">
             <div className="mb-8">
-                <h1 className="text-2xl font-bold text-steel-900">Integration</h1>
+                <h1 className="text-2xl font-bold text-steel-900">{t("integration.title")}</h1>
                 <p className="text-sm text-steel-500 mt-1">
-                    เชื่อมต่อช่องทางการสื่อสารเพื่อใช้งาน Bot
+                    {t("integration.desc")}
                 </p>
             </div>
 
@@ -118,7 +120,7 @@ export default function IntegrationPage() {
                 <IntegrationCard
                     icon={<LineIcon />}
                     name="LINE"
-                    description="Connect to LINE for Seamless Integration and Quick Communication"
+                    description={t("integration.lineDesc")}
                     enabled={lineEnabled}
                     onToggle={() => handleToggle("LINE", setLineEnabled)}
                 />
@@ -126,7 +128,7 @@ export default function IntegrationPage() {
                 <IntegrationCard
                     icon={<WebIcon />}
                     name="Website"
-                    description="Connect to Website for Seamless Integration and Quick Communication"
+                    description={t("integration.webDesc")}
                     enabled={webEnabled}
                     onToggle={() => handleToggle("Website", setWebEnabled)}
                 />

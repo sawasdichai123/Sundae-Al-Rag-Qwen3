@@ -11,12 +11,14 @@ import { Navigate, Link, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { supabase } from "../api/supabaseClient";
 import Spinner from "../components/Spinner";
+import { useT } from "../i18n";
 
 type Tab = "login" | "register";
 
 export default function LoginPage() {
     const { signIn, isAuthenticated, isLoading, authError, clearError } = useAuthStore();
     const [searchParams, setSearchParams] = useSearchParams();
+    const t = useT();
     const resetSuccess = searchParams.get("reset") === "success";
     const [tab, setTab] = useState<Tab>("login");
     const [email, setEmail] = useState("");
@@ -62,9 +64,9 @@ export default function LoginPage() {
 
         if (error) {
             const msg = error.message.includes("already registered") || error.message.includes("User already registered")
-                ? "อีเมลนี้มีผู้ใช้งานแล้ว กรุณาใช้อีเมลอื่น"
+                ? t("login.emailTaken")
                 : error.message.includes("Password should be")
-                    ? "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร"
+                    ? t("login.passwordTooShort")
                     : `❌ ${error.message}`;
             setRegisterMsg(msg);
             setRegisterLoading(false);
@@ -74,7 +76,7 @@ export default function LoginPage() {
         // user_profiles row ถูกสร้างอัตโนมัติโดย DB trigger (handle_new_auth_user)
         // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
 
-        setRegisterMsg("✅ สมัครสำเร็จ! กรุณาเข้าสู่ระบบด้านล่าง (รอ Support อนุมัติก่อนใช้งาน)");
+        setRegisterMsg(t("login.registerSuccess"));
         setRegisterLoading(false);
         setPassword("");
         // Auto-switch to login tab after 1.5s
@@ -90,7 +92,7 @@ export default function LoginPage() {
                 </div>
                 <div>
                     <h2 className="text-lg font-bold text-steel-900">
-                        {tab === "login" ? "เข้าสู่ระบบ" : "สมัครใช้งาน"}
+                        {tab === "login" ? t("login.signIn") : t("login.signUp")}
                     </h2>
                     <p className="text-xs text-steel-400">SUNDAE Admin Dashboard</p>
                 </div>
@@ -105,7 +107,7 @@ export default function LoginPage() {
                             : "text-steel-500 hover:text-steel-700"
                         }`}
                 >
-                    เข้าสู่ระบบ
+                    {t("login.signIn")}
                 </button>
                 <button
                     onClick={() => switchTab("register")}
@@ -114,14 +116,14 @@ export default function LoginPage() {
                             : "text-steel-500 hover:text-steel-700"
                         }`}
                 >
-                    สมัครใช้งาน
+                    {t("login.signUp")}
                 </button>
             </div>
 
             {/* Reset Password Success */}
             {resetSuccess && (
                 <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
-                    เปลี่ยนรหัสผ่านสำเร็จ กรุณาเข้าสู่ระบบด้วยรหัสผ่านใหม่
+                    {t("login.resetSuccess")}
                 </div>
             )}
 
@@ -146,7 +148,7 @@ export default function LoginPage() {
             {tab === "login" && (
                 <form onSubmit={handleLogin} className="space-y-4">
                     <div>
-                        <label htmlFor="login-email" className="block text-xs font-medium text-steel-600 mb-1.5">อีเมล</label>
+                        <label htmlFor="login-email" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.email")}</label>
                         <input
                             id="login-email" type="email" value={email}
                             onChange={(e) => setEmail(e.target.value)}
@@ -156,7 +158,7 @@ export default function LoginPage() {
                         />
                     </div>
                     <div>
-                        <label htmlFor="login-password" className="block text-xs font-medium text-steel-600 mb-1.5">รหัสผ่าน</label>
+                        <label htmlFor="login-password" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.password")}</label>
                         <input
                             id="login-password" type="password" value={password}
                             onChange={(e) => setPassword(e.target.value)}
@@ -166,7 +168,7 @@ export default function LoginPage() {
                         />
                         <div className="mt-1.5 text-right">
                             <Link to="/forgot-password" className="text-xs text-steel-400 hover:text-brand-500 transition-colors">
-                                ลืมรหัสผ่าน?
+                                {t("login.forgotPassword")}
                             </Link>
                         </div>
                     </div>
@@ -176,9 +178,9 @@ export default function LoginPage() {
                         className="w-full bg-brand-400 text-steel-900 py-3 rounded-xl font-bold text-sm hover:bg-brand-500 transition-colors cursor-pointer shadow-md shadow-brand-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {isLoading ? (
-                            <><Spinner /> กำลังเข้าสู่ระบบ...</>
+                            <><Spinner /> {t("login.signingIn")}</>
                         ) : (
-                            "เข้าสู่ระบบ"
+                            t("login.signIn")
                         )}
                     </button>
                 </form>
@@ -189,7 +191,7 @@ export default function LoginPage() {
                 <form onSubmit={handleRegister} className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label htmlFor="reg-firstname" className="block text-xs font-medium text-steel-600 mb-1.5">ชื่อ</label>
+                            <label htmlFor="reg-firstname" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.firstName")}</label>
                             <input
                                 id="reg-firstname" type="text" value={firstName}
                                 onChange={(e) => setFirstName(e.target.value)}
@@ -199,7 +201,7 @@ export default function LoginPage() {
                             />
                         </div>
                         <div>
-                            <label htmlFor="reg-lastname" className="block text-xs font-medium text-steel-600 mb-1.5">นามสกุล</label>
+                            <label htmlFor="reg-lastname" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.lastName")}</label>
                             <input
                                 id="reg-lastname" type="text" value={lastName}
                                 onChange={(e) => setLastName(e.target.value)}
@@ -210,7 +212,7 @@ export default function LoginPage() {
                         </div>
                     </div>
                     <div>
-                        <label htmlFor="reg-email" className="block text-xs font-medium text-steel-600 mb-1.5">อีเมล</label>
+                        <label htmlFor="reg-email" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.email")}</label>
                         <input
                             id="reg-email" type="email" value={email}
                             onChange={(e) => setEmail(e.target.value)}
@@ -220,7 +222,7 @@ export default function LoginPage() {
                         />
                     </div>
                     <div>
-                        <label htmlFor="reg-password" className="block text-xs font-medium text-steel-600 mb-1.5">รหัสผ่าน (อย่างน้อย 6 ตัว)</label>
+                        <label htmlFor="reg-password" className="block text-xs font-medium text-steel-600 mb-1.5">{t("login.passwordMin6")}</label>
                         <input
                             id="reg-password" type="password" value={password}
                             onChange={(e) => setPassword(e.target.value)}
@@ -236,13 +238,13 @@ export default function LoginPage() {
                         className="w-full bg-steel-800 text-white py-3 rounded-xl font-bold text-sm hover:bg-steel-700 transition-colors cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                         {registerLoading ? (
-                            <><Spinner /> กำลังสมัคร...</>
+                            <><Spinner /> {t("login.signingUp")}</>
                         ) : (
-                            "สมัครใช้งาน"
+                            t("login.signUp")
                         )}
                     </button>
                     <p className="text-[10px] text-steel-400 text-center">
-                        สมัครแล้วต้องรอ Support อนุมัติก่อนจึงจะใช้ฟีเจอร์ทั้งหมดได้
+                        {t("login.signUpNote")}
                     </p>
                 </form>
             )}
@@ -253,4 +255,3 @@ export default function LoginPage() {
         </div>
     );
 }
-
