@@ -2822,3 +2822,130 @@ const canConfirmDeletion = (userRole === "support" || userRole === "admin") && !
 | ไฟล์ | การเปลี่ยนแปลง |
 |------|---------------|
 | `frontend/src/pages/DangerZonePage.tsx` | เพิ่ม `isMainOrg` check, แสดงข้อความแทนปุ่มลบเมื่อเป็น org หลัก |
+
+---
+
+## 39. i18n — ระบบสลับภาษาไทย/อังกฤษ (TH/EN Language Toggle)
+
+### 39.1 Overview
+
+เพิ่มระบบ internationalization (i18n) ให้ทั้ง frontend — ผู้ใช้สามารถกดปุ่ม TH/EN เพื่อสลับภาษาได้ทุกหน้า ภาษาที่เลือกจะถูกจำไว้ใน localStorage เมื่อ refresh หน้าจะยังคงภาษาเดิม
+
+### 39.2 Approach — Custom Zustand + JSON (ไม่ใช้ react-i18next)
+
+ไม่ติดตั้ง library เพิ่ม — ใช้ Zustand store + JSON translation files + custom hook `useT()`
+
+```
+frontend/src/i18n/
+├── th.json      ← ~370 keys ข้อความภาษาไทย
+├── en.json      ← ~370 keys ข้อความภาษาอังกฤษ
+└── index.ts     ← Zustand locale store + useT() hook
+```
+
+### 39.3 Infrastructure
+
+#### `frontend/src/i18n/index.ts` — Zustand Store + Hook
+
+```typescript
+export const useLocaleStore = create<LocaleState>((set, get) => ({
+    locale: stored === "en" ? "en" : "th",  // default = th
+    setLocale: (l) => { localStorage.setItem(LOCALE_KEY, l); set({ locale: l }); },
+    toggleLocale: () => {
+        const next = get().locale === "th" ? "en" : "th";
+        localStorage.setItem(LOCALE_KEY, next);
+        set({ locale: next });
+    },
+}));
+
+export function useT() {
+    const locale = useLocaleStore((s) => s.locale);
+    const dict = translations[locale];
+    return (key: string): string => dict[key] ?? key;
+}
+```
+
+#### Translation Key Namespaces
+
+| Namespace | ตัวอย่าง Key | จำนวน Keys |
+|-----------|-------------|-----------|
+| `common.*` | `common.save`, `common.cancel`, `common.loading` | ~11 |
+| `login.*` | `login.title`, `login.email`, `login.password` | ~20 |
+| `forgotPassword.*` | `forgotPassword.title`, `forgotPassword.send` | ~10 |
+| `resetPassword.*` | `resetPassword.title`, `resetPassword.newPassword` | ~14 |
+| `dashboard.*` | `dashboard.totalDocs`, `dashboard.systemStatus` | ~18 |
+| `kb.*` | `kb.title`, `kb.upload`, `kb.search` | ~19 |
+| `bots.*` | `bots.title`, `bots.create`, `bots.editBot` | ~27 |
+| `inbox.*` | `inbox.title`, `inbox.search`, `inbox.noSessions` | ~24 |
+| `chat.*` | `chat.welcome`, `chat.placeholder`, `chat.sourcesLabel` | ~35 |
+| `approvals.*` | `approvals.title`, `approvals.approve` | ~10 |
+| `org.*` | `org.title`, `org.members`, `org.invite` | ~29 |
+| `profile.*` | `profile.title`, `profile.personalInfo` | ~30 |
+| `createOrg.*` | `createOrg.title`, `createOrg.name` | ~13 |
+| `dangerZone.*` | `dangerZone.title`, `dangerZone.deleteOrg` | ~7 |
+| `integration.*` | `integration.title`, `integration.lineWebhook` | ~9 |
+| `nav.*` | `nav.dashboard`, `nav.knowledgeBase` | ~11 |
+| `role.*` | `role.admin`, `role.support`, `role.adminOrg` | ~4 |
+| `layout.*` | `layout.collapse`, `layout.logout`, `layout.online` | ~5 |
+| `orgSwitcher.*` | `orgSwitcher.title`, `orgSwitcher.create` | ~3 |
+| `errorBoundary.*` | `errorBoundary.title`, `errorBoundary.retry` | ~3 |
+
+#### `frontend/src/components/LanguageToggle.tsx` — ปุ่มสลับ TH/EN
+
+ปุ่ม pill toggle ขนาดเล็ก — ใช้ใน 2 ที่:
+- **Header bar** (DashboardLayout) — ข้างๆ badge "Online"
+- **Auth pages** (AuthLayout) — มุมขวาบน
+
+### 39.4 วิธีใช้งาน
+
+```typescript
+import { useT } from "../i18n";
+
+const t = useT();
+<h1>{t("dashboard.totalDocs")}</h1>
+
+// Template variables
+toast("success", t("org.inviteSuccess").replace("{email}", email));
+
+// Child functions รับ t เป็น parameter
+function timeAgo(dateStr: string, t: (key: string) => string): string { ... }
+```
+
+### 39.5 ไฟล์ที่สร้างใหม่
+
+| ไฟล์ | หน้าที่ |
+|------|---------|
+| `frontend/src/i18n/th.json` | Thai translations (~370 keys) |
+| `frontend/src/i18n/en.json` | English translations (~370 keys) |
+| `frontend/src/i18n/index.ts` | Zustand locale store + `useT()` hook |
+| `frontend/src/components/LanguageToggle.tsx` | ปุ่ม pill toggle TH/EN |
+
+### 39.6 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม `LanguageToggle` ใน header, nav ใช้ `t(item.labelKey)`, role badges ใช้ `t("role.*")` |
+| `frontend/src/layouts/AuthLayout.tsx` | เพิ่ม `LanguageToggle` มุมขวาบน |
+| `frontend/src/pages/LoginPage.tsx` | hardcoded text → `t("login.*")` |
+| `frontend/src/pages/ForgotPasswordPage.tsx` | hardcoded text → `t("forgotPassword.*")` |
+| `frontend/src/pages/ResetPasswordPage.tsx` | hardcoded text → `t("resetPassword.*")` |
+| `frontend/src/pages/DashboardPage.tsx` | hardcoded text → `t("dashboard.*")` |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | hardcoded text → `t("kb.*")`, StatusBadge รับ `t` prop |
+| `frontend/src/pages/BotsPage.tsx` | hardcoded text → `t("bots.*")` |
+| `frontend/src/pages/InboxPage.tsx` | hardcoded text → `t("inbox.*")` |
+| `frontend/src/pages/WebChatPage.tsx` | hardcoded text → `t("chat.*")`, timeAgo รับ `t` param |
+| `frontend/src/pages/ApprovalsPage.tsx` | hardcoded text → `t("approvals.*")` |
+| `frontend/src/pages/OrganizationPage.tsx` | hardcoded text → `t("org.*")` |
+| `frontend/src/pages/ProfilePage.tsx` | hardcoded text → `t("profile.*")` |
+| `frontend/src/pages/CreateOrgPage.tsx` | hardcoded text → `t("createOrg.*")` |
+| `frontend/src/pages/DangerZonePage.tsx` | hardcoded text → `t("dangerZone.*")` |
+| `frontend/src/pages/IntegrationPage.tsx` | hardcoded text → `t("integration.*")` |
+| `frontend/src/components/OrgSwitcher.tsx` | hardcoded text → `t("orgSwitcher.*")` |
+| `frontend/src/components/ErrorBoundary.tsx` | hardcoded text → `t("errorBoundary.*")` |
+
+### 39.7 พฤติกรรม
+
+1. **Default**: ภาษาไทย (`th`)
+2. **กดปุ่ม TH/EN**: สลับภาษาทันทีทุกหน้า (sidebar, header, breadcrumb, เนื้อหา, toast)
+3. **Persist**: เก็บใน `localStorage` key `sundae_locale` — refresh แล้วยังคงภาษาเดิม
+4. **Sidebar**: nav labels สลับ (แดชบอร์ด ↔ Dashboard, คลังความรู้ ↔ Knowledge Base ฯลฯ)
+5. **Role badges**: แอดมิน ↔ Admin, ซัพพอร์ต ↔ Support, แอดมิน ORG ↔ Admin ORG, สมาชิก ↔ Member
