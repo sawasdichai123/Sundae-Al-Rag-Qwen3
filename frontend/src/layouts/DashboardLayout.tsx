@@ -109,6 +109,14 @@ function ProfileIcon() {
     );
 }
 
+function DangerZoneIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-red-500">
+            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+        </svg>
+    );
+}
+
 interface NavItem {
     to: string;
     label: string;
@@ -130,6 +138,7 @@ const allNavItems: NavItem[] = [
     { to: "/approvals", label: "Approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", label: "Web Chat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
     { to: "/profile", label: "Profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
+    { to: "/danger-zone", label: "Danger Zone", icon: DangerZoneIcon, visibleTo: ["user", "support", "admin"], requireOwner: true },
 ];
 
 const routeLabels: Record<string, string> = {
@@ -143,6 +152,7 @@ const routeLabels: Record<string, string> = {
     "/approvals": "Approvals",
     "/chat": "Web Chat",
     "/profile": "Profile",
+    "/danger-zone": "Danger Zone",
 };
 
 // ── Component ───────────────────────────────────────────────────
@@ -159,6 +169,7 @@ export default function DashboardLayout() {
     const hasOrgs = useOrgStore(selectHasOrgs);
     const orgsFetched = useOrgStore((s) => s.hasFetched);
     const fetchFailed = useOrgStore((s) => s.fetchFailed);
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
@@ -166,6 +177,18 @@ export default function DashboardLayout() {
     const isUnapproved = !!user && role === "user" && !user.is_approved;
 
     const currentLabel = routeLabels[location.pathname] || "Dashboard";
+
+    // B2B privacy: admin/support viewing external org → only Danger Zone
+    // External org = activeOrgId differs from user's home org (organization_id)
+    const isViewingExternalOrg = !!user?.organization_id && !!activeOrgId && activeOrgId !== user.organization_id;
+    const isStaffOnExternalOrg = (role === "admin" || role === "support") && isViewingExternalOrg;
+
+    // B2B privacy: redirect admin/support to Danger Zone when on external org
+    useEffect(() => {
+        if (isStaffOnExternalOrg && location.pathname !== "/danger-zone") {
+            navigate("/danger-zone", { replace: true });
+        }
+    }, [isStaffOnExternalOrg, location.pathname, navigate]);
 
     // Auto-redirect: approved user with no orgs → create org page
     // Wait for orgStore to finish initial fetch before deciding (prevents false redirect)
@@ -184,6 +207,8 @@ export default function DashboardLayout() {
         : allNavItems.filter((item) => {
             // Check platform role
             if (!item.visibleTo.includes(role)) return false;
+            // B2B privacy: staff on external org sees only Danger Zone
+            if (isStaffOnExternalOrg && item.to !== "/danger-zone") return false;
             // Check owner requirement
             if (item.requireOwner && !isOrgOwner && role !== "admin" && role !== "support") return false;
             return true;
@@ -202,7 +227,7 @@ export default function DashboardLayout() {
         : role === "support"
             ? { label: "Support", color: "bg-violet-100 text-violet-700" }
             : isOrgOwner
-                ? { label: "Owner", color: "bg-brand-100 text-brand-700" }
+                ? { label: "Admin ORG", color: "bg-brand-100 text-brand-700" }
                 : { label: "Member", color: "bg-steel-100 text-steel-600" };
 
     return (
@@ -275,7 +300,7 @@ export default function DashboardLayout() {
                             <div className="flex-1 min-w-0 animate-fade-in">
                                 <div className="flex items-center gap-2">
                                     <p className="text-xs font-medium text-white truncate">{user?.first_name ? `${user.first_name}${user.last_name ? ` ${user.last_name}` : ""}` : user?.email?.split("@")[0] || "—"}</p>
-                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${roleBadge.color}`}>
+                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0 ${roleBadge.color}`}>
                                         {roleBadge.label}
                                     </span>
                                 </div>

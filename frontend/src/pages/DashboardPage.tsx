@@ -6,15 +6,13 @@
  * - Support:               see pending user count instead of chat-today
  */
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore, selectIsSupport } from "../store/authStore";
-import { useOrgStore, selectIsOrgOwner } from "../store/orgStore";
-import { useToastStore } from "../store/toastStore";
-import { documentsApi, botsApi, inboxApi, orgApi } from "../api/endpoints";
+import { useOrgStore } from "../store/orgStore";
+import { documentsApi, botsApi, inboxApi } from "../api/endpoints";
 import apiClient from "../api/axios";
-import type { OrgMember } from "../types";
-import Spinner from "../components/Spinner";
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -95,162 +93,196 @@ function MetricCard({ icon, label, value, change, changeType, accentColor, disab
     );
 }
 
-// ── Member Management Section ──────────────────────────────────
+// ── Server Metrics (CPU / RAM / GPU graphs) ─────────────────────
 
-function MemberManagement({ orgId }: { orgId: string }) {
-    const toast = useToastStore((s) => s.addToast);
-    const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
-    const [members, setMembers] = useState<OrgMember[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [inviteEmail, setInviteEmail] = useState("");
-    const [inviting, setInviting] = useState(false);
-    const [removingId, setRemovingId] = useState<string | null>(null);
-    const [transferringId, setTransferringId] = useState<string | null>(null);
+interface MetricsSnapshot {
+    cpu_percent: number;
+    ram_percent: number;
+    ram_used_gb: number;
+    ram_total_gb: number;
+    disk_percent: number;
+    disk_used_gb: number;
+    disk_total_gb: number;
+    gpu: { id: number; name: string; load_percent: number; memory_used_mb: number; memory_total_mb: number; temperature: number }[];
+    net_sent_mb: number;
+    net_recv_mb: number;
+}
 
-    const loadMembers = useCallback(async () => {
+interface MetricsPoint {
+    time: string;
+    cpu: number;
+    ram: number;
+    gpu: number;
+    net_in: number;
+    net_out: number;
+}
+
+const MAX_POINTS = 20;
+
+function ServerMetrics() {
+    const [history, setHistory] = useState<MetricsPoint[]>([]);
+    const [latest, setLatest] = useState<MetricsSnapshot | null>(null);
+    const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const prevNetRef = useRef<{ sent: number; recv: number } | null>(null);
+
+    const fetchMetrics = useCallback(async () => {
         try {
-            const { data } = await orgApi.listMembers(orgId);
-            setMembers(data || []);
-        } catch (err) {
-            console.error("[Dashboard] Failed to load members:", err);
-        } finally {
-            setLoading(false);
-        }
-    }, [orgId]);
+            const { data } = await apiClient.get<MetricsSnapshot>("/health/metrics");
+            setLatest(data);
+            const now = new Date();
+            const timeLabel = `${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`;
 
-    useEffect(() => { loadMembers(); }, [loadMembers]);
+            // Calculate network speed (MB/s) from cumulative delta
+            let netIn = 0;
+            let netOut = 0;
+            if (prevNetRef.current) {
+                const dt = 3; // poll interval in seconds
+                netIn = Math.max(0, (data.net_recv_mb - prevNetRef.current.recv) / dt);
+                netOut = Math.max(0, (data.net_sent_mb - prevNetRef.current.sent) / dt);
+            }
+            prevNetRef.current = { sent: data.net_sent_mb, recv: data.net_recv_mb };
 
-    const handleInvite = async (e: FormEvent) => {
-        e.preventDefault();
-        if (!inviteEmail.trim()) return;
-        setInviting(true);
-        try {
-            await orgApi.invite(orgId, inviteEmail.trim());
-            toast("success", `ส่งคำเชิญไปที่ ${inviteEmail.trim()} แล้ว`);
-            setInviteEmail("");
-        } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ส่งคำเชิญไม่สำเร็จ";
-            toast("error", msg);
-        } finally {
-            setInviting(false);
+            const point: MetricsPoint = {
+                time: timeLabel,
+                cpu: data.cpu_percent,
+                ram: data.ram_percent,
+                gpu: data.gpu.length > 0 ? data.gpu[0].load_percent : 0,
+                net_in: Math.round(netIn * 100) / 100,
+                net_out: Math.round(netOut * 100) / 100,
+            };
+            setHistory((prev) => [...prev.slice(-(MAX_POINTS - 1)), point]);
+        } catch {
+            // silently ignore — dashboard stays showing last data
         }
-        // Refresh member list separately — don't let this fail affect the invite toast
-        loadMembers().catch(() => {});
-    };
+    }, []);
 
-    const handleTransfer = async (userId: string, name: string) => {
-        if (!confirm(`โอนความเป็นเจ้าของให้ ${name}? คุณจะกลายเป็นสมาชิกปกติ`)) return;
-        setTransferringId(userId);
-        try {
-            await orgApi.transferOwnership(orgId, userId);
-            toast("success", `โอนความเป็นเจ้าของให้ ${name} สำเร็จ`);
-            await fetchOrgs();
-            await loadMembers();
-        } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "โอนไม่สำเร็จ";
-            toast("error", msg);
-        } finally {
-            setTransferringId(null);
-        }
-    };
+    useEffect(() => {
+        fetchMetrics();
+        intervalRef.current = setInterval(fetchMetrics, 3000);
+        return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    }, [fetchMetrics]);
 
-    const handleRemove = async (userId: string, name: string) => {
-        if (!confirm(`ลบ ${name} ออกจากองค์กร?`)) return;
-        setRemovingId(userId);
-        try {
-            await orgApi.removeMember(orgId, userId);
-            toast("success", "ลบสมาชิกสำเร็จ");
-            await loadMembers();
-        } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "ลบสมาชิกไม่สำเร็จ";
-            toast("error", msg);
-        } finally {
-            setRemovingId(null);
-        }
-    };
+    if (!latest) {
+        return (
+            <div className="bg-white rounded-2xl border border-steel-100 p-6 mt-5">
+                <h2 className="text-base font-semibold text-steel-800 mb-4">Server Resources</h2>
+                <p className="text-sm text-steel-400 animate-pulse">กำลังโหลดข้อมูล...</p>
+            </div>
+        );
+    }
+
+    const hasGpu = latest.gpu.length > 0;
+
+    const charts: { key: string; label: string; value: string; dataKey: keyof MetricsPoint; color: string; bgColor: string }[] = [
+        { key: "cpu", label: "CPU", value: `${latest.cpu_percent.toFixed(1)}%`, dataKey: "cpu", color: "#3b82f6", bgColor: "#3b82f620" },
+        { key: "ram", label: "RAM", value: `${latest.ram_used_gb} / ${latest.ram_total_gb} GB (${latest.ram_percent.toFixed(1)}%)`, dataKey: "ram", color: "#8b5cf6", bgColor: "#8b5cf620" },
+    ];
+    if (hasGpu) {
+        const g = latest.gpu[0];
+        charts.push({ key: "gpu", label: `GPU — ${g.name}`, value: `${g.load_percent.toFixed(1)}% · ${g.temperature}°C`, dataKey: "gpu", color: "#f97316", bgColor: "#f9731620" });
+    }
 
     return (
-        <div className="bg-white rounded-2xl border border-steel-100 p-6 mt-6">
+        <div className="bg-white rounded-2xl border border-steel-100 p-6 mt-5">
             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-semibold text-steel-800">
-                    สมาชิกในองค์กร ({loading ? "..." : members.length})
-                </h2>
+                <h2 className="text-base font-semibold text-steel-800">Server Resources</h2>
+                <span className="text-[10px] text-steel-400">อัปเดตทุก 3 วินาที</span>
+            </div>
+            <div className={`grid gap-5 ${hasGpu ? "grid-cols-1 lg:grid-cols-3" : "grid-cols-1 lg:grid-cols-2"}`}>
+                {charts.map((c) => (
+                    <div key={c.key}>
+                        <div className="flex items-baseline justify-between mb-2">
+                            <p className="text-sm font-medium text-steel-700">{c.label}</p>
+                            <p className="text-xs font-semibold text-steel-500">{c.value}</p>
+                        </div>
+                        <div className="h-32">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={history} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                                    <defs>
+                                        <linearGradient id={`grad-${c.key}`} x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor={c.color} stopOpacity={0.3} />
+                                            <stop offset="100%" stopColor={c.color} stopOpacity={0.02} />
+                                        </linearGradient>
+                                    </defs>
+                                    <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                                    <Tooltip
+                                        contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                                        formatter={(val: unknown) => [`${Number(val).toFixed(1)}%`, c.label]}
+                                    />
+                                    <Area type="monotone" dataKey={c.dataKey} stroke={c.color} fill={`url(#grad-${c.key})`} strokeWidth={2} dot={false} isAnimationActive={false} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {/* VRAM bar (only if GPU exists) */}
+            {hasGpu && (() => {
+                const g = latest.gpu[0];
+                const vramPercent = g.memory_total_mb > 0 ? (g.memory_used_mb / g.memory_total_mb) * 100 : 0;
+                return (
+                    <div className="mt-4 pt-4 border-t border-steel-100">
+                        <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-medium text-steel-700">VRAM</p>
+                            <p className="text-xs font-semibold text-steel-500">{g.memory_used_mb} / {g.memory_total_mb} MB ({vramPercent.toFixed(1)}%)</p>
+                        </div>
+                        <div className="w-full h-2 bg-steel-100 rounded-full overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all duration-500 ${vramPercent > 90 ? "bg-red-500" : vramPercent > 70 ? "bg-amber-500" : "bg-orange-400"}`}
+                                style={{ width: `${vramPercent}%` }}
+                            />
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Disk usage bar */}
+            <div className={`mt-4 pt-4 border-t border-steel-100`}>
+                <div className="flex items-center justify-between mb-1">
+                    <p className="text-sm font-medium text-steel-700">Disk</p>
+                    <p className="text-xs font-semibold text-steel-500">{latest.disk_used_gb} / {latest.disk_total_gb} GB ({latest.disk_percent.toFixed(1)}%)</p>
+                </div>
+                <div className="w-full h-2 bg-steel-100 rounded-full overflow-hidden">
+                    <div
+                        className={`h-full rounded-full transition-all duration-500 ${latest.disk_percent > 90 ? "bg-red-500" : latest.disk_percent > 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                        style={{ width: `${latest.disk_percent}%` }}
+                    />
+                </div>
             </div>
 
-            {/* Member List */}
-            {loading ? (
-                <div className="flex items-center gap-2 text-steel-400 py-4">
-                    <Spinner /> <span className="text-sm">กำลังโหลด...</span>
+            {/* Network I/O chart */}
+            <div className="mt-4 pt-4 border-t border-steel-100">
+                <div className="flex items-baseline justify-between mb-2">
+                    <p className="text-sm font-medium text-steel-700">Network I/O</p>
+                    <p className="text-xs font-semibold text-steel-500">
+                        {history.length > 0 ? `↓ ${history[history.length - 1].net_in.toFixed(2)} MB/s  ↑ ${history[history.length - 1].net_out.toFixed(2)} MB/s` : "..."}
+                    </p>
                 </div>
-            ) : (
-                <div className="divide-y divide-steel-100 mb-5">
-                    {members.map((m) => (
-                        <div key={m.user_id} className="flex items-center gap-3 py-3">
-                            <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0">
-                                {([m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)?.[0]?.toUpperCase() || "?"}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-steel-800 truncate">
-                                    {[m.first_name, m.last_name].filter(Boolean).join(" ") || "ไม่ระบุชื่อ"}
-                                </p>
-                                <p className="text-xs text-steel-400 truncate">{m.email}</p>
-                            </div>
-                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                m.org_role === "owner"
-                                    ? "bg-brand-100 text-brand-700"
-                                    : m.role === "admin"
-                                        ? "bg-red-100 text-red-700"
-                                        : m.role === "support"
-                                            ? "bg-violet-100 text-violet-700"
-                                            : "bg-steel-100 text-steel-500"
-                            }`}>
-                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role}
-                            </span>
-                            {m.org_role !== "owner" && m.role !== "admin" && m.role !== "support" && (
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => handleTransfer(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
-                                        disabled={transferringId === m.user_id}
-                                        className="text-xs text-brand-600 hover:text-brand-800 transition-colors cursor-pointer disabled:opacity-50"
-                                        title="โอนความเป็นเจ้าของ"
-                                    >
-                                        {transferringId === m.user_id ? "..." : "โอน"}
-                                    </button>
-                                    <button
-                                        onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
-                                        disabled={removingId === m.user_id}
-                                        className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
-                                    >
-                                        {removingId === m.user_id ? "..." : "ลบ"}
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    ))}
+                <div className="h-32">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={history} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                            <defs>
+                                <linearGradient id="grad-net-in" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                                    <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
+                                </linearGradient>
+                                <linearGradient id="grad-net-out" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                                    <stop offset="100%" stopColor="#ef4444" stopOpacity={0.02} />
+                                </linearGradient>
+                            </defs>
+                            <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                            <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
+                            <Tooltip
+                                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }}
+                                formatter={(val: unknown, name: unknown) => [`${Number(val).toFixed(2)} MB/s`, String(name) === "net_in" ? "Download" : "Upload"]}
+                            />
+                            <Area type="monotone" dataKey="net_in" stroke="#10b981" fill="url(#grad-net-in)" strokeWidth={2} dot={false} isAnimationActive={false} />
+                            <Area type="monotone" dataKey="net_out" stroke="#ef4444" fill="url(#grad-net-out)" strokeWidth={2} dot={false} isAnimationActive={false} />
+                        </AreaChart>
+                    </ResponsiveContainer>
                 </div>
-            )}
-
-            {/* Invite Form */}
-            <div className="border-t border-steel-100 pt-4">
-                <p className="text-xs font-medium text-steel-600 mb-2">เชิญสมาชิก</p>
-                <form onSubmit={handleInvite} className="flex gap-2">
-                    <input
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        placeholder="email@example.com"
-                        required
-                        disabled={inviting}
-                        className="flex-1 px-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
-                    />
-                    <button
-                        type="submit"
-                        disabled={inviting || !inviteEmail.trim()}
-                        className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-                    >
-                        {inviting ? <><Spinner /> ส่ง...</> : "ส่งคำเชิญ"}
-                    </button>
-                </form>
             </div>
         </div>
     );
@@ -261,7 +293,6 @@ function MemberManagement({ orgId }: { orgId: string }) {
 export default function DashboardPage() {
     const user = useAuthStore((s) => s.user);
     const isSupport = useAuthStore(selectIsSupport);
-    const isOrgOwner = useOrgStore(selectIsOrgOwner);
     const navigate = useNavigate();
 
     const [docCount, setDocCount] = useState<number | null>(null);
@@ -423,10 +454,9 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* Member Management — owner, support, and admin */}
-            {(isOrgOwner || isSupport || user?.role === "admin") && activeOrg && (
-                <MemberManagement orgId={activeOrg.id} />
-            )}
+            {/* Server Resource Monitoring */}
+            <ServerMetrics />
+
         </div>
     );
 }

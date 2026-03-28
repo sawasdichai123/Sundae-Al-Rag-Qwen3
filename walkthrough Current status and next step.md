@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 25 มีนาคม 2569
+> **อัพเดทล่าสุด**: 28 มีนาคม 2569
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -85,7 +85,7 @@ backend/
 │   │   ├── bot.py            # Bot CRUD (owner-only writes)
 │   │   ├── approval.py       # Pending user approval (support/admin)
 │   │   ├── organization.py   # Org CRUD, members, invitations, deletion
-│   │   └── health.py
+│   │   └── health.py         # Health check + system metrics (CPU/RAM/GPU/Disk/Network)
 │   ├── services/
 │   │   ├── chunking.py       # Thai text splitter
 │   │   ├── ai_models.py      # Embedding + Reranker
@@ -107,6 +107,8 @@ backend/
 │   ├── 012_simplify_auth_trigger.sql
 │   ├── 013_add_page_columns.sql
 │   ├── 014_split_fullname.sql
+│   ├── 015_add_profile_pictures.sql
+│   ├── 016_org_single_owner.sql
 │   └── seed_accounts.sql
 └── requirements.txt
 ```
@@ -178,22 +180,23 @@ frontend/src/
 │   ├── Spinner.tsx          # Shared loading spinner
 │   └── ToastContainer.tsx   # Global toast UI
 ├── layouts/
-│   ├── DashboardLayout.tsx  # Sidebar + approval lockout
+│   ├── DashboardLayout.tsx  # Sidebar + approval lockout + B2B org privacy
 │   └── AuthLayout.tsx       # Login background
 ├── pages/
 │   ├── LoginPage.tsx           # Login + Registration tabs
 │   ├── ForgotPasswordPage.tsx  # ขอลิงก์ reset password ทาง email
 │   ├── ResetPasswordPage.tsx   # ตั้งรหัสผ่านใหม่จากลิงก์ email
-│   ├── DashboardPage.tsx       # 3 role-based states
+│   ├── DashboardPage.tsx       # Metrics + Quick Actions + System Status + Server Monitoring (graphs)
 │   ├── WebChatPage.tsx         # Chat interface + streaming + cancel button
 │   ├── ApprovalsPage.tsx       # Admin/Support approval list (backend API)
 │   ├── CreateOrgPage.tsx       # Create org + accept invitations (post-approval)
-│   ├── OrganizationPage.tsx    # Org settings, members, invites, deletion
+│   ├── OrganizationPage.tsx    # Org settings + member management (invite/remove/transfer)
+│   ├── DangerZonePage.tsx     # Organization deletion (request/confirm/cancel) + main org protection
 │   ├── KnowledgeBasePage.tsx
 │   ├── BotsPage.tsx
 │   ├── InboxPage.tsx           # Human handoff inbox (admin perspective)
 │   └── IntegrationPage.tsx
-├── App.tsx                  # AuthProvider + Routing
+├── App.tsx                  # AuthProvider + Routing + ExternalOrgGuard (B2B privacy)
 ├── index.css                # NT CI Design System
 └── main.tsx                 # Entry point
 ```
@@ -702,6 +705,8 @@ WHERE email = 'sawasdichai.amor@bumail.net' AND is_approved = false;
 | 012 | Simplify auth trigger | ✅ รันแล้ว | trigger ใหม่ไม่ auto-assign org (ดู Section 15) |
 | 013 | Page tracking + status constraint | ✅ รันแล้ว | เพิ่ม page_start/page_end, document_name ใน RPC, status 'deleted' |
 | 014 | Split full_name → first_name + last_name | ✅ รันแล้ว | แยกคอลัมน์ชื่อ + อัปเดต trigger (ดู Section 22) |
+| 015 | Profile pictures & org logos | ✅ รันแล้ว | เพิ่ม avatar_url, logo_url + Storage buckets + RLS (ดู Section 32) |
+| 016 | Org single owner index | ✅ รันแล้ว | Partial unique index — 1 owner ต่อ org (ดู Section 30) |
 
 ---
 
@@ -2621,3 +2626,199 @@ Uncomment block ใน `backend/app/routers/organization.py` (บรรทัด
 ### 32.5 Next Steps สำหรับ Profile Pictures
 - [ ] นำฟังก์ชันแบบเดียวกับ `ProfilePage.tsx` ไปใส่ให้เมนู **ตั้งค่าองค์กร** (Organization Settings) เพื่ออัปโหลด `logo_url`
 - [ ] เปิดใช้งาน (Run) Scripts `015_add_profile_pictures.sql` เข้าฐานข้อมูล Supabase ของวงปัจจุบัน.
+
+---
+
+## 33. Danger Zone — แยกหน้าลบองค์กร (27 มีนาคม 2569)
+
+### 33.1 สิ่งที่ทำ
+
+ย้าย Danger Zone (ลบองค์กร) ออกจาก OrganizationPage ไปเป็นหน้าแยก `DangerZonePage` พร้อมเพิ่มเมนูใน Sidebar
+
+### 33.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/pages/DangerZonePage.tsx` | **สร้างใหม่** — หน้าจัดการลบองค์กร (request/confirm/cancel deletion) |
+| `frontend/src/pages/OrganizationPage.tsx` | ลบ Danger Zone section ออก, เพิ่ม MemberManagement component (ย้ายมาจาก Dashboard), ลบ `max-w-2xl` ให้เต็มพื้นที่ |
+| `frontend/src/pages/DashboardPage.tsx` | ลบ MemberManagement ออก (ย้ายไป OrganizationPage) |
+| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม DangerZone icon (warning triangle สีแดง) + nav item ใต้ Profile |
+| `frontend/src/App.tsx` | เพิ่ม route `/danger-zone` |
+
+### 33.3 สิทธิ์การเข้าถึง
+
+| Role | เห็นเมนู Sidebar | เข้าหน้าได้ | สิทธิ์ |
+|------|-----------------|------------|--------|
+| Admin ORG (user) | ✅ | ✅ | ขอลบองค์กร / ยกเลิกคำขอ (ยกเว้น org หลัก) |
+| Admin | ✅ | ✅ | ยืนยันการลบ / ยกเลิกคำขอ (ยกเว้น org หลัก) |
+| Support | ✅ | ✅ | ยืนยันการลบ / ยกเลิกคำขอ (ยกเว้น org หลัก) |
+| Member | ❌ | ✅ | ไม่มี |
+
+### 33.4 Admin กับ Transfer Ownership
+
+- Admin **ไม่สามารถโอนสิทธิ์ Admin ORG** ได้ (ปุ่ม "โอน" ซ่อนสำหรับ admin) เพราะ SUNDAE เป็น org หลักที่ admin เป็นเจ้าของเสมอ
+- Admin **สามารถลบ member** ออกจาก org ได้ (ปุ่ม "ลบ" แสดงปกติ)
+
+---
+
+## 34. Server Monitoring Dashboard (27 มีนาคม 2569)
+
+### 34.1 สิ่งที่ทำ
+
+เพิ่มกราฟ real-time แสดงสถานะ Server (CPU, RAM, GPU, VRAM, Disk, Network I/O) ในหน้า Dashboard
+
+### 34.2 Backend — System Metrics API
+
+**Endpoint**: `GET /health/metrics` (ไม่ต้อง auth)
+
+**Dependencies เพิ่ม** (`requirements.txt`):
+- `psutil>=6.0.0` — CPU, RAM, Disk, Network
+- `GPUtil>=1.4.0` — GPU load, VRAM, temperature
+
+**Response**:
+```json
+{
+    "cpu_percent": 45.2,
+    "ram_total_gb": 16.0,
+    "ram_used_gb": 8.5,
+    "ram_percent": 53.1,
+    "disk_total_gb": 500.0,
+    "disk_used_gb": 250.0,
+    "disk_percent": 50.0,
+    "gpu": [
+        { "id": 0, "name": "RTX 3060", "load_percent": 72.0, "memory_used_mb": 4096, "memory_total_mb": 12288, "temperature": 65 }
+    ],
+    "net_sent_mb": 1024.5,
+    "net_recv_mb": 2048.3
+}
+```
+
+- GPU array จะว่างถ้าไม่มี GPU หรือ `GPUtil` import ไม่ได้
+- Network I/O เป็น cumulative bytes ตั้งแต่ boot (frontend คำนวณ delta เป็น MB/s)
+
+### 34.3 Frontend — ServerMetrics Component
+
+**ไฟล์**: `frontend/src/pages/DashboardPage.tsx`
+
+**Library เพิ่ม**: `recharts` (React chart library)
+
+**Component `ServerMetrics`**:
+- Poll `GET /health/metrics` ทุก 3 วินาที
+- เก็บ history 20 จุด (~1 นาที)
+- แสดงกราฟ + progress bar:
+
+| ข้อมูล | UI | สี | หมายเหตุ |
+|--------|----|----|----------|
+| CPU | AreaChart | ฟ้า (#3b82f6) | 0-100% |
+| RAM | AreaChart | ม่วง (#8b5cf6) | แสดง used/total GB |
+| GPU Load | AreaChart | ส้ม (#f97316) | ซ่อนถ้าไม่มี GPU |
+| VRAM | Progress bar | ส้ม/เหลือง/แดง | ซ่อนถ้าไม่มี GPU, แสดง MB |
+| Disk | Progress bar | เขียว/เหลือง/แดง | แสดง used/total GB |
+| Network I/O | AreaChart 2 เส้น | เขียว (↓) / แดง (↑) | MB/s คำนวณจาก delta |
+
+### 34.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `backend/requirements.txt` | เพิ่ม `psutil>=6.0.0`, `GPUtil>=1.4.0` |
+| `backend/app/routers/health.py` | เพิ่ม `GET /health/metrics` endpoint |
+| `frontend/package.json` | เพิ่ม `recharts` |
+| `frontend/src/pages/DashboardPage.tsx` | เพิ่ม `ServerMetrics` component พร้อมกราฟ |
+
+### 34.5 หมายเหตุ
+
+- ข้อมูลมาจาก hardware ของเครื่องที่ backend รันอยู่ — deploy บน server จริงจะแสดง spec ของ server นั้นอัตโนมัติ
+- VRAM สำคัญมากสำหรับ LLM (Ollama) — ถ้า VRAM เต็ม model จะ load ไม่ได้หรือ offload ไป RAM (ช้าลงมาก)
+
+---
+
+## 35. Docker Deployment (27 มีนาคม 2569) 🐳
+
+### 35.1 สิ่งที่ทำ
+
+ปรับ `docker-compose.yml` ให้พร้อม deploy + สร้าง `DOCKER-README.md` เป็น deployment guide
+
+### 35.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `docker-compose.yml` | แก้ env_file paths: backend ใช้ `./.env` (root), frontend ใช้ `./frontend/.env` |
+| `DOCKER-README.md` | **สร้างใหม่** — deployment guide ครอบคลุม 4 scenarios ของ Ollama (GPU/CPU/External/Cloud) |
+
+### 35.3 Services
+
+| Service | Container | Port | Image |
+|---------|-----------|------|-------|
+| Frontend | sundae-frontend | 3000:80 | Nginx (build from `./frontend/Dockerfile`) |
+| Backend | sundae-backend | 8001:8000 | FastAPI (build from `./backend/Dockerfile`) |
+| Ollama | sundae-ollama | 11434:11434 | `ollama/ollama:latest` (GPU passthrough) |
+
+---
+
+## 36. B2B Org Data Privacy — Admin/Support เห็นแค่ Danger Zone ใน Org ลูกค้า (28 มีนาคม 2569)
+
+### 36.1 สิ่งที่ทำ
+
+SUNDAE ให้บริการ B2B — มี org หลัก (SUNDAE) และ org ลูกค้าภายนอก เมื่อ Admin/Support สลับไปดู org ลูกค้า จะเห็นเฉพาะ **Danger Zone** เท่านั้น ไม่เห็นข้อมูลอื่นๆ (KB, Bots, Inbox ฯลฯ) เพื่อรักษาความลับข้อมูลของลูกค้า
+
+### 36.2 วิธีระบุ Org หลัก
+
+ใช้ `user.organization_id` จาก user_profiles เทียบกับ `activeOrgId`:
+- `activeOrgId === user.organization_id` → org หลัก → เห็นทุกเมนูปกติ
+- `activeOrgId !== user.organization_id` → org ลูกค้า → เห็นแค่ Danger Zone
+
+### 36.3 การป้องกัน 2 ชั้น
+
+| ชั้น | ไฟล์ | กลไก |
+|------|------|------|
+| Sidebar nav | `DashboardLayout.tsx` | Filter nav items แสดงเฉพาะ Danger Zone + auto-redirect ไป `/danger-zone` |
+| Route guard | `App.tsx` | `ExternalOrgGuard` component redirect ไป `/danger-zone` ป้องกันเข้าผ่าน URL โดยตรง |
+
+### 36.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม `isStaffOnExternalOrg` flag, filter nav แสดงเฉพาะ Danger Zone, เพิ่ม useEffect auto-redirect |
+| `frontend/src/App.tsx` | เพิ่ม `ExternalOrgGuard` component, wrap ทุก route ยกเว้น `/danger-zone` และ `/create-org` |
+
+---
+
+## 37. เปลี่ยนชื่อ Owner → Admin ORG (28 มีนาคม 2569)
+
+### 37.1 สิ่งที่ทำ
+
+เปลี่ยน label "Owner" ที่แสดงใน UI เป็น **"Admin ORG"** ทุกจุด เพื่อให้ผู้ใช้เข้าใจง่ายขึ้น (จากฟีดแบ็กว่าหลายคนไม่รู้ว่า Owner คืออะไร)
+
+> **หมายเหตุ**: ค่าใน database ยังเป็น `owner` เหมือนเดิม เปลี่ยนแค่ display label
+
+### 37.2 จุดที่เปลี่ยน
+
+| ไฟล์ | จุดที่แสดง |
+|------|-----------|
+| `frontend/src/components/OrgSwitcher.tsx` | Dropdown เลือก org — badge ข้างชื่อ org |
+| `frontend/src/layouts/DashboardLayout.tsx` | Role badge ข้างชื่อ user ด้านล่าง sidebar |
+| `frontend/src/pages/OrganizationPage.tsx` | Badge ข้างชื่อ member + tooltip ปุ่มโอนสิทธิ์ |
+| `frontend/src/pages/ProfilePage.tsx` | Badge ในรายการ org ที่เป็นสมาชิก |
+| `frontend/src/pages/DangerZonePage.tsx` | ข้อความอธิบายสิทธิ์การลบองค์กร |
+
+---
+
+## 38. Danger Zone — ป้องกันการลบ Org หลัก (28 มีนาคม 2569)
+
+### 38.1 สิ่งที่ทำ
+
+Org หลักของระบบ (SUNDAE) ไม่สามารถลบได้ — หน้า Danger Zone จะแสดงข้อความ "ไม่สามารถลบองค์กรนี้ได้เนื่องจากเป็นองค์กรหลักของระบบ" แทนปุ่มลบ
+
+### 38.2 Logic
+
+```typescript
+const isMainOrg = !!user?.organization_id && activeOrgId === user.organization_id;
+const canRequestDeletion = isOwner && !isMainOrg;
+const canConfirmDeletion = (userRole === "support" || userRole === "admin") && !isMainOrg;
+```
+
+### 38.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/pages/DangerZonePage.tsx` | เพิ่ม `isMainOrg` check, แสดงข้อความแทนปุ่มลบเมื่อเป็น org หลัก |

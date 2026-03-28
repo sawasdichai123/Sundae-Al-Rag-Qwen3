@@ -367,7 +367,7 @@ export default function ProfilePage() {
                                                 ? "bg-brand-100 text-brand-700"
                                                 : "bg-steel-100 text-steel-500"
                                 }`}>
-                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role}
+                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role === "owner" ? "Admin ORG" : org.org_role}
                                 </span>
                                 {org.org_role === "member" && (
                                     <button

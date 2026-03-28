@@ -36,6 +36,7 @@ import ResetPasswordPage from "./pages/ResetPasswordPage";
 import CreateOrgPage from "./pages/CreateOrgPage";
 import OrganizationPage from "./pages/OrganizationPage";
 import ProfilePage from "./pages/ProfilePage";
+import DangerZonePage from "./pages/DangerZonePage";
 
 // ── Auth Lifecycle Provider ─────────────────────────────────────
 
@@ -143,6 +144,22 @@ function HomeRedirect() {
     return <DashboardPage />;
 }
 
+// ── B2B Privacy Guard ───────────────────────────────────────────
+// Redirects admin/support to /danger-zone when viewing an external org
+// (prevents direct URL access to KB, Bots, Inbox, etc.)
+
+function ExternalOrgGuard({ children }: { children: React.ReactElement }) {
+    const user = useAuthStore((s) => s.user);
+    const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const role = user?.role;
+    const isExternal = !!user?.organization_id && !!activeOrgId && activeOrgId !== user.organization_id;
+
+    if ((role === "admin" || role === "support") && isExternal) {
+        return <Navigate to="/danger-zone" replace />;
+    }
+    return children;
+}
+
 // ── App ─────────────────────────────────────────────────────────
 
 export default function App() {
@@ -168,33 +185,34 @@ export default function App() {
                             {/* ── Protected Routes (all roles) ───────────── */}
                             <Route element={<ProtectedRoute />}>
                                 <Route element={<DashboardLayout />}>
-                                    <Route path="/" element={<HomeRedirect />} />
+                                    <Route path="/" element={<ExternalOrgGuard><HomeRedirect /></ExternalOrgGuard>} />
 
                                     {/* Web Chat — all roles */}
-                                    <Route path="/chat" element={<WebChatPage />} />
+                                    <Route path="/chat" element={<ExternalOrgGuard><WebChatPage /></ExternalOrgGuard>} />
 
                                     {/* Create org — for approved users with no orgs */}
                                     <Route path="/create-org" element={<CreateOrgPage />} />
 
                                     {/* Profile — all roles */}
-                                    <Route path="/profile" element={<ProfilePage />} />
+                                    <Route path="/profile" element={<ExternalOrgGuard><ProfilePage /></ExternalOrgGuard>} />
 
                                     {/* Admin + User (owner) — content management pages */}
                                     <Route element={<ProtectedRoute allowedRoles={["user", "admin"]} />}>
-                                        <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
-                                        <Route path="/bots" element={<BotsPage />} />
-                                        <Route path="/inbox" element={<InboxPage />} />
-                                        <Route path="/integration" element={<IntegrationPage />} />
+                                        <Route path="/knowledge-base" element={<ExternalOrgGuard><KnowledgeBasePage /></ExternalOrgGuard>} />
+                                        <Route path="/bots" element={<ExternalOrgGuard><BotsPage /></ExternalOrgGuard>} />
+                                        <Route path="/inbox" element={<ExternalOrgGuard><InboxPage /></ExternalOrgGuard>} />
+                                        <Route path="/integration" element={<ExternalOrgGuard><IntegrationPage /></ExternalOrgGuard>} />
                                     </Route>
 
                                     {/* Organization settings — all roles */}
                                     <Route element={<ProtectedRoute allowedRoles={["user", "support", "admin"]} />}>
-                                        <Route path="/organization" element={<OrganizationPage />} />
+                                        <Route path="/organization" element={<ExternalOrgGuard><OrganizationPage /></ExternalOrgGuard>} />
+                                        <Route path="/danger-zone" element={<DangerZonePage />} />
                                     </Route>
 
                                     {/* Support + Admin only */}
                                     <Route element={<ProtectedRoute allowedRoles={["support", "admin"]} />}>
-                                        <Route path="/approvals" element={<ApprovalsPage />} />
+                                        <Route path="/approvals" element={<ExternalOrgGuard><ApprovalsPage /></ExternalOrgGuard>} />
                                     </Route>
                                 </Route>
                             </Route>
