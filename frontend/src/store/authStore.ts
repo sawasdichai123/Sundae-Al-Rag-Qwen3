@@ -159,7 +159,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                     .from("organizations")
                     .select("id,name,slug,status,created_at,updated_at")
                     .eq("id", profile.organization_id)
-                    .single();
+                    .maybeSingle();
 
                 if (orgError) {
                     console.warn("[Auth] Failed to fetch organization:", orgError.message);

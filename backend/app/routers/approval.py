@@ -159,15 +159,15 @@ async def approve_user(
                 ).execute()
 
                 if not existing.data:
-                    # First member becomes owner, others become member
-                    owner_check = await (
+                    # First member becomes Org Admin, others become member
+                    admin_check = await (
                         supabase.table("org_members")
                         .select("user_id")
                         .eq("organization_id", org_id)
-                        .eq("org_role", "owner")
+                        .eq("org_role", "admin")
                         .limit(1)
                     ).execute()
-                    assigned_role = "owner" if not owner_check.data else "member"
+                    assigned_role = "admin" if not admin_check.data else "member"
 
                     await (
                         supabase.table("org_members").insert({

@@ -10,8 +10,10 @@ Endpoints:
     PUT    /api/orgs/{org_id}                     → Edit org (owner)
     POST   /api/orgs/{org_id}/request-deletion    → Request deletion
     POST   /api/orgs/{org_id}/confirm-deletion    → Confirm deletion
-    POST   /api/orgs/{org_id}/leave               → Leave org (member only)
-    POST   /api/orgs/{org_id}/transfer-ownership  → Transfer ownership
+    POST   /api/orgs/{org_id}/leave               → Leave org (admin cannot leave if last admin)
+    POST   /api/orgs/{org_id}/members/{user_id}/promote  → Promote member to Org Admin
+    POST   /api/orgs/{org_id}/members/{user_id}/demote   → Demote Org Admin to member
+    GET    /api/orgs/{org_id}/overview             → Org stats (platform admin/support only)
     POST   /api/orgs/{org_id}/cancel-deletion     → Cancel pending deletion
     GET    /api/orgs/{org_id}/members             → List members
     POST   /api/orgs/{org_id}/invite              → Invite by email
@@ -38,9 +40,10 @@ from pydantic import BaseModel
 from app.core.auth import (
     CurrentUser,
     require_approved,
+    require_platform_admin,
     require_role,
-    require_org_owner,
-    verify_org_owner,
+    require_org_admin,
+    verify_org_admin,
     verify_organization,
 )
 from app.core.database import get_supabase
@@ -180,9 +183,8 @@ async def create_org(
     org = org_result.data[0]
     org_id = org["id"]
 
-    # NOTE: Support/Admin creator is NOT added as org_members owner.
-    # They already bypass org checks via their platform role.
-    # The first invited user who accepts the invitation becomes the owner.
+    # NOTE: Support/Admin creator is NOT added as org_members admin.
+    # The first invited user who accepts the invitation becomes Org Admin.
 
     logger.info("Org created: %s by user %s", org_id, user.email)
 
@@ -199,15 +201,20 @@ async def create_org(
 async def list_orgs(
     user: CurrentUser = Depends(require_approved),
 ):
-    """List organizations.
+    """List organizations visible in the OrgSwitcher.
 
-    Support/Admin see ALL organizations so they can manage any org.
+    Platform support/admin see ALL active orgs so they can switch into
+    any org to manage deletion requests. Their org_role is their actual
+    membership role if they are a member, or "member" (non-admin) for
+    orgs they are not a member of — this prevents isOrgAdmin=true on
+    orgs they don't actually belong to.
+
     Regular users see only orgs they are a member of.
     """
     supabase = get_supabase()
 
     if user.role in ("support", "admin"):
-        # Support/Admin see every active org (exclude deleted)
+        # Fetch all active orgs
         all_orgs_result = await (
             supabase.table("organizations")
             .select("id, name, slug, created_at")
@@ -215,13 +222,26 @@ async def list_orgs(
             .order("created_at", desc=False)
         ).execute()
 
+        # Fetch actual memberships to get real org_role where applicable
+        member_result = await (
+            supabase.table("org_members")
+            .select("organization_id, org_role")
+            .eq("user_id", user.id)
+        ).execute()
+        member_roles: dict[str, str] = {
+            row["organization_id"]: row["org_role"]
+            for row in (member_result.data or [])
+        }
+
         items: list[OrgListItem] = []
         for org in all_orgs_result.data or []:
+            # Use real org_role if member, "member" otherwise (avoids false isOrgAdmin)
+            org_role = member_roles.get(org["id"], "member")
             items.append(OrgListItem(
                 id=org["id"],
                 name=org["name"],
                 slug=org.get("slug"),
-                org_role=user.role,
+                org_role=org_role,
                 created_at=org.get("created_at", ""),
             ))
         return items
@@ -247,6 +267,43 @@ async def list_orgs(
         ))
 
     return items
+
+
+@router.get("/{org_id}/overview")
+async def get_org_overview(
+    org_id: str,
+    user: CurrentUser = Depends(require_platform_admin),
+):
+    """Get organization overview stats. Platform support/admin only.
+
+    Returns high-level stats without exposing confidential data.
+    """
+    supabase = get_supabase()
+
+    # Verify org exists
+    org_result = await (
+        supabase.table("organizations")
+        .select("name, status")
+        .eq("id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not org_result.data:
+        raise HTTPException(404, "Organization not found.")
+
+    org = org_result.data[0]
+    if org.get("status") == "deleted":
+        raise HTTPException(404, "Organization has been deleted.")
+
+    # Call the RPC function for stats
+    result = await supabase.rpc("get_org_overview", {"target_org_id": org_id}).execute()
+
+    stats = result.data if result.data else {}
+    return {
+        "org_name": org["name"],
+        "org_status": org.get("status", "active"),
+        **stats,
+    }
 
 
 @router.get("/invitations", response_model=list[MyInvitationResponse])
@@ -353,19 +410,17 @@ async def accept_invitation(
         ).execute()
         return MessageResponse(message="You are already a member of this organization.")
 
-    # 3. Determine role: first member becomes owner, others become member.
-    # Support/admin always join as member — they have platform-level access.
-    if user.role in ("support", "admin"):
-        assigned_role = "member"
-    else:
-        owner_check = await (
-            supabase.table("org_members")
-            .select("user_id")
-            .eq("organization_id", org_id)
-            .eq("org_role", "owner")
-            .limit(1)
-        ).execute()
-        assigned_role = "owner" if not owner_check.data else "member"
+    # 3. Determine role: first member becomes Org Admin, others become member.
+    # Rule applies to ALL users including platform admin/support —
+    # if no admin exists yet, the accepting user becomes Org Admin.
+    admin_check = await (
+        supabase.table("org_members")
+        .select("user_id")
+        .eq("organization_id", org_id)
+        .eq("org_role", "admin")
+        .limit(1)
+    ).execute()
+    assigned_role = "admin" if not admin_check.data else "member"
 
     await (
         supabase.table("org_members").insert({
@@ -437,8 +492,14 @@ async def get_org(
     org_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Get organization details."""
-    await verify_organization(user, org_id)
+    """Get organization details.
+
+    Platform support/admin can read any org's basic info (name, status)
+    without being a member — needed for DangerZone confirm/cancel deletion.
+    Regular users must be org members (verify_organization).
+    """
+    if user.role not in ("support", "admin"):
+        await verify_organization(user, org_id)
 
     supabase = get_supabase()
     result = await (
@@ -467,9 +528,9 @@ async def update_org(
     body: UpdateOrgRequest,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Update organization name. Owner only."""
+    """Update organization name. Org Admin only."""
     await verify_organization(user, org_id)
-    await verify_org_owner(user, org_id)
+    await verify_org_admin(user, org_id)
 
     updates: dict = {}
     if body.name and body.name.strip():
@@ -506,23 +567,22 @@ async def request_deletion(
     org_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Request org deletion. Owner requests; support/admin confirms."""
+    """Request org deletion. Org Admin requests; platform support/admin confirms."""
     await verify_organization(user, org_id)
+    await verify_org_admin(user, org_id)
 
     supabase = get_supabase()
 
-    # Policy: only the org owner (in org_members) can request deletion.
-    # Any platform role (user, support, admin) is allowed as long as they
-    # are the org owner — this covers legacy orgs where support was owner.
-    member = await (
-        supabase.table("org_members")
-        .select("org_role")
-        .eq("user_id", user.id)
+    # Block deletion of the platform's own org (any org that is the home org of platform staff)
+    protected = await (
+        supabase.table("user_profiles")
+        .select("id", count="exact")
         .eq("organization_id", org_id)
+        .in_("role", ["admin", "support"])
         .limit(1)
     ).execute()
-    if not member.data or member.data[0].get("org_role") != "owner":
-        raise HTTPException(403, "Only org owner can request deletion.")
+    if protected.count and protected.count > 0:
+        raise HTTPException(400, "ไม่สามารถลบ Org หลักของระบบได้")
 
     await (
         supabase.table("organizations")
@@ -748,7 +808,7 @@ async def leave_organization(
     org_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Leave an organization. Members only — owners cannot leave (must transfer or delete)."""
+    """Leave an organization. Last Org Admin cannot leave (must have at least 1 admin)."""
     supabase = get_supabase()
 
     # Verify user is a member of this org
@@ -763,8 +823,30 @@ async def leave_organization(
     if not member_result.data:
         raise HTTPException(404, "You are not a member of this organization.")
 
-    if member_result.data[0]["org_role"] == "owner":
-        raise HTTPException(400, "Owners cannot leave. Transfer ownership or delete the organization first.")
+    # If user is an Org Admin, check they are not the last one
+    if member_result.data[0]["org_role"] == "admin":
+        admin_count = await (
+            supabase.table("org_members")
+            .select("user_id", count="exact")
+            .eq("organization_id", org_id)
+            .eq("org_role", "admin")
+        ).execute()
+        if (admin_count.count or 0) <= 1:
+            # Check if there are other members who would be stranded without an admin
+            total_count = await (
+                supabase.table("org_members")
+                .select("user_id", count="exact")
+                .eq("organization_id", org_id)
+            ).execute()
+            if (total_count.count or 0) > 1:
+                raise HTTPException(400, "ไม่สามารถออกได้ คุณเป็น Org Admin คนสุดท้าย กรุณาเลื่อนตำแหน่งสมาชิกคนอื่นก่อน")
+            # User is the only member — allow leave and delete the now-empty org
+            await (
+                supabase.table("organizations")
+                .update({"status": "deleted"})
+                .eq("id", org_id)
+            ).execute()
+            logger.info("Auto-deleted empty org %s (last member %s left)", org_id, user.email)
 
     # Remove from org_members
     await (
@@ -786,34 +868,29 @@ async def leave_organization(
     return MessageResponse(message="You have left the organization.")
 
 
-# ── Transfer Ownership ───────────────────────────────────────────
+# ── Promote / Demote Members ─────────────────────────────────────
 
 
-class TransferOwnershipRequest(BaseModel):
-    new_owner_user_id: str
-
-
-@router.post("/{org_id}/transfer-ownership", response_model=MessageResponse)
-async def transfer_ownership(
+@router.post("/{org_id}/members/{target_user_id}/promote", response_model=MessageResponse)
+async def promote_member(
     org_id: str,
-    body: TransferOwnershipRequest,
+    target_user_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Transfer ownership to another member. Current owner becomes member."""
+    """Promote a member to Org Admin. Requires Org Admin role."""
     await verify_organization(user, org_id)
-    await verify_org_owner(user, org_id)
+    await verify_org_admin(user, org_id)
 
-    new_owner_id = body.new_owner_user_id
-    if new_owner_id == user.id:
-        raise HTTPException(400, "คุณเป็นเจ้าของอยู่แล้ว")
+    if target_user_id == user.id:
+        raise HTTPException(400, "คุณเป็น Org Admin อยู่แล้ว")
 
     supabase = get_supabase()
 
-    # Verify new owner is a member of this org
+    # Verify target is a member of this org
     target = await (
         supabase.table("org_members")
         .select("user_id, org_role")
-        .eq("user_id", new_owner_id)
+        .eq("user_id", target_user_id)
         .eq("organization_id", org_id)
         .limit(1)
     ).execute()
@@ -821,27 +898,75 @@ async def transfer_ownership(
     if not target.data:
         raise HTTPException(404, "ไม่พบสมาชิกคนนี้ในองค์กร")
 
-    # Demote current owner to member
-    await (
-        supabase.table("org_members")
-        .update({"org_role": "member"})
-        .eq("user_id", user.id)
-        .eq("organization_id", org_id)
-    ).execute()
+    if target.data[0]["org_role"] == "admin":
+        raise HTTPException(400, "สมาชิกคนนี้เป็น Org Admin อยู่แล้ว")
 
-    # Promote new owner
+    # Promote to admin
     await (
         supabase.table("org_members")
-        .update({"org_role": "owner"})
-        .eq("user_id", new_owner_id)
+        .update({"org_role": "admin"})
+        .eq("user_id", target_user_id)
         .eq("organization_id", org_id)
     ).execute()
 
     logger.info(
-        "Ownership transferred: org %s from %s to %s",
-        org_id, user.email, new_owner_id,
+        "Member promoted to admin: org %s, user %s, by %s",
+        org_id, target_user_id, user.email,
     )
-    return MessageResponse(message="โอนความเป็นเจ้าของสำเร็จ")
+    return MessageResponse(message="เลื่อนตำแหน่งเป็น Org Admin สำเร็จ")
+
+
+@router.post("/{org_id}/members/{target_user_id}/demote", response_model=MessageResponse)
+async def demote_admin(
+    org_id: str,
+    target_user_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Demote an Org Admin to member. Requires Org Admin role.
+    Cannot demote if target is the last admin."""
+    await verify_organization(user, org_id)
+    await verify_org_admin(user, org_id)
+
+    supabase = get_supabase()
+
+    # Verify target is an admin of this org
+    target = await (
+        supabase.table("org_members")
+        .select("user_id, org_role")
+        .eq("user_id", target_user_id)
+        .eq("organization_id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not target.data:
+        raise HTTPException(404, "ไม่พบสมาชิกคนนี้ในองค์กร")
+
+    if target.data[0]["org_role"] != "admin":
+        raise HTTPException(400, "สมาชิกคนนี้ไม่ใช่ Org Admin")
+
+    # Check not the last admin
+    admin_count = await (
+        supabase.table("org_members")
+        .select("user_id", count="exact")
+        .eq("organization_id", org_id)
+        .eq("org_role", "admin")
+    ).execute()
+    if (admin_count.count or 0) <= 1:
+        raise HTTPException(400, "ไม่สามารถลดตำแหน่งได้ ต้องมี Org Admin อย่างน้อย 1 คน")
+
+    # Demote to member
+    await (
+        supabase.table("org_members")
+        .update({"org_role": "member"})
+        .eq("user_id", target_user_id)
+        .eq("organization_id", org_id)
+    ).execute()
+
+    logger.info(
+        "Admin demoted to member: org %s, user %s, by %s",
+        org_id, target_user_id, user.email,
+    )
+    return MessageResponse(message="ลดตำแหน่งเป็นสมาชิกสำเร็จ")
 
 
 # ── Cancel Pending Deletion ──────────────────────────────────────
@@ -868,7 +993,7 @@ async def cancel_deletion(
     if org_result.data.get("status") != "pending_deletion":
         raise HTTPException(400, "องค์กรนี้ไม่ได้อยู่ในสถานะรอลบ")
 
-    # Only org owner or support/admin can cancel
+    # Only Org Admin or platform support/admin can cancel
     if user.role not in ("admin", "support"):
         member = await (
             supabase.table("org_members")
@@ -877,8 +1002,8 @@ async def cancel_deletion(
             .eq("organization_id", org_id)
             .limit(1)
         ).execute()
-        if not member.data or member.data[0].get("org_role") != "owner":
-            raise HTTPException(403, "เฉพาะ Owner หรือ Support/Admin เท่านั้นที่ยกเลิกได้")
+        if not member.data or member.data[0].get("org_role") != "admin":
+            raise HTTPException(403, "เฉพาะ Org Admin หรือ Support/Admin เท่านั้นที่ยกเลิกได้")
 
     await (
         supabase.table("organizations")
@@ -901,8 +1026,13 @@ async def list_members(
     org_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """List members of an organization."""
-    await verify_organization(user, org_id)
+    """List members of an organization.
+
+    Platform support/admin can list members of any org without membership
+    so they can manage orgs they created (invite, promote, etc.).
+    """
+    if user.role not in ("support", "admin"):
+        await verify_organization(user, org_id)
 
     supabase = get_supabase()
 
@@ -950,9 +1080,28 @@ async def invite_member(
     body: InviteRequest,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Invite a user to the organization by email. Admin/support/org-owner."""
-    await verify_organization(user, org_id)
-    await verify_org_owner(user, org_id)
+    """Invite a user to the organization by email.
+
+    Org Admin OR platform support/admin can invite.
+    Platform support/admin bypass membership check so they can invite
+    into orgs they created (before any member exists).
+    """
+    supabase = get_supabase()
+    if user.role in ("support", "admin"):
+        # Verify org exists and is active — no membership required for platform staff
+        _org_check = await (
+            supabase.table("organizations")
+            .select("status")
+            .eq("id", org_id)
+            .limit(1)
+        ).execute()
+        if not _org_check.data:
+            raise HTTPException(404, "Organization not found.")
+        if _org_check.data[0].get("status") == "deleted":
+            raise HTTPException(404, "Organization has been deleted.")
+    else:
+        await verify_organization(user, org_id)
+        await verify_org_admin(user, org_id)
 
     email = body.email.strip().lower()
     if not email:
@@ -961,8 +1110,6 @@ async def invite_member(
         raise HTTPException(400, "Email ยาวเกินไป (สูงสุด 254 ตัวอักษร)")
     if not EMAIL_RE.match(email):
         raise HTTPException(400, "รูปแบบ email ไม่ถูกต้อง")
-
-    supabase = get_supabase()
 
     # Check not already a member (efficient 2-query approach)
     profile_result = await (
@@ -1028,10 +1175,10 @@ async def remove_member(
     member_user_id: str,
     user: CurrentUser = Depends(require_approved),
 ):
-    """Remove a member from the organization. Owner only.
-    Cannot remove yourself if you are the only owner."""
+    """Remove a member from the organization. Org Admin only.
+    Cannot remove yourself."""
     await verify_organization(user, org_id)
-    await verify_org_owner(user, org_id)
+    await verify_org_admin(user, org_id)
 
     if member_user_id == user.id:
         raise HTTPException(400, "Cannot remove yourself. Transfer ownership first.")

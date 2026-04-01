@@ -33,9 +33,10 @@ interface ChatBubble {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-/** localStorage key per bot+org for session persistence */
-const sessionKey = (botId: string, orgId?: string) =>
-    orgId ? `sundae_chat_session_${orgId}_${botId}` : `sundae_chat_session_${botId}`;
+/** localStorage key per bot+org+user for session persistence.
+ * User ID is included so different users on the same browser don't share sessions. */
+const sessionKey = (botId: string, orgId?: string, userId?: string) =>
+    `sundae_chat_session_${userId || "anon"}_${orgId || ""}_${botId}`;
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -129,11 +130,11 @@ export default function WebChatPage() {
                 setSelectedBotId((currentBotId) => {
                     const botId = currentBotId || null;
                     const lastSession = botId
-                        ? sessions.find((s) => s.bot_id === botId)
+                        ? (sessions.find((s) => s.bot_id === botId) || sessions[0])
                         : sessions[0];
                     if (lastSession) {
                         if (lastSession.bot_id) {
-                            localStorage.setItem(sessionKey(lastSession.bot_id, orgId), lastSession.id);
+                            localStorage.setItem(sessionKey(lastSession.bot_id, orgId, platformUserId), lastSession.id);
                         }
                         setSessionId(lastSession.id);
                         setMessages([]);
@@ -179,12 +180,12 @@ export default function WebChatPage() {
     // ── Fix 2: Session persistence — load or create sessionId per bot+org ──
     useEffect(() => {
         if (!selectedBotId) return;
-        const stored = localStorage.getItem(sessionKey(selectedBotId, orgId));
+        const stored = localStorage.getItem(sessionKey(selectedBotId, orgId, platformUserId));
         if (stored) {
             setSessionId(stored);
         } else {
             const newId = crypto.randomUUID();
-            localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
+            localStorage.setItem(sessionKey(selectedBotId, orgId, platformUserId), newId);
             setSessionId(newId);
         }
         // Reset messages — will be loaded from DB by the next useEffect
@@ -415,7 +416,7 @@ export default function WebChatPage() {
     const handleNewChat = () => {
         if (!selectedBotId) return;
         const newId = crypto.randomUUID();
-        localStorage.setItem(sessionKey(selectedBotId, orgId), newId);
+        localStorage.setItem(sessionKey(selectedBotId, orgId, platformUserId), newId);
         setSessionId(newId);
         setMessages([]);
         setSessionStatus("active");
@@ -428,7 +429,7 @@ export default function WebChatPage() {
     const handleSelectSession = (hist: HistorySession) => {
         if (hist.bot_id) {
             setSelectedBotId(hist.bot_id);
-            localStorage.setItem(sessionKey(hist.bot_id, orgId), hist.id);
+            localStorage.setItem(sessionKey(hist.bot_id, orgId, platformUserId), hist.id);
         }
         setSessionId(hist.id);
         setMessages([]);

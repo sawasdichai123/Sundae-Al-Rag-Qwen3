@@ -25,7 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, require_org_owner, verify_organization
+from app.core.auth import CurrentUser, require_approved, require_org_admin, verify_organization
 from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class BotDeleteResponse(BaseModel):
 @router.post("", response_model=BotResponse, status_code=201)
 async def create_bot(
     body: BotCreateRequest,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ) -> BotResponse:
     """Create a new bot for an organization.
 
@@ -198,7 +198,7 @@ async def update_bot(
     bot_id: str,
     body: BotUpdateRequest,
     organization_id: str,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ) -> BotResponse:
     """Update bot fields. Only non-null fields are applied."""
     await verify_organization(user, organization_id)
@@ -261,7 +261,7 @@ async def update_bot(
 async def delete_bot(
     bot_id: str,
     organization_id: str,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ) -> BotDeleteResponse:
     """Delete a bot.
 

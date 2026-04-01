@@ -365,21 +365,19 @@ export default function ProfilePage() {
                                         ? "bg-red-100 text-red-700"
                                         : user?.role === "support"
                                             ? "bg-violet-100 text-violet-700"
-                                            : org.org_role === "owner"
+                                            : org.org_role === "admin"
                                                 ? "bg-brand-100 text-brand-700"
                                                 : "bg-steel-100 text-steel-500"
                                 }`}>
-                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role === "owner" ? t("role.adminOrg") : org.org_role}
+                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role === "admin" ? t("role.adminOrg") : org.org_role}
                                 </span>
-                                {org.org_role === "member" && (
-                                    <button
-                                        onClick={() => handleLeave(org.id, org.name)}
-                                        disabled={leavingOrgId === org.id}
-                                        className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
-                                    >
-                                        {leavingOrgId === org.id ? "..." : t("profile.leaveOrg")}
-                                    </button>
-                                )}
+                                <button
+                                    onClick={() => handleLeave(org.id, org.name)}
+                                    disabled={leavingOrgId === org.id}
+                                    className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                    {leavingOrgId === org.id ? "..." : t("profile.leaveOrg")}
+                                </button>
                             </div>
                         ))}
                     </div>

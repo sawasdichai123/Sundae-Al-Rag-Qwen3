@@ -9,8 +9,9 @@
  */
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useToastStore } from "../store/toastStore";
-import { useOrgStore, selectIsOrgOwner } from "../store/orgStore";
+import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import type { OrgMember } from "../types";
@@ -19,19 +20,20 @@ import { useT } from "../i18n";
 
 // ── Member Management Section ──────────────────────────────────
 
-function MemberManagement({ orgId }: { orgId: string }) {
+function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtectedOrg: boolean }) {
     const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
-    const isOrgOwner = useOrgStore(selectIsOrgOwner);
+    const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const userRole = useAuthStore((s) => s.user?.role);
-    const canManage = isOrgOwner || userRole === "admin";
+    const canManage = isOrgAdmin && !isProtectedOrg;
     const [members, setMembers] = useState<OrgMember[]>([]);
     const [loading, setLoading] = useState(true);
     const [inviteEmail, setInviteEmail] = useState("");
     const [inviting, setInviting] = useState(false);
     const [removingId, setRemovingId] = useState<string | null>(null);
-    const [transferringId, setTransferringId] = useState<string | null>(null);
+    const [promotingId, setPromotingId] = useState<string | null>(null);
+    const [demotingId, setDemotingId] = useState<string | null>(null);
 
     const loadMembers = useCallback(async () => {
         try {
@@ -63,19 +65,35 @@ function MemberManagement({ orgId }: { orgId: string }) {
         loadMembers().catch(() => {});
     };
 
-    const handleTransfer = async (userId: string, name: string) => {
-        if (!confirm(t("org.transferConfirm").replace("{name}", name))) return;
-        setTransferringId(userId);
+    const handlePromote = async (userId: string, name: string) => {
+        if (!confirm(t("org.promoteConfirm").replace("{name}", name))) return;
+        setPromotingId(userId);
         try {
-            await orgApi.transferOwnership(orgId, userId);
-            toast("success", t("org.transferSuccess").replace("{name}", name));
+            await orgApi.promoteMember(orgId, userId);
+            toast("success", t("org.promoteSuccess").replace("{name}", name));
             await fetchOrgs();
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.transferFailed");
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.promoteFailed");
             toast("error", msg);
         } finally {
-            setTransferringId(null);
+            setPromotingId(null);
+        }
+    };
+
+    const handleDemote = async (userId: string, name: string) => {
+        if (!confirm(t("org.demoteConfirm").replace("{name}", name))) return;
+        setDemotingId(userId);
+        try {
+            await orgApi.demoteMember(orgId, userId);
+            toast("success", t("org.demoteSuccess").replace("{name}", name));
+            await fetchOrgs();
+            await loadMembers();
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.demoteFailed");
+            toast("error", msg);
+        } finally {
+            setDemotingId(null);
         }
     };
 
@@ -121,7 +139,7 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                 <p className="text-xs text-steel-400 truncate">{m.email}</p>
                             </div>
                             <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                m.org_role === "owner"
+                                m.org_role === "admin"
                                     ? "bg-brand-100 text-brand-700"
                                     : m.role === "admin"
                                         ? "bg-red-100 text-red-700"
@@ -129,28 +147,42 @@ function MemberManagement({ orgId }: { orgId: string }) {
                                             ? "bg-violet-100 text-violet-700"
                                             : "bg-steel-100 text-steel-500"
                             }`}>
-                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role === "owner" ? t("role.adminOrg") : m.org_role}
+                                {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role === "admin" ? t("role.adminOrg") : m.org_role}
                             </span>
-                            {canManage && m.org_role !== "owner" && m.role !== "admin" && m.role !== "support" && (
+                            {canManage && m.role !== "admin" && m.role !== "support" && (
                                 <div className="flex items-center gap-2">
-                                    {/* โอน — เฉพาะ org owner ที่ไม่ใช่ admin (admin เป็นเจ้าของ org หลักต้องไม่โอน) */}
-                                    {isOrgOwner && userRole !== "admin" && (
+                                    {/* Promote member → Org Admin */}
+                                    {m.org_role === "member" && (
                                         <button
-                                            onClick={() => handleTransfer(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
-                                            disabled={transferringId === m.user_id}
+                                            onClick={() => handlePromote(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
+                                            disabled={promotingId === m.user_id}
                                             className="text-xs text-brand-600 hover:text-brand-800 transition-colors cursor-pointer disabled:opacity-50"
-                                            title={t("org.transferTitle")}
+                                            title={t("org.promoteTitle")}
                                         >
-                                            {transferringId === m.user_id ? "..." : t("org.transfer")}
+                                            {promotingId === m.user_id ? "..." : t("org.promote")}
                                         </button>
                                     )}
-                                    <button
-                                        onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
-                                        disabled={removingId === m.user_id}
-                                        className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
-                                    >
-                                        {removingId === m.user_id ? "..." : t("common.delete")}
-                                    </button>
+                                    {/* Demote Org Admin → member (only if >1 admins) */}
+                                    {m.org_role === "admin" && members.filter(x => x.org_role === "admin").length > 1 && (
+                                        <button
+                                            onClick={() => handleDemote(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
+                                            disabled={demotingId === m.user_id}
+                                            className="text-xs text-amber-600 hover:text-amber-800 transition-colors cursor-pointer disabled:opacity-50"
+                                            title={t("org.demoteTitle")}
+                                        >
+                                            {demotingId === m.user_id ? "..." : t("org.demote")}
+                                        </button>
+                                    )}
+                                    {/* Remove — only for members, not admins */}
+                                    {m.org_role === "member" && (
+                                        <button
+                                            onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
+                                            disabled={removingId === m.user_id}
+                                            className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50"
+                                        >
+                                            {removingId === m.user_id ? "..." : t("common.delete")}
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -190,17 +222,22 @@ export default function OrganizationPage() {
     const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
-    const isOwner = useOrgStore(selectIsOrgOwner);
+    const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const userRole = useAuthStore((s) => s.user?.role);
-    const isSupport = userRole === "support";
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
+    const userId = useAuthStore((s) => s.user?.id);
 
-    const canManage = isOwner || userRole === "admin";
+    const canManage = isOrgAdmin;
+    const navigate = useNavigate();
 
     // Org details
     const [orgName, setOrgName] = useState("");
+    const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [leaving, setLeaving] = useState(false);
     const [saving, setSaving] = useState(false);
+
+    const isProtectedOrg = orgSlug === "sundae";
 
     const loadData = useCallback(async () => {
         if (!activeOrgId) return;
@@ -208,6 +245,7 @@ export default function OrganizationPage() {
         try {
             const { data } = await orgApi.get(activeOrgId);
             setOrgName(data.name);
+            setOrgSlug(data.slug ?? null);
         } catch (err) {
             console.error("[Org] Load failed:", err);
             toast("error", t("org.loadFailed"));
@@ -219,6 +257,23 @@ export default function OrganizationPage() {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    const handleLeave = async () => {
+        if (!activeOrgId || !userId) return;
+        if (!confirm(t("org.leaveConfirm"))) return;
+        setLeaving(true);
+        try {
+            await orgApi.leave(activeOrgId);
+            toast("success", t("org.leaveSuccess"));
+            await fetchOrgs();
+            navigate("/create-org", { replace: true });
+        } catch (err: unknown) {
+            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.leaveFailed");
+            toast("error", msg);
+        } finally {
+            setLeaving(false);
+        }
+    };
 
     const handleUpdateName = async (e: FormEvent) => {
         e.preventDefault();
@@ -285,9 +340,24 @@ export default function OrganizationPage() {
                 </div>
             )}
 
-            {/* 2. Member Management — owner, support, and admin */}
-            {!loading && (isOwner || isSupport || userRole === "admin") && (
-                <MemberManagement orgId={activeOrgId} />
+            {/* 2. Member Management — Org Admin OR platform staff (can invite, cannot promote/demote/remove) */}
+            {!loading && (isOrgAdmin || userRole === "admin" || userRole === "support") && (
+                <MemberManagement orgId={activeOrgId} isProtectedOrg={isProtectedOrg} />
+            )}
+
+            {/* 3. Leave Organization — hide for platform staff who aren't actual org members, and hide for protected org */}
+            {!loading && !isProtectedOrg && !(( userRole === "admin" || userRole === "support") && !isOrgAdmin) && (
+                <div className="mt-6 bg-white rounded-2xl border border-steel-100 p-6">
+                    <h2 className="text-sm font-semibold text-steel-800 mb-1">{t("org.leaveTitle")}</h2>
+                    <p className="text-xs text-steel-500 mb-4">{t("org.leaveDesc")}</p>
+                    <button
+                        onClick={handleLeave}
+                        disabled={leaving}
+                        className="px-5 py-2.5 bg-red-100 text-red-700 text-sm font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                        {leaving ? <Spinner /> : t("org.leave")}
+                    </button>
+                </div>
             )}
         </div>
     );

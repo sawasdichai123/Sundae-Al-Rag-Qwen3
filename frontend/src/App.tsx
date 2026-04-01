@@ -137,8 +137,8 @@ function HomeRedirect() {
         );
     }
 
-    // Org owners see dashboard (stats overview); regular members go to chatbot
-    if (role === "user" && orgRole !== "owner") {
+    // Org Admins see dashboard (stats overview); regular members go to chatbot
+    if (role === "user" && orgRole !== "admin") {
         return <Navigate to="/chat" replace />;
     }
     return <DashboardPage />;
@@ -206,7 +206,7 @@ export default function App() {
 
                                     {/* Organization settings — all roles */}
                                     <Route element={<ProtectedRoute allowedRoles={["user", "support", "admin"]} />}>
-                                        <Route path="/organization" element={<ExternalOrgGuard><OrganizationPage /></ExternalOrgGuard>} />
+                                        <Route path="/organization" element={<OrganizationPage />} />
                                         <Route path="/danger-zone" element={<DangerZonePage />} />
                                     </Route>
 

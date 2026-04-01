@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useToastStore } from "../store/toastStore";
-import { useOrgStore, selectIsOrgOwner } from "../store/orgStore";
+import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import Spinner from "../components/Spinner";
@@ -18,18 +18,16 @@ export default function DangerZonePage() {
     const t = useT();
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
-    const isOwner = useOrgStore(selectIsOrgOwner);
+    const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const user = useAuthStore((s) => s.user);
     const userRole = user?.role;
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
 
-    // Main org = user's home org (organization_id) — cannot be deleted
-    const isMainOrg = !!user?.organization_id && activeOrgId === user.organization_id;
-
-    const canRequestDeletion = isOwner && !isMainOrg;
-    const canConfirmDeletion = (userRole === "support" || userRole === "admin") && !isMainOrg;
+    const canRequestDeletion = isOrgAdmin;
+    const canConfirmDeletion = userRole === "support" || userRole === "admin";
 
     const [orgName, setOrgName] = useState("");
+    const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [orgStatus, setOrgStatus] = useState("active");
     const [loading, setLoading] = useState(true);
 
@@ -43,6 +41,7 @@ export default function DangerZonePage() {
         try {
             const { data } = await orgApi.get(activeOrgId);
             setOrgName(data.name);
+            setOrgSlug(data.slug ?? null);
             setOrgStatus(data.status);
         } catch (err) {
             console.error("[DangerZone] Load failed:", err);
@@ -130,18 +129,14 @@ export default function DangerZonePage() {
                 </div>
             )}
 
-            {!loading && isMainOrg && (
-                <div className="bg-white rounded-2xl border border-steel-200 p-6">
-                    <h2 className="text-sm font-semibold text-steel-700 mb-2">
-                        {t("dangerZone.deleteOrg")} {orgName && `"${orgName}"`}
-                    </h2>
-                    <p className="text-xs text-steel-500">
-                        {t("dangerZone.mainOrgNotice")}
-                    </p>
+            {!loading && orgSlug === "sundae" && (
+                <div className="bg-white rounded-2xl border border-steel-100 p-6">
+                    <h2 className="text-sm font-semibold text-steel-800 mb-1">{t("dangerZone.deleteOrg")} "{orgName}"</h2>
+                    <p className="text-xs text-steel-400">{t("dangerZone.mainOrgNotice")}</p>
                 </div>
             )}
 
-            {!loading && !isMainOrg && (canRequestDeletion || canConfirmDeletion) && (
+            {!loading && (canRequestDeletion || canConfirmDeletion) && orgSlug !== "sundae" && (
                 <div className="bg-white rounded-2xl border border-red-200 p-6">
                     <h2 className="text-sm font-semibold text-red-700 mb-2">
                         {t("dangerZone.deleteOrg")} {orgName && `"${orgName}"`}

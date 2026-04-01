@@ -2,7 +2,7 @@
 -- SUNDAE — Seed Accounts
 --
 -- สร้าง account เริ่มต้นสำหรับระบบ:
---   1. admin@sundae.local  (role=admin,  password=Admin@1234)
+--   1. admin@sundae.local   (role=admin,   password=Sundae@2025)
 --   2. support@sundae.local (role=support, password=Sundae@2025)
 --
 -- วิธีใช้:
@@ -51,12 +51,12 @@ INSERT INTO org_members (user_id, organization_id, org_role)
 SELECT
     up.id,
     o.id,
-    'owner'
+    'admin'
 FROM user_profiles up
 CROSS JOIN organizations o
 WHERE up.email = 'admin@sundae.local'
   AND o.slug = 'sundae'
-ON CONFLICT (user_id, organization_id) DO UPDATE SET org_role = 'owner';
+ON CONFLICT (user_id, organization_id) DO UPDATE SET org_role = 'admin';
 
 -- Assign support เป็น member ของ org SUNDAE
 INSERT INTO org_members (user_id, organization_id, org_role)

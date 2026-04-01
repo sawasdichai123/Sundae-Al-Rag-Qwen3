@@ -99,8 +99,8 @@ export const selectActiveOrgId = (state: OrgState): string | null =>
 export const selectActiveOrgRole = (state: OrgState): OrgRole | null =>
     state.activeOrgRole;
 
-export const selectIsOrgOwner = (state: OrgState): boolean =>
-    state.activeOrgRole === "owner";
+export const selectIsOrgAdmin = (state: OrgState): boolean =>
+    state.activeOrgRole === "admin";
 
 export const selectHasOrgs = (state: OrgState): boolean =>
     state.orgs.length > 0;

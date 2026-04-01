@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
-import { useOrgStore, selectIsOrgOwner, selectHasOrgs } from "../store/orgStore";
+import { useOrgStore, selectIsOrgAdmin, selectHasOrgs } from "../store/orgStore";
 import OrgSwitcher from "../components/OrgSwitcher";
 import LanguageToggle from "../components/LanguageToggle";
 import { useT } from "../i18n";
@@ -126,21 +126,26 @@ interface NavItem {
     end?: boolean;
     /** Platform roles that can see this item */
     visibleTo: ("user" | "support" | "admin")[];
-    /** If true, requires org owner role (or admin) */
-    requireOwner?: boolean;
+    /** If true, requires Org Admin role */
+    requireOrgAdmin?: boolean;
 }
 
+// Pages platform staff (admin/support) can access when viewing an external org
+// (an org that is not their home org_id). All other pages are blocked for B2B privacy.
+// /organization is allowed so platform staff can invite initial members to newly created orgs.
+const STAFF_EXTERNAL_ORG_ALLOWED = ["/danger-zone", "/organization"];
+
 const allNavItems: NavItem[] = [
-    { to: "/", labelKey: "nav.dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support", "user"], requireOwner: true },
-    { to: "/knowledge-base", labelKey: "nav.knowledgeBase", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/bots", labelKey: "nav.bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/inbox", labelKey: "nav.inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/integration", labelKey: "nav.integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOwner: true },
-    { to: "/organization", labelKey: "nav.organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOwner: true },
+    { to: "/", labelKey: "nav.dashboard", icon: DashboardIcon, end: true, visibleTo: ["admin", "support", "user"], requireOrgAdmin: true },
+    { to: "/knowledge-base", labelKey: "nav.knowledgeBase", icon: KnowledgeIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
+    { to: "/bots", labelKey: "nav.bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
+    { to: "/inbox", labelKey: "nav.inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
+    { to: "/integration", labelKey: "nav.integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
+    { to: "/organization", labelKey: "nav.organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOrgAdmin: true },
     { to: "/approvals", labelKey: "nav.approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", labelKey: "nav.webChat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
     { to: "/profile", labelKey: "nav.profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
-    { to: "/danger-zone", labelKey: "nav.dangerZone", icon: DangerZoneIcon, visibleTo: ["user", "support", "admin"], requireOwner: true },
+    { to: "/danger-zone", labelKey: "nav.dangerZone", icon: DangerZoneIcon, visibleTo: ["user", "support", "admin"], requireOrgAdmin: true },
 ];
 
 const routeLabelKeys: Record<string, string> = {
@@ -168,7 +173,7 @@ export default function DashboardLayout() {
     const t = useT();
 
     const role = user?.role ?? "user";
-    const isOrgOwner = useOrgStore(selectIsOrgOwner);
+    const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const hasOrgs = useOrgStore(selectHasOrgs);
     const orgsFetched = useOrgStore((s) => s.hasFetched);
     const fetchFailed = useOrgStore((s) => s.fetchFailed);
@@ -181,14 +186,14 @@ export default function DashboardLayout() {
 
     const currentLabel = t(routeLabelKeys[location.pathname] || "nav.dashboard");
 
-    // B2B privacy: admin/support viewing external org → only Danger Zone
+    // B2B privacy: admin/support viewing external org → limited nav
     // External org = activeOrgId differs from user's home org (organization_id)
     const isViewingExternalOrg = !!user?.organization_id && !!activeOrgId && activeOrgId !== user.organization_id;
     const isStaffOnExternalOrg = (role === "admin" || role === "support") && isViewingExternalOrg;
 
-    // B2B privacy: redirect admin/support to Danger Zone when on external org
+    // B2B privacy: redirect admin/support away from private org data on external orgs
     useEffect(() => {
-        if (isStaffOnExternalOrg && location.pathname !== "/danger-zone") {
+        if (isStaffOnExternalOrg && !STAFF_EXTERNAL_ORG_ALLOWED.includes(location.pathname)) {
             navigate("/danger-zone", { replace: true });
         }
     }, [isStaffOnExternalOrg, location.pathname, navigate]);
@@ -210,10 +215,10 @@ export default function DashboardLayout() {
         : allNavItems.filter((item) => {
             // Check platform role
             if (!item.visibleTo.includes(role)) return false;
-            // B2B privacy: staff on external org sees only Danger Zone
-            if (isStaffOnExternalOrg && item.to !== "/danger-zone") return false;
-            // Check owner requirement
-            if (item.requireOwner && !isOrgOwner && role !== "admin" && role !== "support") return false;
+            // B2B privacy: staff on external org sees only Danger Zone + Organization
+            if (isStaffOnExternalOrg && !STAFF_EXTERNAL_ORG_ALLOWED.includes(item.to)) return false;
+            // Check Org Admin requirement
+            if (item.requireOrgAdmin && !isOrgAdmin && role !== "admin" && role !== "support") return false;
             return true;
         });
 
@@ -229,7 +234,7 @@ export default function DashboardLayout() {
         ? { label: t("role.admin"), color: "bg-brand-400 text-steel-900" }
         : role === "support"
             ? { label: t("role.support"), color: "bg-violet-100 text-violet-700" }
-            : isOrgOwner
+            : isOrgAdmin
                 ? { label: t("role.adminOrg"), color: "bg-brand-100 text-brand-700" }
                 : { label: t("role.member"), color: "bg-steel-100 text-steel-600" };
 

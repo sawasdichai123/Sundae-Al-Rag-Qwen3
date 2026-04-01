@@ -77,7 +77,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                                 {org.name?.[0]?.toUpperCase() || "O"}
                             </div>
                             <span className="truncate flex-1 text-left">{org.name}</span>
-                            <span className="text-[9px] text-steel-500">{org.org_role === "owner" ? t("role.adminOrg") : org.org_role}</span>
+                            <span className="text-[9px] text-steel-500">{org.org_role === "admin" ? t("role.adminOrg") : org.org_role}</span>
                         </button>
                     ))}
                     {(role === "support" || role === "admin") && (

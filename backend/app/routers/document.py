@@ -27,7 +27,7 @@ import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_approved, require_org_owner, verify_organization
+from app.core.auth import CurrentUser, require_approved, require_org_admin, verify_organization
 from app.core.config import get_settings
 from app.core.database import get_supabase
 from app.services.ai_models import get_embedding_service
@@ -167,7 +167,7 @@ async def get_document(
 async def delete_document(
     document_id: str,
     organization_id: str,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ) -> DeleteResponse:
     """Delete a document and all associated chunks.
 
@@ -230,7 +230,7 @@ async def link_document_to_bot(
     document_id: str,
     organization_id: str,
     bot_id: Optional[str] = None,
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ):
     """Link or unlink a document to/from a bot.
 
@@ -334,7 +334,7 @@ async def upload_document(
     file: UploadFile = File(...),
     organization_id: str = Form(...),
     bot_id: Optional[str] = Form(None),
-    user: CurrentUser = Depends(require_org_owner),
+    user: CurrentUser = Depends(require_org_admin),
 ) -> UploadResponse:
     """Upload a PDF document and process it through the RAG pipeline.
 

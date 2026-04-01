@@ -1,7 +1,7 @@
 """
 SUNDAE Backend — Inbox Router
 
-Provides chat session management for support/admin/org-owner.
+Provides chat session management for Org Admins.
 Authorized users can view sessions, read messages, change session status,
 and send replies to escalated sessions.
 
@@ -102,17 +102,12 @@ async def _require_inbox_manager(
 ) -> None:
     """Verify the user belongs to the org AND can manage inbox sessions.
 
-    Combines org membership check + owner role check in a single query.
-
     Access is granted if:
-      - Platform role is support or admin (bypass — no DB query), OR
-      - User is an org owner (org_members.org_role == 'owner')
+      - User is an Org Admin (org_members.org_role == 'admin')
 
+    Platform support/admin has NO bypass — they must be org members.
     Regular members and non-members are denied.
     """
-    if user.role in ("support", "admin"):
-        return
-
     supabase = get_supabase()
     result = await (
         supabase.table("org_members")
@@ -128,10 +123,10 @@ async def _require_inbox_manager(
             detail="Access denied. You do not belong to this organization.",
         )
 
-    if result.data[0].get("org_role") != "owner":
+    if result.data[0].get("org_role") != "admin":
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Requires support, admin, or org owner role.",
+            detail="Access denied. Org Admin role required.",
         )
 
 

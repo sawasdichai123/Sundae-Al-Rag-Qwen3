@@ -380,7 +380,7 @@ export const adminApi = {
 // ── Organizations (Multi-tenant) ────────────────────────────────
 
 export const orgApi = {
-    /** Create a new organization (user becomes owner). */
+    /** Create a new organization. First invited user becomes Org Admin. */
     create: (name: string) =>
         apiClient.post<{ id: string; name: string; slug: string }>("/api/orgs", { name }),
 
@@ -430,13 +430,17 @@ export const orgApi = {
     declineInvitation: (invitationId: string) =>
         apiClient.post(`/api/orgs/invitations/${invitationId}/decline`),
 
-    /** Leave an organization (member only, not owner). */
+    /** Leave an organization. Last Org Admin cannot leave. */
     leave: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/leave`),
 
-    /** Transfer ownership to another member. */
-    transferOwnership: (orgId: string, newOwnerUserId: string) =>
-        apiClient.post(`/api/orgs/${orgId}/transfer-ownership`, { new_owner_user_id: newOwnerUserId }),
+    /** Promote a member to Org Admin. */
+    promoteMember: (orgId: string, userId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/members/${userId}/promote`),
+
+    /** Demote an Org Admin to member. */
+    demoteMember: (orgId: string, userId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/members/${userId}/demote`),
 
     /** Cancel pending deletion request. */
     cancelDeletion: (orgId: string) =>

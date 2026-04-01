@@ -261,26 +261,45 @@ def require_role(*allowed_roles: str) -> Callable:
     return _check_role
 
 
-async def require_org_owner(
+async def require_platform_admin(
     user: CurrentUser = Depends(require_approved),
 ) -> CurrentUser:
-    """Ensure the user is an owner of their active org (via org_members table).
+    """Ensure the user has platform-level admin or support role.
 
-    Admin role bypasses this check.
+    Use this for endpoints that don't require org membership but need
+    elevated platform privileges (e.g. org overview, create org, approve user).
+
+    Usage::
+
+        @router.get("/orgs/{org_id}/overview")
+        async def org_overview(user = Depends(require_platform_admin)):
+            ...
+    """
+    if user.role not in ("support", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform admin/support role required.",
+        )
+    return user
+
+
+async def require_org_admin(
+    user: CurrentUser = Depends(require_approved),
+) -> CurrentUser:
+    """Ensure the user is an Org Admin of their active org (via org_members table).
+
+    No platform-level bypass — user must actually be an org admin.
 
     IMPORTANT: For endpoints that accept org_id as a path parameter,
-    use verify_org_owner(user, org_id) instead — this dependency only
+    use verify_org_admin(user, org_id) instead — this dependency only
     checks against active_org_id from the header.
 
     Usage::
 
         @router.post("/bots")
-        async def create_bot(user = Depends(require_org_owner)):
+        async def create_bot(user = Depends(require_org_admin)):
             ...
     """
-    if user.role == "admin":
-        return user
-
     if not user.active_org_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -296,29 +315,26 @@ async def require_org_owner(
         .limit(1)
     ).execute()
 
-    if not result.data or result.data[0].get("org_role") != "owner":
+    if not result.data or result.data[0].get("org_role") != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Org owner role required.",
+            detail="Access denied. Org Admin role required.",
         )
 
     return user
 
 
-async def verify_org_owner(user: CurrentUser, organization_id: str) -> None:
-    """Verify the user is an owner of the SPECIFIC org (not just active org).
+async def verify_org_admin(user: CurrentUser, organization_id: str) -> None:
+    """Verify the user is an Org Admin of the SPECIFIC org (not just active org).
 
     Use this in endpoints that accept org_id as a path parameter to prevent
     bypass via X-Active-Org header mismatch.
 
-    Admin role bypasses this check.
+    No platform-level bypass — user must actually be an org admin.
 
     Raises:
-        HTTPException 403: User is not the owner of this org.
+        HTTPException 403: User is not an Org Admin of this org.
     """
-    if user.role == "admin":
-        return
-
     supabase = get_supabase()
     result = await (
         supabase.table("org_members")
@@ -328,10 +344,10 @@ async def verify_org_owner(user: CurrentUser, organization_id: str) -> None:
         .limit(1)
     ).execute()
 
-    if not result.data or result.data[0].get("org_role") != "owner":
+    if not result.data or result.data[0].get("org_role") != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied. Org owner role required.",
+            detail="Access denied. Org Admin role required.",
         )
 
 
@@ -343,24 +359,21 @@ async def verify_session_access(
     """Verify the user can access a specific chat session.
 
     Access is granted if:
-      - The user has support/admin role (can view all sessions), OR
-      - The user is an org owner (can view all sessions in their org), OR
+      - The user is an Org Admin (can view all sessions in their org), OR
       - The user owns the session (platform_user_id == user.id).
 
+    Platform support/admin has NO bypass — they must be org members.
     This prevents regular members from reading/writing other users' sessions.
 
     Raises:
         HTTPException 404: Session not found (or not in this org).
         HTTPException 403: User does not have access to this session.
     """
-    if user.role in ("support", "admin"):
-        return  # support/admin can access any session
-
     from app.core.database import get_supabase
     supabase = get_supabase()
 
-    # Check if user is org owner — owners can access all sessions in their org
-    owner_result = await (
+    # Check if user is Org Admin — admins can access all sessions in their org
+    admin_result = await (
         supabase.table("org_members")
         .select("org_role")
         .eq("user_id", user.id)
@@ -368,8 +381,8 @@ async def verify_session_access(
         .limit(1)
     ).execute()
 
-    if owner_result.data and owner_result.data[0].get("org_role") == "owner":
-        return  # org owner can access any session in their org
+    if admin_result.data and admin_result.data[0].get("org_role") == "admin":
+        return  # Org Admin can access any session in their org
 
     # Regular member — check session ownership
     result = await (
@@ -396,7 +409,8 @@ async def verify_organization(user: CurrentUser, organization_id: str) -> None:
     """Verify the authenticated user belongs to the given organization
     via the org_members table (many-to-many), AND the org is active.
 
-    Admin role bypasses membership check but org status is ALWAYS checked.
+    No platform-level bypass — ALL users (including support/admin) must be
+    org members to access org-specific data. This enforces data confidentiality.
 
     This is the primary multi-tenant isolation check. Every endpoint that
     accepts organization_id MUST call this before proceeding.
@@ -428,10 +442,7 @@ async def verify_organization(user: CurrentUser, organization_id: str) -> None:
             detail="Organization has been deleted.",
         )
 
-    # Support and Admin can access any active organization
-    if user.role in ("support", "admin"):
-        return
-
+    # ALL users must be org members — no platform-level bypass
     result = await (
         supabase.table("org_members")
         .select("user_id")

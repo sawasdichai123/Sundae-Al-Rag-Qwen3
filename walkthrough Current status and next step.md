@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 28 มีนาคม 2569
+> **อัพเดทล่าสุด**: 2 เมษายน 2569 — **Version 1.0**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -2949,3 +2949,273 @@ function timeAgo(dateStr: string, t: (key: string) => string): string { ... }
 3. **Persist**: เก็บใน `localStorage` key `sundae_locale` — refresh แล้วยังคงภาษาเดิม
 4. **Sidebar**: nav labels สลับ (แดชบอร์ด ↔ Dashboard, คลังความรู้ ↔ Knowledge Base ฯลฯ)
 5. **Role badges**: แอดมิน ↔ Admin, ซัพพอร์ต ↔ Support, แอดมิน ORG ↔ Admin ORG, สมาชิก ↔ Member
+
+## 40. Multi-Admin + Access Control — ปรับระบบสิทธิ์ Org (30 มีนาคม 2569)
+
+### 40.1 Overview
+
+ปรับปรุงระบบสิทธิ์ตาม **Friend Implementation Plan** แก้ 2 ปัญหาหลัก:
+1. **Support/Admin bypass org check** — เดิม platform support/admin เข้าถึงข้อมูลทุก Org ได้ (docs, bots, chat) ซึ่งละเมิด data confidentiality → **แก้: ลบ bypass ทั้งหมด** ต้องเป็น org member เท่านั้น
+2. **Owner มีได้แค่ 1 คน** — เดิมมี unique index บังคับ owner เดียว → **แก้: เปลี่ยนเป็น Multi-Admin** มีได้หลายคน
+
+### 40.2 การตัดสินใจ (Design Decisions)
+
+| คำถาม | คำตอบ |
+|-------|-------|
+| ชื่อ role แทน "Owner" | `admin` (แสดงเป็น "Org Admin" ใน UI) |
+| Inbox access สำหรับ platform support/admin | เข้าไม่ได้ — Org Admin ดูแลเอง |
+| Scope | ทำทั้งหมด (DB + Backend + Frontend) |
+| Support/Admin ถูกเชิญเข้า Org | ยังเป็น `member` เหมือนเดิม |
+
+### 40.3 SQL Migration — `017_multi_admin_and_access_control.sql`
+
+```sql
+-- 1) Drop single-owner constraint
+DROP INDEX IF EXISTS idx_org_single_owner;
+
+-- 2) Rename org_role: 'owner' → 'admin'
+ALTER TABLE org_members DROP CONSTRAINT IF EXISTS org_members_org_role_check;
+UPDATE org_members SET org_role = 'admin' WHERE org_role = 'owner';
+ALTER TABLE org_members ADD CONSTRAINT org_members_org_role_check
+    CHECK (org_role IN ('admin', 'member'));
+
+-- 3) RPC for org overview (platform support/admin use)
+CREATE OR REPLACE FUNCTION get_org_overview(target_org_id UUID)
+RETURNS JSON AS $$
+  SELECT json_build_object(
+    'bot_count', (SELECT count(*) FROM bots WHERE organization_id = target_org_id),
+    'document_count', (SELECT count(*) FROM documents WHERE organization_id = target_org_id),
+    'total_document_size_bytes', (SELECT coalesce(sum(file_size_bytes), 0) FROM documents WHERE organization_id = target_org_id),
+    'member_count', (SELECT count(*) FROM org_members WHERE organization_id = target_org_id),
+    'session_count', (SELECT count(*) FROM chat_sessions WHERE organization_id = target_org_id)
+  );
+$$ LANGUAGE sql SECURITY DEFINER;
+```
+
+> **สำคัญ**: ต้อง DROP CONSTRAINT ก่อน UPDATE ไม่งั้นจะเจอ `23514: new row violates check constraint`
+
+### 40.4 Backend — ลบ Bypass + เปลี่ยน Role
+
+#### `backend/app/core/auth.py` — 4 การเปลี่ยนแปลง
+
+| ฟังก์ชัน | เปลี่ยนแปลง |
+|----------|------------|
+| `verify_organization()` | ลบ bypass สำหรับ platform support/admin — ทุกคนต้องเป็น org member |
+| `verify_session_access()` | ลบ bypass — ต้องเป็น Org Admin หรือเจ้าของ session |
+| `require_org_owner()` → `require_org_admin()` | เปลี่ยนชื่อ + เช็ค `org_role == 'admin'` + ลบ platform bypass |
+| `require_platform_admin()` (ใหม่) | dependency สำหรับ endpoints ที่ต้องใช้ platform role เท่านั้น |
+
+```python
+# ใหม่: require_platform_admin — ไม่ต้องเป็น org member
+async def require_platform_admin(user = Depends(get_current_user)):
+    if user.role not in ("support", "admin"):
+        raise HTTPException(403, "Platform admin required")
+    return user
+```
+
+#### `backend/app/routers/organization.py` — 5 การเปลี่ยนแปลง
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| `GET /orgs/{id}/overview` (ใหม่) | ใช้ `require_platform_admin()` — คืน stats (bots, docs, members, sessions) |
+| `accept_invitation()` | คนแรก = `admin`, คนต่อไป = `member` |
+| `transfer_ownership()` → `promote_member()` + `demote_admin()` | 2 endpoints ใหม่แทน transfer (อนุญาตหลาย admin) |
+| `leave_organization()` | "admin คนสุดท้ายออกไม่ได้" แทน "owner ออกไม่ได้" |
+| ทุก `"owner"` literal | เปลี่ยนเป็น `"admin"` |
+
+#### `backend/app/routers/inbox.py`
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| `_require_inbox_manager()` | ลบ platform bypass — ต้องเป็น org member + `org_role == 'admin'` |
+
+#### `backend/app/routers/approval.py`
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| Auto-accept first member | `org_role = "admin"` แทน `"owner"` |
+
+### 40.5 Frontend — Type + Store + Components
+
+#### Types & Store
+
+| ไฟล์ | เปลี่ยนแปลง |
+|------|------------|
+| `types/index.ts` | `OrgRole = "admin" \| "member"` (ลบ `"owner"`) |
+| `store/orgStore.ts` | `selectIsOrgOwner` → `selectIsOrgAdmin` เช็ค `=== "admin"` |
+
+#### Components (9 ไฟล์)
+
+| ไฟล์ | เปลี่ยนแปลง |
+|------|------------|
+| `DashboardLayout.tsx` | `requireOwner` → `requireOrgAdmin`, `isOrgOwner` → `isOrgAdmin` |
+| `OrganizationPage.tsx` | Transfer UI → Promote/Demote UI พร้อมปุ่ม promote (member→admin) และ demote (admin→member) |
+| `App.tsx` | `orgRole !== "owner"` → `orgRole !== "admin"` |
+| `OrgSwitcher.tsx` | `org.org_role === "owner"` → `=== "admin"` |
+| `ProfilePage.tsx` | Owner badge → Admin badge |
+| `DangerZonePage.tsx` | `selectIsOrgOwner` → `selectIsOrgAdmin` |
+| `endpoints.ts` | `transferOwnership()` → `promoteMember()` + `demoteMember()` |
+
+#### i18n — เพิ่ม keys ใน `en.json` + `th.json`
+
+เพิ่ม promote/demote keys:
+```json
+"org.promote": "Promote",
+"org.promoteTitle": "Promote to Org Admin",
+"org.promoteConfirm": "Promote {name} to Org Admin?",
+"org.promoteSuccess": "{name} is now an Org Admin.",
+"org.demote": "Demote",
+"org.demoteTitle": "Demote to Member",
+"org.demoteConfirm": "Demote {name} to regular member?",
+"org.demoteSuccess": "{name} is now a regular member."
+```
+
+ลบ keys เก่า: `org.transfer*` ทั้งหมด, ไม่มี `"owner"` เหลือใน JSON
+
+### 40.6 CORS Fix
+
+เพิ่ม `"PATCH"` ใน `backend/app/main.py` CORS allowed methods:
+
+```python
+allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+```
+
+แก้ปัญหา: PATCH requests (เช่น link-bot) ถูก block เพราะ preflight OPTIONS return 400
+
+### 40.7 i18n Completeness — เพิ่ม ~120 missing keys
+
+ตรวจพบ ~120 i18n keys ที่ถูกเรียกใน code (`t("key")`) แต่ไม่มีใน JSON → เขียนใหม่ทั้ง `en.json` + `th.json` ให้ครบ 100%
+
+ตัวอย่าง keys ที่เพิ่ม:
+- `bots.*` (26 keys) — หน้า Bots ทั้งหมด
+- `kb.statusReady/Processing/Error` — แก้ naming mismatch กับ `kb.status.ready`
+- `chat.*` (14 keys) — chat history, timeAgo, status labels
+- `createOrg.*` (17 keys) — create org flow
+- `dangerZone.*` (16 keys) — danger zone UI
+
+### 40.8 Chat History Race Condition Fix
+
+แก้ bug: หน้า Web Chat แสดง welcome screen แทนประวัติแชท
+
+**สาเหตุ**: Race condition ระหว่าง `loadHistory()` กับ `loadBots()` — ถ้า loadBots resolve ก่อนและ auto-select bot ที่ไม่ตรงกับ session ล่าสุด → loadHistory หา session ไม่เจอ → ไม่ set sessionId
+
+**แก้ไข** ใน `WebChatPage.tsx`:
+```typescript
+// ก่อน — ถ้าไม่เจอ session ที่ match bot → undefined → ไม่ทำอะไร
+const lastSession = botId
+    ? sessions.find((s) => s.bot_id === botId)
+    : sessions[0];
+
+// หลัง — fallback ไป session ล่าสุดเสมอ
+const lastSession = botId
+    ? (sessions.find((s) => s.bot_id === botId) || sessions[0])
+    : sessions[0];
+```
+
+### 40.9 สรุปไฟล์ที่เปลี่ยน
+
+| ไฟล์ | ประเภท |
+|------|--------|
+| `backend/sql/017_multi_admin_and_access_control.sql` | สร้างใหม่ |
+| `backend/app/core/auth.py` | แก้ไข — ลบ bypass, เพิ่ม `require_platform_admin()` |
+| `backend/app/routers/organization.py` | แก้ไข — promote/demote, overview endpoint |
+| `backend/app/routers/inbox.py` | แก้ไข — ลบ bypass |
+| `backend/app/routers/approval.py` | แก้ไข — admin แทน owner |
+| `backend/app/main.py` | แก้ไข — เพิ่ม PATCH ใน CORS |
+| `frontend/src/types/index.ts` | แก้ไข — OrgRole type |
+| `frontend/src/store/orgStore.ts` | แก้ไข — selectIsOrgAdmin |
+| `frontend/src/api/endpoints.ts` | แก้ไข — promote/demote API |
+| `frontend/src/layouts/DashboardLayout.tsx` | แก้ไข — requireOrgAdmin |
+| `frontend/src/pages/OrganizationPage.tsx` | แก้ไข — promote/demote UI |
+| `frontend/src/pages/App.tsx` | แก้ไข — admin check |
+| `frontend/src/pages/DangerZonePage.tsx` | แก้ไข — selectIsOrgAdmin |
+| `frontend/src/pages/ProfilePage.tsx` | แก้ไข — admin badge |
+| `frontend/src/pages/WebChatPage.tsx` | แก้ไข — race condition fix |
+| `frontend/src/components/OrgSwitcher.tsx` | แก้ไข — admin check |
+| `frontend/src/i18n/en.json` | แก้ไข — ~120 keys เพิ่ม + promote/demote |
+| `frontend/src/i18n/th.json` | แก้ไข — ~120 keys เพิ่ม + promote/demote |
+
+### 40.10 Role Model สรุป (หลังแก้)
+
+```
+Platform Roles (user_profiles.role):
+  ├── user     — ผู้ใช้ทั่วไป ต้องอยู่ใน org เพื่อเข้าถึงข้อมูล
+  ├── support  — ซัพพอร์ต ดูได้เฉพาะ org overview (stats)
+  └── admin    — แอดมินแพลตฟอร์ม ดูได้เฉพาะ org overview + approve users
+
+Org Roles (org_members.org_role):
+  ├── admin    — Org Admin จัดการ docs/bots/inbox/members/settings ได้ (มีได้หลายคน)
+  └── member   — สมาชิก ใช้แชท + ดูเอกสารได้ แต่จัดการไม่ได้
+
+กฎสำคัญ:
+  • ทุกคนต้องเป็น org_member เพื่อเข้าถึงข้อมูล org — ไม่มี bypass
+  • Platform admin ที่ไม่ใช่ org member → เห็นแค่ org overview (stats)
+  • Org Admin คนสุดท้ายออกจาก org ไม่ได้ (ต้องมีอย่างน้อย 1)
+  • Promote/Demote แทน Transfer — อนุญาตหลาย admin พร้อมกัน
+```
+
+---
+
+## Section 41 — Bug Fixes & Version 1.0 (2 เมษายน 2569)
+
+### 41.1 บัคที่แก้ไขในเซสชันนี้
+
+#### 41.1.1 406 Not Acceptable — Profile Page
+**ไฟล์**: `frontend/src/store/authStore.ts`
+
+**สาเหตุ**: `.single()` ใน Supabase throw 406 เมื่อ query คืน 0 rows (เช่น `user_profiles.organization_id` เป็น stale ในระบบ multi-org)
+
+**แก้ไข**: เปลี่ยน `.single()` → `.maybeSingle()` — คืน `null` แทน error เมื่อไม่เจอ row
+
+---
+
+#### 41.1.2 500 Internal Server Error — Request Deletion
+**ไฟล์**: `backend/app/routers/organization.py`
+
+**สาเหตุ**: ฟังก์ชัน `request_deletion()` ใช้ตัวแปร `supabase` โดยไม่ได้ call `get_supabase()` ก่อน → NameError → 500
+
+**แก้ไข**: เพิ่ม `supabase = get_supabase()` ที่ต้นฟังก์ชัน
+
+---
+
+#### 41.1.3 SUNDAE Org (Platform Org) ป้องกันการลบ
+**ไฟล์**: `backend/app/routers/organization.py`, `frontend/src/pages/DangerZonePage.tsx`
+
+**สาเหตุ**: Org หลักของระบบ (SUNDAE) ควรลบไม่ได้ แต่ไม่มี guard
+
+**แก้ไข**:
+- Backend: block ถ้า org นั้นเป็น home org ของ platform staff (`admin`/`support`)
+- Frontend: ซ่อนปุ่มลบถ้า `slug === 'sundae'` แสดงข้อความแจ้งเตือนแทน
+
+---
+
+#### 41.1.4 SUNDAE Org — ซ่อนปุ่ม Promote/Demote/Leave
+**ไฟล์**: `frontend/src/pages/OrganizationPage.tsx`
+
+**สาเหตุ**: Admin/Support ไม่ควรเลื่อนตำแหน่งสมาชิกใน Org หลัก หรือกดออกจาก Org หลักได้
+
+**แก้ไข**: เพิ่ม `isProtectedOrg` flag (slug === 'sundae') → ซ่อนปุ่ม promote/demote/remove ทั้งหมด และซ่อน section "ออกจากองค์กร"
+
+---
+
+### 41.2 ไฟล์ที่เปลี่ยนในเซสชันนี้
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `frontend/src/store/authStore.ts` | `.single()` → `.maybeSingle()` |
+| `backend/app/routers/organization.py` | เพิ่ม `get_supabase()` ใน `request_deletion`, เพิ่ม platform org protection |
+| `frontend/src/pages/DangerZonePage.tsx` | ซ่อนปุ่มลบ + แสดงข้อความสำหรับ SUNDAE org |
+| `frontend/src/pages/OrganizationPage.tsx` | `isProtectedOrg` flag — ซ่อน promote/demote/leave สำหรับ SUNDAE org |
+
+---
+
+### 41.3 Version 1.0 — สรุปสถานะสุดท้าย
+
+ระบบ SUNDAE Version 1.0 พร้อมใช้งานแล้ว ครอบคลุม:
+
+- **Multi-org**: ผู้ใช้คนเดียวเข้าได้หลาย org พร้อมกัน
+- **Multi-admin**: org มี Org Admin ได้หลายคน (แทน owner คนเดียว)
+- **Access control**: platform staff เข้าถึงเฉพาะ org overview — ไม่เห็นข้อมูลละเอียดของ org อื่น
+- **Platform org protection**: SUNDAE org ลบไม่ได้, จัดการสมาชิกไม่ได้
+- **i18n**: รองรับ TH/EN ครบทุกหน้า
+- **Approval flow**: platform admin/support อนุมัติ user ก่อนใช้งาน
