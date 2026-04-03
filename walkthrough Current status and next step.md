@@ -3219,3 +3219,117 @@ Org Roles (org_members.org_role):
 - **Platform org protection**: SUNDAE org ลบไม่ได้, จัดการสมาชิกไม่ได้
 - **i18n**: รองรับ TH/EN ครบทุกหน้า
 - **Approval flow**: platform admin/support อนุมัติ user ก่อนใช้งาน
+
+---
+
+## Section 42 — Post-1.0 UX & i18n Audit (2 เมษายน 2569)
+
+### 42.1 Leave Org Flow — Redesign
+
+**ปัญหา**: ปุ่ม "ออกจากองค์กร" มีทั้งใน OrganizationPage และ ProfilePage ทำให้ user สับสน
+
+**การเปลี่ยนแปลง**:
+- **ลบ** section "ออกจากองค์กร" ออกจาก `OrganizationPage.tsx` ทั้งหมด
+- **คง** ปุ่ม Leave ไว้เฉพาะที่ `ProfilePage.tsx` เท่านั้น (single source of truth)
+
+**Logic พิเศษ — Last Admin Detection**:
+- เมื่อ Org Admin คนเดียวที่เหลือกด Leave → backend คืน error code `"LAST_ORG_ADMIN"`
+- Frontend ดัก error นี้ใน `handleLeave()` → แสดง Modal แทน toast error
+- Modal มีปุ่ม **"ไปที่ Danger Zone"** → เรียก `setActiveOrg()` + navigate ไปที่ `/danger-zone` โดยอัตโนมัติ
+- Backend: `leave_organization()` ใน `organization.py` เปลี่ยน error message เป็น `"LAST_ORG_ADMIN"` เพื่อให้ frontend detect ได้
+
+**i18n keys เพิ่ม**:
+```json
+"profile.lastAdminTitle": "ไม่สามารถออกจากองค์กรได้",
+"profile.lastAdminDesc": "คุณเป็น Org Admin คนเดียวที่เหลืออยู่...",
+"profile.goToDangerZone": "ไปที่ Danger Zone"
+```
+
+---
+
+### 42.2 Self-Demote Prevention
+
+**ปัญหา**: Org Admin สามารถกด Demote ตัวเองได้ใน Member List → อาจทำให้ไม่มี admin เหลือ (ถ้า backend ไม่ block) หรือสร้าง UX ที่ไม่ดี
+
+**แก้ไข**: ซ่อนปุ่ม Demote สำหรับ row ของตัวเอง โดยเพิ่ม condition:
+```tsx
+m.user_id !== currentUserId
+```
+ในปุ่ม Demote ของ `MemberManagement` component (`OrganizationPage.tsx`)
+
+---
+
+### 42.3 i18n Audit — แก้ Hardcoded Strings ทุกไฟล์
+
+ตรวจพบ strings ที่ hardcode เป็นภาษาไทยโดยตรงในโค้ด (ไม่ผ่าน `t()`) และแก้ทั้งหมด:
+
+#### Keys ใหม่ที่เพิ่มใน `th.json` + `en.json`
+
+| Key | TH | EN |
+|-----|----|----|
+| `common.checkingSession` | กำลังตรวจสอบเซสชัน... | Checking session... |
+| `common.loadingOrg` | กำลังโหลดข้อมูลองค์กร... | Loading organization... |
+| `common.loadingPermission` | กำลังโหลดสิทธิ์การใช้งาน... | Loading permissions... |
+| `common.justNow` | เมื่อสักครู่ | Just now |
+| `login.firstNamePlaceholder` | ชื่อจริง | First name |
+| `login.lastNamePlaceholder` | นามสกุล | Last name |
+
+#### ไฟล์ที่แก้ไข
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|------|----------------|
+| `frontend/src/App.tsx` | `LoadingScreen`: `"กำลังตรวจสอบเซสชัน..."` → `t("common.checkingSession")`<br>`HomeRedirect`: `"กำลังโหลดข้อมูลองค์กร..."` → `t("common.loadingOrg")` |
+| `frontend/src/components/ProtectedRoute.tsx` | `"กำลังโหลดสิทธิ์การใช้งาน..."` → `t("common.loadingPermission")` |
+| `frontend/src/pages/InboxPage.tsx` | `timeAgo()` รับ param `justNow: string` แทน hardcode; call site ส่ง `t("common.justNow")` |
+| `frontend/src/pages/CreateOrgPage.tsx` | placeholder `"บริษัท ABC จำกัด"` → `t("createOrg.namePlaceholder")` |
+| `frontend/src/pages/LoginPage.tsx` | placeholder `"สมชาย"` → `t("login.firstNamePlaceholder")`, `"ใจดี"` → `t("login.lastNamePlaceholder")` |
+
+---
+
+### 42.4 ไฟล์ที่เปลี่ยนในเซสชันนี้
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `frontend/src/pages/OrganizationPage.tsx` | ลบ Leave section, เพิ่ม `currentUserId` guard สำหรับ self-demote |
+| `frontend/src/pages/ProfilePage.tsx` | เพิ่ม Last Admin modal + `handleGoToDangerZone()` |
+| `frontend/src/App.tsx` | เพิ่ม `useT` import, แก้ loading messages |
+| `frontend/src/components/ProtectedRoute.tsx` | เพิ่ม `useT` import, แก้ loading message |
+| `frontend/src/pages/InboxPage.tsx` | `timeAgo()` รับ `justNow` param |
+| `frontend/src/pages/CreateOrgPage.tsx` | แก้ placeholder ผ่าน i18n |
+| `frontend/src/pages/LoginPage.tsx` | แก้ placeholder ผ่าน i18n |
+| `frontend/src/i18n/th.json` | เพิ่ม keys: `common.checkingSession/loadingOrg/loadingPermission/justNow`, `login.firstNamePlaceholder/lastNamePlaceholder`, `profile.lastAdminTitle/Desc/goToDangerZone` |
+| `frontend/src/i18n/en.json` | เพิ่ม keys เดียวกัน (EN version) |
+
+---
+
+## Section 43 — UI Flow Audit & Cleanup (3 เมษายน 2569)
+
+### 43.1 UI Flow Audit
+
+ตรวจสอบ UI Flow ทั้งระบบ พบประเด็นดังนี้:
+
+- **ExternalOrgGuard บน `/profile`** — ถูก redirect ไป `/danger-zone` เมื่อ Staff อยู่บน External Org → **intentional by design** (ถูกต้องแล้ว ต้องการให้ Staff switch กลับ home org ก่อน)
+- **Leave button ใน ProfilePage กับ SUNDAE org** — ไม่ใช่ปัญหา เพราะ admin/support ไม่มี entry ใน `org_members` ของ SUNDAE อยู่แล้ว
+- **Dead code ใน OrganizationPage** — ลบออก (ดู 43.2)
+- **Date locale hardcoded** — แก้ไขแล้ว (ดู 43.2)
+
+### 43.2 Cleanup
+
+#### Dead Code — OrganizationPage.tsx
+หลังจากย้าย Leave flow ไปที่ ProfilePage ใน Section 42 แล้ว ตัวแปรและฟังก์ชันที่เกี่ยวข้องยังเหลืออยู่ในไฟล์โดยไม่ถูกใช้งาน:
+
+**ลบออก**:
+- `const userId = useAuthStore(...)` 
+- `const [leaving, setLeaving] = useState(false)`
+- `const handleLeave = async () => { ... }`
+- `import { useNavigate }` + `const navigate = useNavigate()`
+
+#### Date Locale — ProfilePage.tsx
+`.toLocaleDateString("th-TH")` ใน Pending Invitations → `.toLocaleDateString()` เพื่อให้ใช้ locale ของ browser แทนการ hardcode ภาษาไทย
+
+### 43.3 ไฟล์ที่เปลี่ยนในเซสชันนี้
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `frontend/src/pages/OrganizationPage.tsx` | ลบ dead code: `userId`, `leaving`, `handleLeave`, `useNavigate` |
+| `frontend/src/pages/ProfilePage.tsx` | `.toLocaleDateString("th-TH")` → `.toLocaleDateString()` |

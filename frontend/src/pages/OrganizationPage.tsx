@@ -9,7 +9,6 @@
  */
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
@@ -26,6 +25,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
     const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const userRole = useAuthStore((s) => s.user?.role);
+    const currentUserId = useAuthStore((s) => s.user?.id);
     const canManage = isOrgAdmin && !isProtectedOrg;
     const [members, setMembers] = useState<OrgMember[]>([]);
     const [loading, setLoading] = useState(true);
@@ -162,8 +162,8 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                                             {promotingId === m.user_id ? "..." : t("org.promote")}
                                         </button>
                                     )}
-                                    {/* Demote Org Admin → member (only if >1 admins) */}
-                                    {m.org_role === "admin" && members.filter(x => x.org_role === "admin").length > 1 && (
+                                    {/* Demote Org Admin → member (only if >1 admins and not self) */}
+                                    {m.org_role === "admin" && members.filter(x => x.org_role === "admin").length > 1 && m.user_id !== currentUserId && (
                                         <button
                                             onClick={() => handleDemote(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                             disabled={demotingId === m.user_id}
@@ -225,16 +225,13 @@ export default function OrganizationPage() {
     const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const userRole = useAuthStore((s) => s.user?.role);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
-    const userId = useAuthStore((s) => s.user?.id);
 
     const canManage = isOrgAdmin;
-    const navigate = useNavigate();
 
     // Org details
     const [orgName, setOrgName] = useState("");
     const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
-    const [leaving, setLeaving] = useState(false);
     const [saving, setSaving] = useState(false);
 
     const isProtectedOrg = orgSlug === "sundae";
@@ -257,23 +254,6 @@ export default function OrganizationPage() {
     useEffect(() => {
         loadData();
     }, [loadData]);
-
-    const handleLeave = async () => {
-        if (!activeOrgId || !userId) return;
-        if (!confirm(t("org.leaveConfirm"))) return;
-        setLeaving(true);
-        try {
-            await orgApi.leave(activeOrgId);
-            toast("success", t("org.leaveSuccess"));
-            await fetchOrgs();
-            navigate("/create-org", { replace: true });
-        } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.leaveFailed");
-            toast("error", msg);
-        } finally {
-            setLeaving(false);
-        }
-    };
 
     const handleUpdateName = async (e: FormEvent) => {
         e.preventDefault();
@@ -345,20 +325,6 @@ export default function OrganizationPage() {
                 <MemberManagement orgId={activeOrgId} isProtectedOrg={isProtectedOrg} />
             )}
 
-            {/* 3. Leave Organization — hide for platform staff who aren't actual org members, and hide for protected org */}
-            {!loading && !isProtectedOrg && !(( userRole === "admin" || userRole === "support") && !isOrgAdmin) && (
-                <div className="mt-6 bg-white rounded-2xl border border-steel-100 p-6">
-                    <h2 className="text-sm font-semibold text-steel-800 mb-1">{t("org.leaveTitle")}</h2>
-                    <p className="text-xs text-steel-500 mb-4">{t("org.leaveDesc")}</p>
-                    <button
-                        onClick={handleLeave}
-                        disabled={leaving}
-                        className="px-5 py-2.5 bg-red-100 text-red-700 text-sm font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
-                    >
-                        {leaving ? <Spinner /> : t("org.leave")}
-                    </button>
-                </div>
-            )}
         </div>
     );
 }

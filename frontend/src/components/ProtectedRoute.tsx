@@ -8,6 +8,7 @@
 
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
+import { useT } from "../i18n";
 import type { UserRole } from "../types";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function ProtectedRoute({ allowedRoles }: Props) {
+    const t = useT();
     const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
     const role = useAuthStore((s) => s.user?.role);
 
@@ -28,7 +30,7 @@ export default function ProtectedRoute({ allowedRoles }: Props) {
     if (allowedRoles && !role) {
         return (
             <div className="min-h-[60vh] flex items-center justify-center text-sm text-steel-400">
-                กำลังโหลดสิทธิ์การใช้งาน...
+                {t("common.loadingPermission")}
             </div>
         );
     }

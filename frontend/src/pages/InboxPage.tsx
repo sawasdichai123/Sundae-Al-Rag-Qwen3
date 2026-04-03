@@ -82,13 +82,13 @@ function statusConfig(status: string) {
     }
 }
 
-function timeAgo(dateStr: string | null): string {
+function timeAgo(dateStr: string | null, justNow: string): string {
     if (!dateStr) return "—";
     const parsed = new Date(dateStr).getTime();
     if (isNaN(parsed)) return "—";
     const diff = Date.now() - parsed;
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "เมื่อสักครู่";
+    if (mins < 1) return justNow;
     if (mins < 60) return `${mins}m`;
     const hours = Math.floor(mins / 60);
     if (hours < 24) return `${hours}h`;
@@ -319,7 +319,7 @@ export default function InboxPage() {
                                             </span>
                                         </div>
                                         <span className="text-[10px] text-steel-400">
-                                            {timeAgo(session.last_message_at)}
+                                            {timeAgo(session.last_message_at, t("common.justNow"))}
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-2">

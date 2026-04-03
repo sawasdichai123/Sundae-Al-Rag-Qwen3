@@ -10,6 +10,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./api/supabaseClient";
 import { useAuthStore } from "./store/authStore";
 import { useOrgStore } from "./store/orgStore";
+import { useT } from "./i18n";
 
 // Layouts
 import DashboardLayout from "./layouts/DashboardLayout";
@@ -111,12 +112,13 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 // ── Loading Screen ──────────────────────────────────────────────
 
 function LoadingScreen() {
+    const t = useT();
     return (
         <div className="min-h-screen bg-steel-50 flex flex-col items-center justify-center gap-4">
             <div className="w-12 h-12 rounded-2xl bg-brand-400 flex items-center justify-center text-steel-900 text-lg font-bold shadow-md animate-pulse">
                 S
             </div>
-            <p className="text-sm text-steel-400">กำลังตรวจสอบเซสชัน...</p>
+            <p className="text-sm text-steel-400">{t("common.checkingSession")}</p>
         </div>
     );
 }
@@ -124,6 +126,7 @@ function LoadingScreen() {
 // ── Role-based Home Redirect ─────────────────────────────────────
 
 function HomeRedirect() {
+    const t = useT();
     const role = useAuthStore((s) => s.user?.role);
     const orgRole = useOrgStore((s) => s.activeOrgRole);
     const hasFetched = useOrgStore((s) => s.hasFetched);
@@ -132,7 +135,7 @@ function HomeRedirect() {
     if (role === "user" && !hasFetched) {
         return (
             <div className="min-h-[60vh] flex items-center justify-center text-sm text-steel-400">
-                กำลังโหลดข้อมูลองค์กร...
+                {t("common.loadingOrg")}
             </div>
         );
     }

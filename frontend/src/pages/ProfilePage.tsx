@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
@@ -19,10 +20,12 @@ import { useT } from "../i18n";
 
 export default function ProfilePage() {
     const t = useT();
+    const navigate = useNavigate();
     const user = useAuthStore((s) => s.user);
     const fetchProfile = useAuthStore((s) => s.fetchProfile);
     const orgs = useOrgStore((s) => s.orgs);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
+    const setActiveOrg = useOrgStore((s) => s.setActiveOrg);
     const toast = useToastStore((s) => s.addToast);
 
     const [invitations, setInvitations] = useState<MyInvitation[]>([]);
@@ -30,6 +33,7 @@ export default function ProfilePage() {
     const [acceptingId, setAcceptingId] = useState<string | null>(null);
     const [decliningId, setDecliningId] = useState<string | null>(null);
     const [leavingOrgId, setLeavingOrgId] = useState<string | null>(null);
+    const [lastAdminOrgId, setLastAdminOrgId] = useState<string | null>(null);
 
     // Edit name state
     const [editing, setEditing] = useState(false);
@@ -184,11 +188,21 @@ export default function ProfilePage() {
             toast("success", t("profile.leaveSuccess").replace("{name}", orgName));
             await fetchOrgs();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("profile.leaveFailed");
-            toast("error", msg);
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            if (detail === "LAST_ORG_ADMIN") {
+                setLastAdminOrgId(orgId);
+            } else {
+                toast("error", detail || t("profile.leaveFailed"));
+            }
         } finally {
             setLeavingOrgId(null);
         }
+    };
+
+    const handleGoToDangerZone = (orgId: string) => {
+        setLastAdminOrgId(null);
+        setActiveOrg(orgId);
+        navigate("/danger-zone");
     };
 
     const roleBadge = (role: string) => {
@@ -409,7 +423,7 @@ export default function ProfilePage() {
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-steel-800">{inv.org_name}</p>
                                     <p className="text-xs text-steel-400">
-                                        {isNaN(new Date(inv.created_at).getTime()) ? "" : new Date(inv.created_at).toLocaleDateString("th-TH")}
+                                        {isNaN(new Date(inv.created_at).getTime()) ? "" : new Date(inv.created_at).toLocaleDateString()}
                                     </p>
                                 </div>
                                 <div className="flex gap-2">
@@ -433,6 +447,30 @@ export default function ProfilePage() {
                     </div>
                 )}
             </div>
+
+            {/* Last Admin Modal */}
+            {lastAdminOrgId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                    <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
+                        <h3 className="text-base font-bold text-steel-900 mb-2">{t("profile.lastAdminTitle")}</h3>
+                        <p className="text-sm text-steel-500 mb-5">{t("profile.lastAdminDesc")}</p>
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setLastAdminOrgId(null)}
+                                className="px-4 py-2 bg-steel-100 text-steel-600 text-xs font-bold rounded-xl hover:bg-steel-200 transition-colors cursor-pointer"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                onClick={() => handleGoToDangerZone(lastAdminOrgId)}
+                                className="px-4 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition-colors cursor-pointer"
+                            >
+                                {t("profile.goToDangerZone")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

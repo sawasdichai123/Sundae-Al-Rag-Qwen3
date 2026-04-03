@@ -195,7 +195,7 @@ export default function LoginPage() {
                             <input
                                 id="reg-firstname" type="text" value={firstName}
                                 onChange={(e) => setFirstName(e.target.value)}
-                                placeholder="สมชาย" autoComplete="given-name" autoFocus
+                                placeholder={t("login.firstNamePlaceholder")} autoComplete="given-name" autoFocus
                                 required disabled={registerLoading}
                                 className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
                             />
@@ -205,7 +205,7 @@ export default function LoginPage() {
                             <input
                                 id="reg-lastname" type="text" value={lastName}
                                 onChange={(e) => setLastName(e.target.value)}
-                                placeholder="ใจดี" autoComplete="family-name"
+                                placeholder={t("login.lastNamePlaceholder")} autoComplete="family-name"
                                 required disabled={registerLoading}
                                 className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
                             />

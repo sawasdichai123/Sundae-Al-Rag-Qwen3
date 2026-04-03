@@ -196,7 +196,7 @@ export default function CreateOrgPage() {
                                 type="text"
                                 value={orgName}
                                 onChange={(e) => setOrgName(e.target.value)}
-                                placeholder="บริษัท ABC จำกัด"
+                                placeholder={t("createOrg.namePlaceholder")}
                                 required
                                 disabled={creating}
                                 autoFocus

@@ -832,21 +832,8 @@ async def leave_organization(
             .eq("org_role", "admin")
         ).execute()
         if (admin_count.count or 0) <= 1:
-            # Check if there are other members who would be stranded without an admin
-            total_count = await (
-                supabase.table("org_members")
-                .select("user_id", count="exact")
-                .eq("organization_id", org_id)
-            ).execute()
-            if (total_count.count or 0) > 1:
-                raise HTTPException(400, "ไม่สามารถออกได้ คุณเป็น Org Admin คนสุดท้าย กรุณาเลื่อนตำแหน่งสมาชิกคนอื่นก่อน")
-            # User is the only member — allow leave and delete the now-empty org
-            await (
-                supabase.table("organizations")
-                .update({"status": "deleted"})
-                .eq("id", org_id)
-            ).execute()
-            logger.info("Auto-deleted empty org %s (last member %s left)", org_id, user.email)
+            # Last Org Admin — must request deletion via Danger Zone instead
+            raise HTTPException(400, "LAST_ORG_ADMIN")
 
     # Remove from org_members
     await (
