@@ -77,6 +77,8 @@ function ChevronDownIcon() {
 
 export default function WebChatPage() {
     const t = useT();
+    const tRef = useRef(t);
+    useEffect(() => { tRef.current = t; }, [t]);
     const [messages, setMessages] = useState<ChatBubble[]>([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -91,7 +93,10 @@ export default function WebChatPage() {
     const user = useAuthStore((s) => s.user);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const orgId = activeOrgId || user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
-    const [platformUserId] = useState(() => user?.id || `web-${crypto.randomUUID().slice(0, 8)}`);
+    const [platformUserId, setPlatformUserId] = useState(() => user?.id || `web-${crypto.randomUUID().slice(0, 8)}`);
+    useEffect(() => {
+        if (user?.id) setPlatformUserId(user.id);
+    }, [user?.id]);
 
     // Bot selector
     const [bots, setBots] = useState<Bot[]>([]);
@@ -217,14 +222,20 @@ export default function WebChatPage() {
                 }
 
                 // Check current session status via polling endpoint
+                // Use epoch only to read status — but cap at "now" so poll doesn't re-fetch
                 const pollRes = await inboxApi.getNewMessages(sessionId, orgId, "1970-01-01T00:00:00Z");
                 if (cancelled) return;
                 if (pollRes.data?.session_status) {
                     setSessionStatus(pollRes.data.session_status as SessionStatus);
-                    // Set poll timestamp to latest message to avoid re-fetching
+                    // Anchor poll timestamp to latest message, or to now if none
                     const msgs = pollRes.data.messages;
-                    if (msgs && msgs.length > 0) {
-                        lastPollTimestampRef.current = msgs[msgs.length - 1].created_at;
+                    lastPollTimestampRef.current = (msgs && msgs.length > 0)
+                        ? msgs[msgs.length - 1].created_at
+                        : new Date().toISOString();
+                } else {
+                    // No status returned — anchor to now so first poll doesn't fetch all history
+                    if (!lastPollTimestampRef.current) {
+                        lastPollTimestampRef.current = new Date().toISOString();
                     }
                 }
             } catch (err) {
@@ -278,13 +289,21 @@ export default function WebChatPage() {
     useEffect(() => {
         if (!orgId || !sessionId) return;
 
+        // aborted flag prevents state updates from in-flight requests
+        // that complete after the effect cleanup runs
+        let aborted = false;
+
         const interval = setInterval(async () => {
             // No need to poll terminal statuses
             if (sessionStatusRef.current === "resolved") return;
             if (document.hidden) return; // skip polling when tab is not visible
+            if (aborted) return;
             try {
-                const after = lastPollTimestampRef.current || new Date(0).toISOString();
+                // Use current time as fallback — prevents fetching entire history
+                // on first poll when session was just created
+                const after = lastPollTimestampRef.current ?? new Date().toISOString();
                 const res = await inboxApi.getNewMessages(sessionId, orgId, after);
+                if (aborted) return;
                 const pollData = res.data;
 
                 // Process new messages
@@ -319,7 +338,7 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: t("chat.staffReturnedAI"),
+                                content: tRef.current("chat.staffReturnedAI"),
                                 timestamp: new Date(),
                             },
                         ]);
@@ -329,7 +348,7 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: t("chat.staffHelped"),
+                                content: tRef.current("chat.staffHelped"),
                                 timestamp: new Date(),
                             },
                         ]);
@@ -339,18 +358,22 @@ export default function WebChatPage() {
                             {
                                 id: crypto.randomUUID(),
                                 role: "system",
-                                content: t("chat.staffClosed"),
+                                content: tRef.current("chat.staffClosed"),
                                 timestamp: new Date(),
                             },
                         ]);
                     }
                 }
             } catch (err) {
+                if (aborted) return;
                 console.error("[Poll] Failed to fetch new messages:", err);
             }
         }, 3000);
 
-        return () => clearInterval(interval);
+        return () => {
+            aborted = true;
+            clearInterval(interval);
+        };
     }, [sessionId, orgId]);
 
     // Request human handoff
@@ -367,7 +390,7 @@ export default function WebChatPage() {
                 {
                     id: crypto.randomUUID(),
                     role: "system",
-                    content: t("chat.handoffFailed"),
+                    content: tRef.current("chat.handoffFailed"),
                     timestamp: new Date(),
                 },
             ]);
@@ -747,9 +770,9 @@ export default function WebChatPage() {
                                 {/* Suggestion Cards */}
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-lg">
                                     {[
-                                        { icon: "📋", text: t("chat.suggestion1") },
-                                        { icon: "💼", text: t("chat.suggestion2") },
-                                        { icon: "💰", text: t("chat.suggestion3") },
+                                        { text: t("chat.suggestion1") },
+                                        { text: t("chat.suggestion2") },
+                                        { text: t("chat.suggestion3") },
                                     ].map((s) => (
                                         <button
                                             key={s.text}
@@ -760,7 +783,6 @@ export default function WebChatPage() {
                                             }}
                                             className="group flex flex-col items-start gap-2 p-4 bg-white rounded-2xl border border-steel-200 hover:border-brand-400 hover:shadow-md hover:shadow-brand-100/50 transition-all duration-200 cursor-pointer text-left"
                                         >
-                                            <span className="text-lg">{s.icon}</span>
                                             <span className="text-xs text-steel-600 group-hover:text-steel-800 transition-colors leading-relaxed whitespace-pre-line">
                                                 {s.text}
                                             </span>

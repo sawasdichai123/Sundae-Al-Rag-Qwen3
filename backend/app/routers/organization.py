@@ -31,7 +31,9 @@ SECURITY:
 from __future__ import annotations
 
 import logging
+import random
 import re
+import string
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -47,6 +49,7 @@ from app.core.auth import (
     verify_organization,
 )
 from app.core.database import get_supabase
+from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -151,25 +154,31 @@ async def create_org(
     now_iso = datetime.now(timezone.utc).isoformat()
     slug = _slugify(name)
 
-    # Make slug unique by appending timestamp suffix if needed
-    slug_check = await (
-        supabase.table("organizations").select("id").eq("slug", slug).limit(1)
-    ).execute()
-    if slug_check.data:
-        slug = f"{slug}-{int(datetime.now(timezone.utc).timestamp())}"
+    # 1. Create organization — rely on DB UNIQUE constraint instead of pre-check
+    # to eliminate slug collision race condition. Retry once with random suffix on duplicate.
+    org_result = None
+    for attempt in range(2):
+        insert_slug = slug if attempt == 0 else f"{slug}-{''.join(random.choices(string.ascii_lowercase, k=6))}"
+        try:
+            org_result = await (
+                supabase.table("organizations").insert({
+                    "name": name,
+                    "slug": insert_slug,
+                    "created_at": now_iso,
+                })
+            ).execute()
+            slug = insert_slug
+            break
+        except Exception as exc:
+            err_str = str(exc).lower()
+            if attempt == 0 and ("duplicate" in err_str or "unique" in err_str or "23505" in err_str):
+                logger.warning("Slug '%s' collision — retrying with random suffix", slug)
+                continue
+            logger.error("Org create failed (insert organizations): %s", exc)
+            raise HTTPException(status_code=500, detail=f"Failed to create organization: {exc}")
 
-    # 1. Create organization
-    try:
-        org_result = await (
-            supabase.table("organizations").insert({
-                "name": name,
-                "slug": slug,
-                "created_at": now_iso,
-            })
-        ).execute()
-    except Exception as exc:
-        logger.error("Org create failed (insert organizations): %s", exc)
-        raise HTTPException(status_code=500, detail=f"Failed to create organization: {exc}")
+    if org_result is None:
+        raise HTTPException(status_code=500, detail="Failed to create organization after retry.")
 
     org_error = getattr(org_result, "error", None)
     if org_error:
@@ -391,7 +400,7 @@ async def accept_invitation(
             .update({"status": "revoked"})
             .eq("id", inv_id)
         ).execute()
-        raise HTTPException(400, "คำเชิญนี้หมดอายุแล้ว (เกิน 30 วัน) กรุณาขอคำเชิญใหม่")
+        raise HTTPException(400, "This invitation has expired (over 30 days). Please request a new invitation.")
 
     # 3. Check not already a member
     existing = await (
@@ -422,13 +431,18 @@ async def accept_invitation(
     ).execute()
     assigned_role = "admin" if not admin_check.data else "member"
 
+    # Use upsert + ignore_duplicates to prevent duplicate inserts from concurrent accepts
     await (
-        supabase.table("org_members").insert({
-            "user_id": user.id,
-            "organization_id": org_id,
-            "org_role": assigned_role,
-            "joined_at": now_iso,
-        })
+        supabase.table("org_members").upsert(
+            {
+                "user_id": user.id,
+                "organization_id": org_id,
+                "org_role": assigned_role,
+                "joined_at": now_iso,
+            },
+            on_conflict="user_id,organization_id",
+            ignore_duplicates=True,
+        )
     ).execute()
 
     logger.info(
@@ -541,11 +555,26 @@ async def update_org(
         raise HTTPException(400, "No fields to update.")
 
     supabase = get_supabase()
-    result = await (
-        supabase.table("organizations")
-        .update(updates)
-        .eq("id", org_id)
-    ).execute()
+
+    # Retry once on slug duplicate (same pattern as create_org)
+    base_slug = updates.get("slug", "")
+    for attempt in range(2):
+        if attempt == 1 and base_slug:
+            updates["slug"] = f"{base_slug}-{''.join(random.choices(string.ascii_lowercase, k=6))}"
+        try:
+            result = await (
+                supabase.table("organizations")
+                .update(updates)
+                .eq("id", org_id)
+            ).execute()
+            break
+        except Exception as exc:
+            err_str = str(exc).lower()
+            if attempt == 0 and ("duplicate" in err_str or "unique" in err_str or "23505" in err_str):
+                logger.warning("Slug '%s' collision on update — retrying with suffix", base_slug)
+                continue
+            logger.error("Org update failed: %s", exc)
+            raise HTTPException(500, "Failed to update organization.")
 
     if not result.data:
         raise HTTPException(500, "Failed to update organization.")
@@ -582,7 +611,7 @@ async def request_deletion(
         .limit(1)
     ).execute()
     if protected.count and protected.count > 0:
-        raise HTTPException(400, "ไม่สามารถลบ Org หลักของระบบได้")
+        raise HTTPException(400, "Cannot delete the platform's root organization.")
 
     await (
         supabase.table("organizations")
@@ -621,7 +650,7 @@ async def confirm_deletion(
 
     requester = org.get("deletion_requested_by")
     if not requester:
-        raise HTTPException(400, "ไม่มีผู้ขอลบองค์กรนี้ กรุณาให้ Owner ส่งคำขอก่อน")
+        raise HTTPException(400, "No deletion request found for this organization. An Org Admin must submit a request first.")
     if requester == user.id:
         raise HTTPException(400, "Cannot confirm your own deletion request. Another party must confirm.")
 
@@ -869,7 +898,7 @@ async def promote_member(
     await verify_org_admin(user, org_id)
 
     if target_user_id == user.id:
-        raise HTTPException(400, "คุณเป็น Org Admin อยู่แล้ว")
+        raise HTTPException(400, "You are already an Org Admin.")
 
     supabase = get_supabase()
 
@@ -883,10 +912,10 @@ async def promote_member(
     ).execute()
 
     if not target.data:
-        raise HTTPException(404, "ไม่พบสมาชิกคนนี้ในองค์กร")
+        raise HTTPException(404, "Member not found in this organization.")
 
     if target.data[0]["org_role"] == "admin":
-        raise HTTPException(400, "สมาชิกคนนี้เป็น Org Admin อยู่แล้ว")
+        raise HTTPException(400, "This member is already an Org Admin.")
 
     # Promote to admin
     await (
@@ -900,7 +929,7 @@ async def promote_member(
         "Member promoted to admin: org %s, user %s, by %s",
         org_id, target_user_id, user.email,
     )
-    return MessageResponse(message="เลื่อนตำแหน่งเป็น Org Admin สำเร็จ")
+    return MessageResponse(message="Member promoted to Org Admin successfully.")
 
 
 @router.post("/{org_id}/members/{target_user_id}/demote", response_model=MessageResponse)
@@ -926,10 +955,10 @@ async def demote_admin(
     ).execute()
 
     if not target.data:
-        raise HTTPException(404, "ไม่พบสมาชิกคนนี้ในองค์กร")
+        raise HTTPException(404, "Member not found in this organization.")
 
     if target.data[0]["org_role"] != "admin":
-        raise HTTPException(400, "สมาชิกคนนี้ไม่ใช่ Org Admin")
+        raise HTTPException(400, "This member is not an Org Admin.")
 
     # Check not the last admin
     admin_count = await (
@@ -939,7 +968,7 @@ async def demote_admin(
         .eq("org_role", "admin")
     ).execute()
     if (admin_count.count or 0) <= 1:
-        raise HTTPException(400, "ไม่สามารถลดตำแหน่งได้ ต้องมี Org Admin อย่างน้อย 1 คน")
+        raise HTTPException(400, "Cannot demote: the organization must have at least one Org Admin.")
 
     # Demote to member
     await (
@@ -953,7 +982,7 @@ async def demote_admin(
         "Admin demoted to member: org %s, user %s, by %s",
         org_id, target_user_id, user.email,
     )
-    return MessageResponse(message="ลดตำแหน่งเป็นสมาชิกสำเร็จ")
+    return MessageResponse(message="Admin demoted to member successfully.")
 
 
 # ── Cancel Pending Deletion ──────────────────────────────────────
@@ -978,7 +1007,7 @@ async def cancel_deletion(
         raise HTTPException(404, "Organization not found.")
 
     if org_result.data.get("status") != "pending_deletion":
-        raise HTTPException(400, "องค์กรนี้ไม่ได้อยู่ในสถานะรอลบ")
+        raise HTTPException(400, "This organization is not pending deletion.")
 
     # Only Org Admin or platform support/admin can cancel
     if user.role not in ("admin", "support"):
@@ -1092,11 +1121,11 @@ async def invite_member(
 
     email = body.email.strip().lower()
     if not email:
-        raise HTTPException(400, "กรุณาระบุ email")
+        raise HTTPException(400, "Email is required.")
     if len(email) > 254:
-        raise HTTPException(400, "Email ยาวเกินไป (สูงสุด 254 ตัวอักษร)")
+        raise HTTPException(400, "Email is too long (max 254 characters).")
     if not EMAIL_RE.match(email):
-        raise HTTPException(400, "รูปแบบ email ไม่ถูกต้อง")
+        raise HTTPException(400, "Invalid email format.")
 
     # Check not already a member (efficient 2-query approach)
     profile_result = await (
@@ -1116,7 +1145,7 @@ async def invite_member(
             .limit(1)
         ).execute()
         if member_check.data:
-            raise HTTPException(400, f"{email} เป็นสมาชิกขององค์กรนี้อยู่แล้ว")
+            raise HTTPException(400, f"{email} is already a member of this organization.")
 
     # Check not already invited (pending)
     existing_inv = await (
@@ -1128,7 +1157,7 @@ async def invite_member(
         .limit(1)
     ).execute()
     if existing_inv.data:
-        raise HTTPException(400, f"มีคำเชิญที่รอดำเนินการสำหรับ {email} อยู่แล้ว")
+        raise HTTPException(400, f"A pending invitation already exists for {email}.")
 
     # Create invitation
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -1240,4 +1269,107 @@ async def update_my_profile(
         last_name=last_name or None,
         avatar_url=body.avatar_url,
         email=user.email,
+    )
+
+
+# ── LINE Integration Config ──────────────────────────────────────
+
+
+class LineConfigRequest(BaseModel):
+    """Request body for updating LINE integration settings."""
+
+    line_channel_secret: str | None = None
+    line_access_token: str | None = None
+    is_line_enabled: bool | None = None
+
+
+class LineConfigResponse(BaseModel):
+    """Response for LINE integration config (credentials are never returned)."""
+
+    is_line_enabled: bool
+    has_credentials: bool
+    webhook_url: str
+
+
+@router.get("/{org_id}/line-config", response_model=LineConfigResponse)
+async def get_line_config(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+) -> LineConfigResponse:
+    """Get LINE integration status for an org (Org Admin only)."""
+    await verify_org_admin(user, org_id)
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("organizations")
+        .select("is_line_enabled, line_access_token, line_channel_secret")
+        .eq("id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    org = result.data[0]
+    settings = get_settings()
+    base_url = settings.public_api_url.rstrip("/") if settings.public_api_url else ""
+    webhook_url = (
+        f"{base_url}/api/webhook/line/{org_id}"
+        if base_url
+        else f"/api/webhook/line/{org_id} (ตั้งค่า PUBLIC_API_URL ใน .env เพื่อแสดง URL เต็ม)"
+    )
+
+    return LineConfigResponse(
+        is_line_enabled=org.get("is_line_enabled") or False,
+        has_credentials=bool(org.get("line_access_token") and org.get("line_channel_secret")),
+        webhook_url=webhook_url,
+    )
+
+
+@router.put("/{org_id}/line-config", response_model=LineConfigResponse)
+async def update_line_config(
+    org_id: str,
+    body: LineConfigRequest,
+    user: CurrentUser = Depends(require_approved),
+) -> LineConfigResponse:
+    """Update LINE integration credentials and toggle (Org Admin only)."""
+    await verify_org_admin(user, org_id)
+
+    updates: dict = {}
+    if body.line_channel_secret is not None:
+        updates["line_channel_secret"] = body.line_channel_secret or None
+    if body.line_access_token is not None:
+        updates["line_access_token"] = body.line_access_token or None
+    if body.is_line_enabled is not None:
+        updates["is_line_enabled"] = body.is_line_enabled
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update.")
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("organizations")
+        .update(updates)
+        .eq("id", org_id)
+        .select("is_line_enabled, line_access_token, line_channel_secret")
+    ).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    org = result.data[0]
+    settings = get_settings()
+    base_url = settings.public_api_url.rstrip("/") if settings.public_api_url else ""
+    webhook_url = (
+        f"{base_url}/api/webhook/line/{org_id}"
+        if base_url
+        else f"/api/webhook/line/{org_id} (ตั้งค่า PUBLIC_API_URL ใน .env เพื่อแสดง URL เต็ม)"
+    )
+
+    logger.info("[LINE] Org %s LINE config updated by %s", org_id[:8], user.email)
+
+    return LineConfigResponse(
+        is_line_enabled=org.get("is_line_enabled") or False,
+        has_credentials=bool(org.get("line_access_token") and org.get("line_channel_secret")),
+        webhook_url=webhook_url,
     )

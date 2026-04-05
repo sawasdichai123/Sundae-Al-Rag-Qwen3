@@ -90,6 +90,30 @@ let consecutiveRefreshFailures = 0;
 
 let refreshPromise: Promise<void> | null = null;
 
+// ── Cross-Tab Token Sync (BroadcastChannel) ──────────────────────
+// When one tab refreshes successfully, it broadcasts to all other
+// tabs so they skip their own refresh and reset failure counters.
+const _authChannel = (() => {
+    try {
+        return typeof BroadcastChannel !== "undefined"
+            ? new BroadcastChannel("sundae-auth-sync")
+            : null;
+    } catch {
+        return null;
+    }
+})();
+
+if (_authChannel) {
+    _authChannel.onmessage = (e: MessageEvent) => {
+        if (e.data?.type === "token-refreshed") {
+            // Another tab refreshed successfully — reset our counters
+            lastRefreshTime = Date.now();
+            consecutiveRefreshFailures = 0;
+            refreshPromise = null; // allow next refresh to run fresh
+        }
+    };
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
     let timeoutId: number | undefined;
     const timeoutPromise = new Promise<T>((_resolve, reject) => {
@@ -119,6 +143,8 @@ export async function refreshOnce(): Promise<void> {
             } else {
                 lastRefreshTime = Date.now();
                 consecutiveRefreshFailures = 0;
+                // Notify other tabs so they skip their own refresh
+                try { _authChannel?.postMessage({ type: "token-refreshed" }); } catch { /* ignore */ }
             }
         } catch (err) {
             console.warn("[Auth] Periodic refresh timed out or errored:", err);

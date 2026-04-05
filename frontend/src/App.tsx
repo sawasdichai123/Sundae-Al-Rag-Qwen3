@@ -45,6 +45,15 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const setSession = useAuthStore((s) => s.setSession);
     const fetchProfile = useAuthStore((s) => s.fetchProfile);
     const setLoading = useAuthStore((s) => s.setLoading);
+    const signOut = useAuthStore((s) => s.signOut);
+
+    // Handle session-expired event from axios interceptor.
+    // Calls signOut() which clears auth state → ProtectedRoute redirects to /login naturally.
+    useEffect(() => {
+        const handler = () => signOut();
+        window.addEventListener("session-expired", handler);
+        return () => window.removeEventListener("session-expired", handler);
+    }, [signOut]);
 
     useEffect(() => {
         // Safety timeout — never block longer than 5 seconds (accounts for slow networks)
@@ -154,8 +163,19 @@ function HomeRedirect() {
 function ExternalOrgGuard({ children }: { children: React.ReactElement }) {
     const user = useAuthStore((s) => s.user);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const orgs = useOrgStore((s) => s.orgs);
     const role = user?.role;
-    const isExternal = !!user?.organization_id && !!activeOrgId && activeOrgId !== user.organization_id;
+
+    // Determine the user's "home" org:
+    //   1. user.organization_id (legacy single-org field) if set
+    //   2. First org in the list where user holds "admin" role (invitation-joined staff)
+    //   3. null → treat all orgs as home (fail open — don't block)
+    const homeOrgId =
+        user?.organization_id ||
+        orgs.find((o) => o.org_role === "admin")?.id ||
+        null;
+
+    const isExternal = !!homeOrgId && !!activeOrgId && activeOrgId !== homeOrgId;
 
     if ((role === "admin" || role === "support") && isExternal) {
         return <Navigate to="/danger-zone" replace />;

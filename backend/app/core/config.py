@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     line_channel_secret: str = Field(
         default="", description="LINE Channel Secret for webhook signature verification"
     )
+    public_api_url: str = Field(
+        default="",
+        description="Public-facing API base URL used to generate LINE webhook URLs (e.g. https://api.example.com)",
+    )
 
     # ── Ollama / LLM ────────────────────────────────────────────
     ollama_base_url: str = Field(
@@ -61,6 +65,8 @@ class Settings(BaseSettings):
     )
     reranker_score_threshold: float = Field(
         default=0.5,
+        ge=0.0,
+        le=1.0,
         description="Minimum reranker score to keep a parent chunk",
     )
 
@@ -72,6 +78,21 @@ class Settings(BaseSettings):
 
     # ── Vector Search ────────────────────────────────────────────
     vector_search_top_k: int = 20
+
+    # ── Chunk Insert Batch Sizes ─────────────────────────────────
+    parent_chunk_batch_size: int = Field(default=100, description="DB insert batch size for parent chunks")
+    child_chunk_batch_size: int = Field(default=50, description="DB insert batch size for child chunks (smaller due to embedding vectors)")
+
+    # ── Auth Cache ───────────────────────────────────────────────
+    redis_url: str | None = Field(
+        default=None,
+        description="Redis URL for distributed auth profile cache (e.g. redis://localhost:6379/0). "
+                    "Required for multi-worker deployments. Falls back to in-memory cache if not set.",
+    )
+    cache_ttl_seconds: int = Field(
+        default=300,
+        description="Auth profile cache TTL in seconds (default 5 min)",
+    )
 
     model_config = {
         "env_file": ("../.env", ".env"),

@@ -147,7 +147,7 @@ export default function ResetPasswordPage() {
                 setError(t("resetPassword.samePassword"));
             } else {
                 console.error("[ResetPassword] updateUser error:", msg);
-                setError(`ไม่สามารถเปลี่ยนรหัสผ่านได้: ${msg}`);
+                setError(t("resetPassword.updateFailed"));
             }
             setLoading(false);
             return;

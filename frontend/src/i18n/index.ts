@@ -39,3 +39,9 @@ export function useT() {
         [locale],
     );
 }
+
+// Non-hook version for use in Zustand stores and plain TS files
+export function getT(): (key: string) => string {
+    const locale = useLocaleStore.getState().locale;
+    return (key: string) => translations[locale]?.[key] ?? key;
+}

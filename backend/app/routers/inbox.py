@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from pydantic import BaseModel
 
 from app.core.auth import CurrentUser, require_approved, verify_organization, verify_session_access
@@ -81,6 +81,15 @@ class StatusUpdateResponse(BaseModel):
     new_status: str
 
 
+class PagedSessionsResponse(BaseModel):
+    """Paginated response for chat sessions."""
+
+    sessions: list[SessionResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 class AdminMessageRequest(BaseModel):
     """Request body for admin sending a message."""
 
@@ -133,28 +142,34 @@ async def _require_inbox_manager(
 # ── Endpoints ────────────────────────────────────────────────────
 
 
-@router.get("/sessions", response_model=list[SessionResponse])
+@router.get("/sessions", response_model=PagedSessionsResponse)
 async def list_sessions(
     organization_id: str,
     user: CurrentUser = Depends(require_approved),
-) -> list[SessionResponse]:
-    """List all chat sessions for an organization.
+    page: int = Query(default=1, ge=1, description="Page number (1-based)"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Items per page"),
+) -> PagedSessionsResponse:
+    """List chat sessions for an organization with pagination.
 
-    Accessible by support, admin, or org owner.
+    Accessible by org admin only.
     Sessions are ordered by last_message_at (newest first).
     """
     await _require_inbox_manager(user, organization_id)
     supabase = get_supabase()
 
+    offset = (page - 1) * page_size
+
     try:
         result = await (
             supabase.table("chat_sessions")
-            .select("*")
+            .select("*", count="exact")
             .eq("organization_id", organization_id)
             .order("last_message_at", desc=True)
+            .range(offset, offset + page_size - 1)
         ).execute()
 
         sessions = result.data or []
+        total = result.count or 0
 
         # Resolve user names from user_profiles
         all_user_ids = {s["platform_user_id"] for s in sessions if s.get("platform_user_id")}
@@ -177,10 +192,15 @@ async def list_sessions(
             except Exception as exc:
                 logger.warning("Failed to resolve user names: %s", exc)
 
-        return [
-            SessionResponse(**s, user_name=name_map.get(s.get("platform_user_id", ""), None))
-            for s in sessions
-        ]
+        return PagedSessionsResponse(
+            sessions=[
+                SessionResponse(**s, user_name=name_map.get(s.get("platform_user_id", ""), None))
+                for s in sessions
+            ],
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
 
     except Exception as exc:
         logger.error("Failed to list sessions (org=%s): %s", organization_id, exc)
@@ -410,18 +430,18 @@ async def send_admin_message(
         # ── LINE Push: if this session is from LINE, push the reply ──
         try:
             if sess.get("platform_source") == "line" and sess.get("platform_user_id"):
-                bot_result = await (
-                    supabase.table("bots")
+                org_result = await (
+                    supabase.table("organizations")
                     .select("line_access_token")
-                    .eq("id", sess["bot_id"])
+                    .eq("id", organization_id)
                     .limit(1)
                 ).execute()
-                if bot_result.data and bot_result.data[0].get("line_access_token"):
+                if org_result.data and org_result.data[0].get("line_access_token"):
                     from app.services.line_service import push_message
                     await push_message(
                         user_id=sess["platform_user_id"],
                         text=content,
-                        access_token=bot_result.data[0]["line_access_token"],
+                        access_token=org_result.data[0]["line_access_token"],
                     )
                     logger.info("[LINE] Pushed admin reply to user %s", sess["platform_user_id"][:10])
         except Exception as push_exc:

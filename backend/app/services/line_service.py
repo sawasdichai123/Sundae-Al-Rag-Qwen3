@@ -68,6 +68,47 @@ async def reply_message(
         return False
 
 
+async def reply_with_quick_reply(
+    reply_token: str,
+    text: str,
+    quick_reply_items: list[dict],
+    access_token: str,
+) -> bool:
+    """Send a reply message with Quick Reply buttons for bot selection.
+
+    Args:
+        reply_token: The replyToken from the LINE webhook event.
+        text: The prompt text shown above the Quick Reply buttons.
+        quick_reply_items: List of quickReply item dicts (type/action).
+        access_token: The LINE Channel Access Token.
+    """
+    url = f"{LINE_API_BASE}/message/reply"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [{
+            "type": "text",
+            "text": text,
+            "quickReply": {"items": quick_reply_items},
+        }],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code == 200:
+            logger.info("[LINE] Quick Reply sent OK (token=%s...)", reply_token[:10])
+            return True
+        else:
+            logger.error("[LINE] Quick Reply API error: %d — %s", resp.status_code, resp.text)
+            return False
+    except Exception as exc:
+        logger.error("[LINE] Quick Reply API exception: %s", exc)
+        return False
+
+
 async def push_message(
     user_id: str,
     text: str,

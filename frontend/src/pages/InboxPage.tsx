@@ -59,11 +59,11 @@ function SearchIcon() {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function platformIcon(source: string): string {
+function platformLabel(source: string): string {
     switch (source) {
-        case "line": return "📱";
-        case "web": return "💬";
-        default: return "🔌";
+        case "line": return "LINE";
+        case "web": return "Web";
+        default: return "API";
     }
 }
 
@@ -82,25 +82,36 @@ function statusConfig(status: string) {
     }
 }
 
-function timeAgo(dateStr: string | null, justNow: string): string {
+interface TimeAgoLabels { justNow: string; minutesAgo: string; hoursAgo: string; daysAgo: string; }
+
+function timeAgo(dateStr: string | null, labels: TimeAgoLabels): string {
     if (!dateStr) return "—";
     const parsed = new Date(dateStr).getTime();
     if (isNaN(parsed)) return "—";
     const diff = Date.now() - parsed;
     const mins = Math.floor(diff / 60000);
-    if (mins < 1) return justNow;
-    if (mins < 60) return `${mins}m`;
+    if (mins < 1) return labels.justNow;
+    if (mins < 60) return `${mins} ${labels.minutesAgo}`;
     const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h`;
+    if (hours < 24) return `${hours} ${labels.hoursAgo}`;
     const days = Math.floor(hours / 24);
-    return `${days}d`;
+    return `${days} ${labels.daysAgo}`;
 }
 
 // ── Component ───────────────────────────────────────────────────
 
+// Typed poll response (replaces (pollData as any) casts)
+interface PollResponse {
+    messages: Message[];
+    session_status: string;
+}
+
 export default function InboxPage() {
     const t = useT();
     const [sessions, setSessions] = useState<Session[]>([]);
+    const [totalSessions, setTotalSessions] = useState(0);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
     const [messages, setMessages] = useState<Message[]>([]);
     const [selectedSession, setSelectedSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
@@ -117,7 +128,7 @@ export default function InboxPage() {
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
-    // ── Load sessions ───────────────────────────────────────────
+    // ── Load sessions (page 1) — replaces current list ─────────────
     const loadSessions = useCallback(async (opts?: { silent?: boolean }) => {
         const silent = opts?.silent ?? false;
         if (!orgId) {
@@ -126,8 +137,11 @@ export default function InboxPage() {
         }
         if (!silent && !hasLoadedSessionsOnceRef.current) setLoading(true);
         try {
-            const res = await inboxApi.listSessions(orgId);
-            setSessions(res.data);
+            const res = await inboxApi.listSessions(orgId, 1, 20);
+            const data = res.data;
+            setSessions(data.sessions ?? data);
+            setTotalSessions(data.total ?? (data.sessions ?? data).length);
+            setCurrentPage(1);
             hasLoadedSessionsOnceRef.current = true;
         } catch (err) {
             console.error("[Inbox] Failed to load sessions:", err);
@@ -136,17 +150,34 @@ export default function InboxPage() {
         }
     }, [orgId]);
 
+    // ── Load more sessions — appends next page ──────────────────
+    const loadMoreSessions = async () => {
+        if (!orgId || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const nextPage = currentPage + 1;
+            const res = await inboxApi.listSessions(orgId, nextPage, 20);
+            const data = res.data;
+            setSessions((prev) => [...prev, ...(data.sessions ?? [])]);
+            setCurrentPage(nextPage);
+        } catch (err) {
+            console.error("[Inbox] Failed to load more sessions:", err);
+        } finally {
+            setLoadingMore(false);
+        }
+    };
+
     useEffect(() => {
         loadSessions();
     }, [loadSessions]);
 
-    // ── Real-time: Poll sessions list every 3s (new handoff sessions, status updates) ──
+    // ── Real-time: Poll sessions list every 10s (reduced from 3s) ──
     useEffect(() => {
         if (!orgId) return;
         const interval = setInterval(() => {
             if (document.hidden) return; // skip polling when tab is not visible
             loadSessions({ silent: true });
-        }, 3000);
+        }, 10_000);
         return () => clearInterval(interval);
     }, [orgId, loadSessions]);
 
@@ -168,6 +199,7 @@ export default function InboxPage() {
     }, [orgId]);
 
     const selectSession = (session: Session) => {
+        lastPollTimestampRef.current = null; // reset cursor before loading new session
         setSelectedSession(session);
         loadMessages(session);
     };
@@ -189,7 +221,7 @@ export default function InboxPage() {
         }
     };
 
-    // ── Real-time: Poll only NEW messages every 2s + sync session status ──
+    // ── Real-time: Poll only NEW messages every 5s + sync session status ──
     useEffect(() => {
         if (!selectedSession || !orgId) return;
 
@@ -197,21 +229,22 @@ export default function InboxPage() {
 
         const interval = setInterval(async () => {
             if (cancelled || document.hidden) return; // skip if unmounted or tab hidden
+            if (!lastPollTimestampRef.current) return; // skip until loadMessages completes
             try {
-                const after = lastPollTimestampRef.current || "1970-01-01T00:00:00Z";
+                const after = lastPollTimestampRef.current;
                 const res = await inboxApi.getNewMessages(selectedSession.id, orgId, after);
                 if (cancelled) return; // check again after await
-                const pollData = res.data;
+                const pollData = res.data as PollResponse;
 
                 // Sync current session status (backend may change it)
-                const backendStatus = (pollData as any)?.session_status as string | undefined;
+                const backendStatus = pollData?.session_status;
                 if (backendStatus && backendStatus !== selectedSession.status) {
                     setSelectedSession((prev) => (prev ? { ...prev, status: backendStatus } : prev));
                     // Also refresh list so badge updates (silent to avoid loading spinner)
                     loadSessions({ silent: true });
                 }
 
-                const newMsgs = (pollData as any)?.messages as Message[] | undefined;
+                const newMsgs = pollData?.messages;
                 if (newMsgs && newMsgs.length > 0) {
                     setMessages((prev) => {
                         const existingIds = new Set(prev.map((m) => m.id));
@@ -225,7 +258,7 @@ export default function InboxPage() {
             } catch (err) {
                 if (!cancelled) console.error("[Inbox] Poll new messages failed:", err);
             }
-        }, 2000);
+        }, 5000);
 
         return () => {
             cancelled = true;
@@ -313,13 +346,13 @@ export default function InboxPage() {
                                 >
                                     <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-base">{platformIcon(session.platform_source)}</span>
+                                            <span className="text-base">{platformLabel(session.platform_source)}</span>
                                             <span className="text-xs font-medium text-steel-800 truncate max-w-[140px]">
                                                 {session.user_name || "Anonymous"}
                                             </span>
                                         </div>
                                         <span className="text-[10px] text-steel-400">
-                                            {timeAgo(session.last_message_at, t("common.justNow"))}
+                                            {timeAgo(session.last_message_at, { justNow: t("common.justNow"), minutesAgo: t("common.minutesAgo"), hoursAgo: t("common.hoursAgo"), daysAgo: t("common.daysAgo") })}
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -333,6 +366,20 @@ export default function InboxPage() {
                             );
                         })
                     )}
+                    {/* Load More — shown when more sessions exist beyond current page */}
+                    {sessions.length < totalSessions && (
+                        <div className="p-3 border-t border-steel-100">
+                            <button
+                                onClick={loadMoreSessions}
+                                disabled={loadingMore}
+                                className="w-full py-2 text-xs text-brand-600 hover:text-brand-700 font-medium rounded-xl hover:bg-brand-50 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {loadingMore
+                                    ? t("common.loading")
+                                    : `${t("inbox.loadMore")} (${totalSessions - sessions.length} ${t("inbox.remaining")})`}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -341,7 +388,9 @@ export default function InboxPage() {
                 {!selectedSession ? (
                     <div className="flex items-center justify-center h-full text-steel-400">
                         <div className="text-center">
-                            <div className="text-4xl mb-3">💬</div>
+                            <div className="w-12 h-12 mb-3 rounded-xl bg-steel-100 mx-auto flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-6 h-6 text-steel-400"><path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" /></svg>
+                            </div>
                             <p className="text-sm">{t("inbox.selectSession")}</p>
                         </div>
                     </div>
@@ -350,7 +399,7 @@ export default function InboxPage() {
                         {/* Header */}
                         <div className="px-6 py-3.5 border-b border-steel-100 flex items-center justify-between bg-white">
                             <div className="flex items-center gap-3">
-                                <span className="text-xl">{platformIcon(selectedSession.platform_source)}</span>
+                                <span className="text-xl">{platformLabel(selectedSession.platform_source)}</span>
                                 <div>
                                     <p className="text-sm font-bold text-steel-800">
                                         {selectedSession.user_name || "Anonymous"}

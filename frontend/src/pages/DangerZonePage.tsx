@@ -7,15 +7,18 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
+import { getApiError } from "../utils/apiError";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
 
 export default function DangerZonePage() {
     const t = useT();
+    const navigate = useNavigate();
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
@@ -64,7 +67,7 @@ export default function DangerZonePage() {
             toast("success", t("dangerZone.requestSuccess"));
             await loadData();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.requestFailed");
+            const msg = getApiError(err, t("dangerZone.requestFailed"));
             toast("error", msg);
         } finally {
             setRequestingDeletion(false);
@@ -80,7 +83,7 @@ export default function DangerZonePage() {
             toast("success", t("dangerZone.cancelSuccess"));
             await loadData();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.cancelFailed");
+            const msg = getApiError(err, t("dangerZone.cancelFailed"));
             toast("error", msg);
         } finally {
             setCancellingDeletion(false);
@@ -95,9 +98,9 @@ export default function DangerZonePage() {
             await orgApi.confirmDeletion(activeOrgId);
             toast("success", t("dangerZone.confirmSuccess"));
             await fetchOrgs();
-            window.location.href = "/create-org";
+            navigate("/create-org", { replace: true });
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("dangerZone.confirmFailed");
+            const msg = getApiError(err, t("dangerZone.confirmFailed"));
             toast("error", msg);
         } finally {
             setConfirmingDeletion(false);

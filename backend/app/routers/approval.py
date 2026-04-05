@@ -169,13 +169,19 @@ async def approve_user(
                     ).execute()
                     assigned_role = "admin" if not admin_check.data else "member"
 
+                    # Use upsert + ignore_duplicates to prevent duplicate inserts
+                    # from concurrent approval events
                     await (
-                        supabase.table("org_members").insert({
-                            "user_id": user_id,
-                            "organization_id": org_id,
-                            "org_role": assigned_role,
-                            "joined_at": now_iso,
-                        })
+                        supabase.table("org_members").upsert(
+                            {
+                                "user_id": user_id,
+                                "organization_id": org_id,
+                                "org_role": assigned_role,
+                                "joined_at": now_iso,
+                            },
+                            on_conflict="user_id,organization_id",
+                            ignore_duplicates=True,
+                        )
                     ).execute()
 
                     if first_org_id is None:

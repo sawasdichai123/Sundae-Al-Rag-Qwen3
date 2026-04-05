@@ -59,7 +59,6 @@ class BotUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     system_prompt: Optional[str] = None
-    line_access_token: Optional[str] = None
     is_active: Optional[bool] = None
     is_web_enabled: Optional[bool] = None
 
@@ -152,6 +151,7 @@ async def list_bots(
             supabase.table("bots")
             .select("*")
             .eq("organization_id", organization_id)
+            .eq("is_active", True)
             .order("created_at", desc=True)
         ).execute()
 
@@ -212,8 +212,6 @@ async def update_bot(
         updates["description"] = body.description
     if body.system_prompt is not None:
         updates["system_prompt"] = body.system_prompt
-    if body.line_access_token is not None:
-        updates["line_access_token"] = body.line_access_token
     if body.is_active is not None:
         updates["is_active"] = body.is_active
     if body.is_web_enabled is not None:

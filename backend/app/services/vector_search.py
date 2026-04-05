@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from supabase import AsyncClient
 
+from app.core.config import get_settings
 from app.core.database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -295,7 +296,7 @@ async def store_parent_chunks(
     ]
 
     # Batch insert to avoid payload limits on large documents
-    BATCH_SIZE = 100
+    BATCH_SIZE = get_settings().parent_chunk_batch_size
     try:
         for i in range(0, len(rows), BATCH_SIZE):
             batch = rows[i : i + BATCH_SIZE]
@@ -342,7 +343,7 @@ async def store_child_chunks(
     ]
 
     # Batch insert to avoid payload limits on large documents
-    BATCH_SIZE = 50  # smaller batch for child chunks (includes embedding vectors)
+    BATCH_SIZE = get_settings().child_chunk_batch_size  # smaller batch for child chunks (includes embedding vectors)
     try:
         for i in range(0, len(rows), BATCH_SIZE):
             batch = rows[i : i + BATCH_SIZE]

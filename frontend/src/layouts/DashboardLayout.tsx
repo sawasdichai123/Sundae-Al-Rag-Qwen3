@@ -141,7 +141,7 @@ const allNavItems: NavItem[] = [
     { to: "/bots", labelKey: "nav.bots", icon: BotsIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
     { to: "/inbox", labelKey: "nav.inbox", icon: InboxIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
     { to: "/integration", labelKey: "nav.integration", icon: IntegrationIcon, visibleTo: ["admin", "user"], requireOrgAdmin: true },
-    { to: "/organization", labelKey: "nav.organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"], requireOrgAdmin: true },
+    { to: "/organization", labelKey: "nav.organization", icon: OrgSettingsIcon, visibleTo: ["admin", "support", "user"] },
     { to: "/approvals", labelKey: "nav.approvals", icon: ApprovalIcon, visibleTo: ["support", "admin"] },
     { to: "/chat", labelKey: "nav.webChat", icon: WebChatIcon, visibleTo: ["user", "support", "admin"] },
     { to: "/profile", labelKey: "nav.profile", icon: ProfileIcon, visibleTo: ["user", "support", "admin"] },
@@ -187,8 +187,13 @@ export default function DashboardLayout() {
     const currentLabel = t(routeLabelKeys[location.pathname] || "nav.dashboard");
 
     // B2B privacy: admin/support viewing external org → limited nav
-    // External org = activeOrgId differs from user's home org (organization_id)
-    const isViewingExternalOrg = !!user?.organization_id && !!activeOrgId && activeOrgId !== user.organization_id;
+    // Home org: prefer user.organization_id (legacy), fall back to first org where user is admin
+    const orgs = useOrgStore((s) => s.orgs);
+    const homeOrgId =
+        user?.organization_id ||
+        orgs.find((o) => o.org_role === "admin")?.id ||
+        null;
+    const isViewingExternalOrg = !!homeOrgId && !!activeOrgId && activeOrgId !== homeOrgId;
     const isStaffOnExternalOrg = (role === "admin" || role === "support") && isViewingExternalOrg;
 
     // B2B privacy: redirect admin/support away from private org data on external orgs
@@ -262,7 +267,7 @@ export default function DashboardLayout() {
                 <nav className="flex-1 px-3 py-4 space-y-1">
                     {isUnapproved && !collapsed && (
                         <div className="px-3 py-8 text-center">
-                            <div className="text-2xl mb-2">��</div>
+                            <svg className="w-7 h-7 mx-auto mb-2 text-steel-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                             <p className="text-xs text-steel-500 leading-relaxed">
                                 {t("layout.pendingApprovalSidebar")}
                             </p>
@@ -371,11 +376,24 @@ function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
         if (!session?.user?.id) return;
         const userId = session.user.id;
 
-        const interval = setInterval(() => {
-            fetchProfile(userId);
-        }, 10_000); // poll every 10 seconds
+        // Poll with simple doubling backoff: 15s → 30s → 60s → cap at 60s
+        let delay = 15_000;
+        let timeoutId: ReturnType<typeof setTimeout>;
 
-        // Also refetch on tab focus (user may have switched to ask admin)
+        const poll = () => {
+            if (document.hidden) {
+                // reschedule without fetching when tab is hidden
+                timeoutId = setTimeout(poll, delay);
+                return;
+            }
+            fetchProfile(userId);
+            delay = Math.min(delay * 2, 60_000);
+            timeoutId = setTimeout(poll, delay);
+        };
+
+        timeoutId = setTimeout(poll, delay);
+
+        // Also refetch immediately on tab focus
         const handleVisibility = () => {
             if (document.visibilityState === "visible") {
                 fetchProfile(userId);
@@ -384,7 +402,7 @@ function PendingApprovalLockout({ onLogout }: { onLogout: () => void }) {
         document.addEventListener("visibilitychange", handleVisibility);
 
         return () => {
-            clearInterval(interval);
+            clearTimeout(timeoutId);
             document.removeEventListener("visibilitychange", handleVisibility);
         };
     }, [session?.user?.id, fetchProfile]);

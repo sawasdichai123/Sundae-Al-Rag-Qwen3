@@ -12,6 +12,7 @@ import { useToastStore } from "../store/toastStore";
 import { useOrgStore } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
+import { getApiError } from "../utils/apiError";
 import type { MyInvitation } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
@@ -57,7 +58,7 @@ export default function CreateOrgPage() {
             navigate("/", { replace: true });
         } catch (err: unknown) {
             console.error("[CreateOrg] Failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.createFailed");
+            const msg = getApiError(err, t("createOrg.createFailed"));
             toast("error", msg);
         } finally {
             setCreating(false);
@@ -73,7 +74,7 @@ export default function CreateOrgPage() {
             navigate("/", { replace: true });
         } catch (err: unknown) {
             console.error("[CreateOrg] Accept failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.acceptFailed");
+            const msg = getApiError(err, t("createOrg.acceptFailed"));
             toast("error", msg);
         } finally {
             setAcceptingId(null);
@@ -89,7 +90,7 @@ export default function CreateOrgPage() {
             setInvitations((prev) => prev.filter((inv) => inv.id !== invitationId));
         } catch (err: unknown) {
             console.error("[CreateOrg] Decline failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("createOrg.declineFailed");
+            const msg = getApiError(err, t("createOrg.declineFailed"));
             toast("error", msg);
         } finally {
             setDecliningId(null);

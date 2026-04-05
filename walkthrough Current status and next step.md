@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 2 เมษายน 2569 — **Version 1.0**
+> **อัพเดทล่าสุด**: 5 เมษายน 2569 — **Sprint 3 complete + circular import bugfix (limiter → core/limiter.py)**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -3333,3 +3333,605 @@ m.user_id !== currentUserId
 |------|----------------|
 | `frontend/src/pages/OrganizationPage.tsx` | ลบ dead code: `userId`, `leaving`, `handleLeave`, `useNavigate` |
 | `frontend/src/pages/ProfilePage.tsx` | `.toLocaleDateString("th-TH")` → `.toLocaleDateString()` |
+
+---
+
+## Section 44 — Code Review Implementation Plan (Phase 1–5) [4 เมษายน 2569]
+
+### 44.1 ภาพรวม
+
+ดำเนินการตาม `Code Review Implementation Plan.md` ครบทั้ง 5 Phases (20/20 items) โดยแบ่งเป็น:
+
+| Phase | หัวข้อ | Items | สถานะ |
+|-------|--------|-------|-------|
+| Phase 1 | Security — Widget & Health | 5 | ✅ Done |
+| Phase 2 | Security — Slug + Race Conditions | 3 | ✅ Done |
+| Phase 3 | i18n & UX | 5 | ✅ Done |
+| Phase 4 | Robustness — Backend | 3 | ✅ Done |
+| Phase 5 | Robustness — Frontend | 4 | ✅ Done |
+
+### 44.2 Phase 1 — Security: Widget & Health
+
+**widget.py** — 3 fixes:
+- Rate limiting via `slowapi`: `20/min` บน session endpoint, `30/min` บน chat + history
+- HMAC-SHA256 session tokens (`_sign_session()`, `_verify_session_token()`) — ป้องกัน history enumeration
+- `max_length=5000` บน `WidgetChatRequest.message`
+
+**health.py** — 1 fix:
+- `/health/metrics` เพิ่ม `Depends(get_current_user)` — ป้องกัน unauthenticated access
+
+**requirements.txt** — 1 fix:
+- เพิ่ม `slowapi>=0.1.9`
+
+### 44.3 Phase 2 — Security: Race Conditions
+
+**organization.py** — Slug collision retry:
+- แทน pre-check query ด้วย try/retry pattern (attempt 0 = original slug, attempt 1 = slug + 6-char random suffix)
+- `accept_invitation`: insert → upsert with `on_conflict="user_id,organization_id"`, `ignore_duplicates=True`
+
+**approval.py** — Auto-accept upsert:
+- insert → upsert เช่นเดียวกัน เพื่อป้องกัน race condition เมื่อ invite ถูก accept พร้อมกัน
+
+### 44.4 Phase 3 — i18n & UX
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-37 Emoji removal | DashboardPage: `"📄"/"🤖"/"💬"` → text badge labels; InboxPage: `platformIcon()` → `platformLabel()`; WebChatPage: ลบ `icon` field จาก suggestion cards |
+| F-38 LoginPage | `registerMsg.startsWith("✅")` → `registerSuccess: boolean` state |
+| F-40 authStore getT() | สร้าง `getT()` non-hook helper ใน `i18n/index.ts`; authStore ใช้ `getT()("auth.*")` แทน hardcoded Thai |
+| F-41 axios event | `window.location.href = "/login"` → `window.dispatchEvent(new CustomEvent("session-expired"))`; App.tsx `AuthProvider` จัดการด้วย `useEffect` listener |
+| F-42 InboxPage timeAgo | `timeAgo()` รับ `TimeAgoLabels` interface; ทุก time unit strings ผ่าน `t()` |
+
+i18n keys ที่เพิ่ม: `common.minutesAgo`, `common.hoursAgo`, `common.daysAgo`, `auth.invalidCredentials`, `auth.emailNotConfirmed`, `auth.connectionFailed`, `auth.profileNotFound`, `auth.sessionExpired`
+
+### 44.5 Phase 4 — Robustness: Backend
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-39 database.py retry | `init_supabase()`: 3-attempt exponential backoff (1s→2s→4s) ด้วย `asyncio.wait_for(timeout=30)` |
+| F-43 inbox pagination | `PagedSessionsResponse(sessions, total, page, page_size)`; `.select("*", count="exact")` + `.range(offset, offset+page_size-1)` |
+| F-43 bot.py filter | `list_bots` เพิ่ม `.eq("is_active", True)` — ไม่ return bots ที่ถูก soft-delete |
+
+### 44.6 Phase 5 — Robustness: Frontend
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-44 WebChatPage polling | `let aborted = false`; เช็ค `if (aborted) return` หลัง await; cleanup `return () => { aborted = true; clearInterval(interval); }` |
+| F-43 InboxPage compat | `setSessions(res.data.sessions ?? res.data)` รองรับทั้ง paginated + legacy response |
+| F-45 DangerZonePage | `window.location.href = "/create-org"` → `navigate("/create-org", { replace: true })` |
+| F-46 BroadcastChannel | `BroadcastChannel("sundae-auth-sync")` ใน `supabaseClient.ts`; tab ที่ refresh สำเร็จ broadcast ไปยัง tabs อื่น → reset `lastRefreshTime` + `consecutiveRefreshFailures` |
+
+### 44.7 ไฟล์ที่เปลี่ยนในเซสชันนี้
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/requirements.txt` | เพิ่ม `slowapi>=0.1.9` |
+| `backend/app/main.py` | เพิ่ม slowapi middleware + exception handler |
+| `backend/app/routers/widget.py` | Rate limiting, HMAC session tokens, max_length |
+| `backend/app/routers/health.py` | `/health/metrics` ต้อง auth |
+| `backend/app/routers/organization.py` | Slug retry pattern, invitation upsert |
+| `backend/app/routers/approval.py` | Auto-accept upsert |
+| `backend/app/core/database.py` | Exponential backoff retry |
+| `backend/app/routers/inbox.py` | Server-side pagination |
+| `backend/app/routers/bot.py` | `.eq("is_active", True)` filter |
+| `frontend/src/i18n/index.ts` | เพิ่ม `getT()` non-hook helper |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม time unit keys + auth error keys |
+| `frontend/src/store/authStore.ts` | ใช้ `getT()` แทน hardcoded Thai |
+| `frontend/src/api/axios.ts` | `CustomEvent("session-expired")` แทน redirect |
+| `frontend/src/App.tsx` | `session-expired` event listener ใน `AuthProvider` |
+| `frontend/src/pages/LoginPage.tsx` | `registerSuccess` boolean, ลบ emoji checks |
+| `frontend/src/pages/InboxPage.tsx` | `TimeAgoLabels` interface, `platformLabel()`, SVG icon |
+| `frontend/src/pages/DashboardPage.tsx` | Text badge labels แทน emoji icons |
+| `frontend/src/pages/WebChatPage.tsx` | `aborted` flag, ลบ suggestion card icons |
+| `frontend/src/pages/DangerZonePage.tsx` | `navigate()` แทน `window.location.href` |
+| `frontend/src/api/endpoints.ts` | `listSessions` รับ `page` + `pageSize` params |
+| `frontend/src/api/supabaseClient.ts` | `BroadcastChannel` cross-tab token sync |
+
+---
+
+## Section 46 — Round 7: แก้ไข Issues จาก Round 6 (N-47–N-59) [4 เมษายน 2569]
+
+
+
+### 46.1 ภาพรวม
+
+แก้ไข 12 จาก 13 issues ที่พบใน Round 6 (N-47–N-59) ยกเว้น N-57 (auth.py deprecated fallback — LOW priority, เปลี่ยนแปลงน้อย)
+
+| # | Issue | Status |
+|---|-------|--------|
+| N-47 | ExternalOrgGuard deprecated field | ✅ Fixed |
+| N-48 | Organization nav hidden from members | ✅ Fixed |
+| N-49 | update_org slug collision | ✅ Fixed |
+| N-50 | InboxPage pagination UI | ✅ Fixed |
+| N-51 | InboxPage dual heavy polling | ✅ Fixed |
+| N-52 | widget.py hardcoded Thai SSE | ✅ Fixed |
+| N-53 | organization.py hardcoded Thai errors | ✅ Fixed |
+| N-54 | asyncio task warmup exception | ✅ Fixed |
+| N-55 | Emoji lock icon | ✅ Fixed |
+| N-56 | (pollData as any) type assertions | ✅ Fixed |
+| N-57 | auth.py deprecated fallback | ⏭ Skipped (LOW, no user impact) |
+| N-58 | Startup 90s worst-case timeout | ✅ Fixed |
+| N-59 | platformUserId random UUID | ✅ Fixed |
+
+### 46.2 รายละเอียดการแก้ไข
+
+**N-47 — ExternalOrgGuard (App.tsx + DashboardLayout.tsx)**
+- `homeOrgId` เดิมใช้ `user?.organization_id` (deprecated field, null สำหรับ invitation-joined users)
+- แก้: ใช้ `user?.organization_id || orgs.find(o => o.org_role === "admin")?.id || null`
+- `isViewingExternalOrg` + `isStaffOnExternalOrg` derived correctly ทั้งใน App.tsx และ DashboardLayout.tsx
+
+**N-48 — Organization nav (DashboardLayout.tsx)**
+- ลบ `requireOrgAdmin` ออกจาก `/organization` nav item
+- `visibleTo: ["admin", "support", "user"]` — ทุก authenticated user เห็น
+
+**N-49 — slug collision retry (organization.py)**
+- `update_org`: ใช้ `for attempt in range(2)` pattern เดียวกับ `create_org`
+- Attempt 1 = original slug; Attempt 2 = `{slug}-{6-char random suffix}`
+- ดัก `"duplicate"/"unique"/"23505"` ใน error string
+
+**N-50 — InboxPage Load More (InboxPage.tsx)**
+- เพิ่ม `totalSessions` state (จาก `data.total`)
+- เพิ่ม `loadingMore` + `currentPage` state
+- `loadMoreSessions()`: append page N+1 ต่อท้าย `sessions` list
+- Load More button แสดงเมื่อ `sessions.length < totalSessions`
+- เพิ่ม i18n keys: `inbox.loadMore` + `inbox.remaining`
+
+**N-51 — Polling intervals (InboxPage.tsx)**
+- Sessions poll: 3000ms → 10,000ms
+- Messages poll: 2000ms → 5000ms
+- ผล: ~41 req/min → ~18 req/min (-56%)
+
+**N-52 — Widget SSE strings (widget.py)**
+- Handoff message: `"กำลังรอเจ้าหน้าที่ตอบกลับ"` → `"A human agent will respond shortly. Please wait."`
+- Error message: `"(ขออภัย เกิดข้อผิดพลาดขณะประมวลผล)"` → `"(An error occurred while processing your request.)"` + ลบ `ensure_ascii=False`
+
+**N-53 — hardcoded Thai errors (organization.py)**
+- 11 strings → English ครอบคลุม: invitation expired, root org protection, missing deletion requester, self-promote guard, member not found (×2 endpoints), already admin, not admin, last-admin demotion guard, promote/demote success messages, cancel-deletion status check
+
+**N-54 — asyncio task callback (main.py)**
+- `asyncio.create_task(...)` → เก็บ reference ใน `_warmup_task`
+- เพิ่ม `_warmup_task.add_done_callback(lambda t: logger.error(...) if t.exception() else None)`
+
+**N-55 — Emoji lock → SVG (DashboardLayout.tsx)**
+- `<div className="text-2xl mb-2">🔒</div>` → inline SVG lock icon (Heroicons lock-closed style, `w-7 h-7 text-steel-400`)
+
+**N-56 — PollResponse type (InboxPage.tsx)**
+- เพิ่ม interface `PollResponse { messages: Message[]; session_status: string; }`
+- แทน `(pollData as any)?.session_status` ด้วย `pollData?.session_status`
+
+**N-58 — database.py timeout (database.py)**
+- `asyncio.wait_for(timeout=30)` → `timeout=10`
+- Worst-case startup: 3×30s = 90s → 3×10s = 30s
+
+**N-59 — platformUserId (WebChatPage.tsx)**
+- `const [platformUserId] = useState(() => user?.id || ...)` → `useState` + `useEffect`
+- `useEffect(() => { if (user?.id) setPlatformUserId(user.id) }, [user?.id])` อัพเดท ID เมื่อ user โหลดเสร็จ
+
+### 46.3 ไฟล์ที่เปลี่ยนแปลง
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/app/routers/widget.py` | N-52: 2 Thai strings → English |
+| `backend/app/routers/organization.py` | N-49: slug retry; N-53: 11 Thai strings → English |
+| `backend/app/main.py` | N-54: asyncio task `add_done_callback` |
+| `backend/app/core/database.py` | N-58: timeout 30s→10s |
+| `frontend/src/App.tsx` | N-47: homeOrgId derivation fix |
+| `frontend/src/layouts/DashboardLayout.tsx` | N-47: isViewingExternalOrg fix; N-48: remove requireOrgAdmin; N-55: SVG lock icon |
+| `frontend/src/pages/InboxPage.tsx` | N-50: Load More pagination; N-51: poll intervals; N-56: PollResponse type |
+| `frontend/src/pages/WebChatPage.tsx` | N-59: platformUserId useEffect |
+| `frontend/src/i18n/en.json` | N-50: `inbox.loadMore`, `inbox.remaining` |
+| `frontend/src/i18n/th.json` | N-50: `inbox.loadMore`, `inbox.remaining` |
+
+---
+
+## Section 45 — Code Review Round 6 [4 เมษายน 2569]
+
+### 45.1 ภาพรวม
+
+ทำ Code Review รอบที่ 6 ครอบคลุมไฟล์ทั้งหมดที่เปลี่ยนแปลงใน Phase 1–5 รวมถึงไฟล์ที่ยังไม่ได้ตรวจสอบ (DashboardLayout, orgStore, types, App.tsx, organization.py ส่วนที่เหลือ) พบ **13 issues ใหม่** (N-47–N-59)
+
+### 45.2 Issues ที่พบ
+
+| # | Severity | ไฟล์ | ปัญหา |
+|---|----------|------|-------|
+| N-47 | **HIGH** | `App.tsx:167` | ExternalOrgGuard ใช้ deprecated `user.organization_id` — ถ้า null (user เข้าผ่าน invitation) guard ไม่ทำงาน |
+| N-48 | **HIGH** | `DashboardLayout.tsx:144` | Organization nav item มี `requireOrgAdmin: true` — member ธรรมดาไม่เห็น nav link ไปหน้า Organization |
+| N-49 | **MEDIUM** | `organization.py:552` | `update_org` slug collision ไม่มี retry — DB throw 500 ถ้า slug ซ้ำ |
+| N-50 | **MEDIUM** | `InboxPage.tsx:131` | Pagination backend พร้อมแล้ว แต่ frontend ดึงแค่ page 1 ตลอด ไม่มี UI นำทาง |
+| N-51 | **MEDIUM** | `InboxPage.tsx:147,200` | Dual polling หนัก: sessions ทุก 3s + messages ทุก 2s ≈ 41 req/min |
+| N-52 | **MEDIUM** | `widget.py:253,381` | Hardcoded Thai ใน SSE stream ของ widget |
+| N-53 | **MEDIUM** | `organization.py:403+` | Error messages หลายจุดเป็น hardcoded Thai |
+| N-54 | **MEDIUM** | `main.py:72` | `asyncio.create_task` warmup ไม่ capture exception |
+| N-55 | **MEDIUM** | `DashboardLayout.tsx:265` | Emoji 🔒 ยังหลงเหลืออยู่ใน sidebar unapproved state |
+| N-56 | **LOW** | `InboxPage.tsx:209,216` | `(pollData as any)` type assertions |
+| N-57 | **LOW** | `auth.py:191` | `active_org_id` fallback to deprecated `organization_id` |
+| N-58 | **LOW** | `database.py:48` | Startup worst-case 90s (3×30s timeout) |
+| N-59 | **LOW** | `WebChatPage.tsx:94` | `platformUserId` อาจเป็น random UUID ถ้า user load ช้า |
+
+### 45.3 สิ่งที่ตรวจแล้วและไม่พบปัญหา (Confirmed OK)
+
+- `widget.py` — HMAC token logic ถูกต้อง; rate limiting config สมเหตุสมผล
+- `health.py` — auth guard เพิ่มถูกต้องแล้ว
+- `database.py` — retry logic ถูกต้อง แม้ timeout อาจสั้นลงได้
+- `inbox.py` — pagination server-side ถูกต้อง; LINE push non-blocking
+- `bot.py` — `is_active` filter ถูกต้อง
+- `auth.py` — `verify_organization`, `verify_org_admin`, `verify_session_access` ทำงานถูกต้อง
+- `authStore.ts` — `getT()` pattern ถูกต้อง
+- `axios.ts` — CustomEvent dispatch pattern ดีกว่าเดิมมาก
+- `orgStore.ts` — state management สะอาด
+- `types/index.ts` — OrgRole อัพเดทถูกต้อง (`"admin" | "member"`)
+
+### 45.4 Priority สำหรับ Round 7
+
+1. **N-47** (HIGH) — ExternalOrgGuard bug: แก้ง่าย ใช้ `orgStore.orgs` แทน `user.organization_id`
+2. **N-48** (HIGH) — Organization nav visibility: แก้ง่าย ลบ `requireOrgAdmin` จาก nav config
+3. **N-50** (MEDIUM) — InboxPage pagination UI: เพิ่ม Load More button
+4. **N-49** (MEDIUM) — slug collision: copy pattern จาก create_org
+5. **N-55** (MEDIUM) — emoji cleanup: replace 🔒 with SVG
+
+---
+
+## Section 44 — Code Review Implementation Plan (Phase 1–5) [4 เมษายน 2569]
+
+### 44.1 ภาพรวม
+
+ดำเนินการตาม `Code Review Implementation Plan.md` ครบทั้ง 5 Phases (20/20 items) โดยแบ่งเป็น:
+
+| Phase | หัวข้อ | Items | สถานะ |
+|-------|--------|-------|-------|
+| Phase 1 | Security — Widget & Health | 5 | ✅ Done |
+| Phase 2 | Security — Slug + Race Conditions | 3 | ✅ Done |
+| Phase 3 | i18n & UX | 5 | ✅ Done |
+| Phase 4 | Robustness — Backend | 3 | ✅ Done |
+| Phase 5 | Robustness — Frontend | 4 | ✅ Done |
+
+### 44.2 Phase 1 — Security: Widget & Health
+
+**widget.py** — 3 fixes:
+- Rate limiting via `slowapi`: `20/min` บน session endpoint, `30/min` บน chat + history
+- HMAC-SHA256 session tokens (`_sign_session()`, `_verify_session_token()`) — ป้องกัน history enumeration
+- `max_length=5000` บน `WidgetChatRequest.message`
+
+**health.py** — 1 fix:
+- `/health/metrics` เพิ่ม `Depends(get_current_user)` — ป้องกัน unauthenticated access
+
+**requirements.txt** — 1 fix:
+- เพิ่ม `slowapi>=0.1.9`
+
+### 44.3 Phase 2 — Security: Race Conditions
+
+**organization.py** — Slug collision retry:
+- แทน pre-check query ด้วย try/retry pattern (attempt 0 = original slug, attempt 1 = slug + 6-char random suffix)
+- `accept_invitation`: insert → upsert with `on_conflict="user_id,organization_id"`, `ignore_duplicates=True`
+
+**approval.py** — Auto-accept upsert:
+- insert → upsert เช่นเดียวกัน เพื่อป้องกัน race condition เมื่อ invite ถูก accept พร้อมกัน
+
+### 44.4 Phase 3 — i18n & UX
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-37 Emoji removal | DashboardPage: `"📄"/"🤖"/"💬"` → text badge labels; InboxPage: `platformIcon()` → `platformLabel()`; WebChatPage: ลบ `icon` field จาก suggestion cards |
+| F-38 LoginPage | `registerMsg.startsWith("✅")` → `registerSuccess: boolean` state |
+| F-40 authStore getT() | สร้าง `getT()` non-hook helper ใน `i18n/index.ts`; authStore ใช้ `getT()("auth.*")` แทน hardcoded Thai |
+| F-41 axios event | `window.location.href = "/login"` → `window.dispatchEvent(new CustomEvent("session-expired"))`; App.tsx `AuthProvider` จัดการด้วย `useEffect` listener |
+| F-42 InboxPage timeAgo | `timeAgo()` รับ `TimeAgoLabels` interface; ทุก time unit strings ผ่าน `t()` |
+
+i18n keys ที่เพิ่ม: `common.minutesAgo`, `common.hoursAgo`, `common.daysAgo`, `auth.invalidCredentials`, `auth.emailNotConfirmed`, `auth.connectionFailed`, `auth.profileNotFound`, `auth.sessionExpired`
+
+### 44.5 Phase 4 — Robustness: Backend
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-39 database.py retry | `init_supabase()`: 3-attempt exponential backoff (1s→2s→4s) ด้วย `asyncio.wait_for(timeout=30)` |
+| F-43 inbox pagination | `PagedSessionsResponse(sessions, total, page, page_size)`; `.select("*", count="exact")` + `.range(offset, offset+page_size-1)` |
+| F-43 bot.py filter | `list_bots` เพิ่ม `.eq("is_active", True)` — ไม่ return bots ที่ถูก soft-delete |
+
+### 44.6 Phase 5 — Robustness: Frontend
+
+| Fix | รายละเอียด |
+|-----|-----------|
+| F-44 WebChatPage polling | `let aborted = false`; เช็ค `if (aborted) return` หลัง await; cleanup `return () => { aborted = true; clearInterval(interval); }` |
+| F-43 InboxPage compat | `setSessions(res.data.sessions ?? res.data)` รองรับทั้ง paginated + legacy response |
+| F-45 DangerZonePage | `window.location.href = "/create-org"` → `navigate("/create-org", { replace: true })` |
+| F-46 BroadcastChannel | `BroadcastChannel("sundae-auth-sync")` ใน `supabaseClient.ts`; tab ที่ refresh สำเร็จ broadcast ไปยัง tabs อื่น → reset `lastRefreshTime` + `consecutiveRefreshFailures` |
+
+### 44.7 ไฟล์ที่เปลี่ยนในเซสชันนี้
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/requirements.txt` | เพิ่ม `slowapi>=0.1.9` |
+| `backend/app/main.py` | เพิ่ม slowapi middleware + exception handler |
+| `backend/app/routers/widget.py` | Rate limiting, HMAC session tokens, max_length |
+| `backend/app/routers/health.py` | `/health/metrics` ต้อง auth |
+| `backend/app/routers/organization.py` | Slug retry pattern, invitation upsert |
+| `backend/app/routers/approval.py` | Auto-accept upsert |
+| `backend/app/core/database.py` | Exponential backoff retry |
+| `backend/app/routers/inbox.py` | Server-side pagination |
+| `backend/app/routers/bot.py` | `.eq("is_active", True)` filter |
+| `frontend/src/i18n/index.ts` | เพิ่ม `getT()` non-hook helper |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม time unit keys + auth error keys |
+| `frontend/src/store/authStore.ts` | ใช้ `getT()` แทน hardcoded Thai |
+| `frontend/src/api/axios.ts` | `CustomEvent("session-expired")` แทน redirect |
+| `frontend/src/App.tsx` | `session-expired` event listener ใน `AuthProvider` |
+| `frontend/src/pages/LoginPage.tsx` | `registerSuccess` boolean, ลบ emoji checks |
+| `frontend/src/pages/InboxPage.tsx` | `TimeAgoLabels` interface, `platformLabel()`, SVG icon |
+| `frontend/src/pages/DashboardPage.tsx` | Text badge labels แทน emoji icons |
+| `frontend/src/pages/WebChatPage.tsx` | `aborted` flag, ลบ suggestion card icons |
+| `frontend/src/pages/DangerZonePage.tsx` | `navigate()` แทน `window.location.href` |
+| `frontend/src/api/endpoints.ts` | `listSessions` รับ `page` + `pageSize` params |
+| `frontend/src/api/supabaseClient.ts` | `BroadcastChannel` cross-tab token sync |
+
+---
+
+## Section 47 — Round 9: Non-LINE Remaining Issues [4 เมษายน 2569]
+
+### 47.1 ภาพรวม
+
+ดำเนินการแก้ไขทุก issue ที่เปิดอยู่ซึ่งไม่เกี่ยวกับ LINE (A ถึง P) รวมถึงยืนยัน 3 false positives จาก Code Review Report
+
+| ประเภท | จำนวน |
+|--------|-------|
+| False positives ยืนยัน | 3 (A, B, H) |
+| Issues แก้ไข | 11 |
+| รวมจัดการทั้งหมด | 14 |
+
+### 47.2 False Positives ที่ยืนยัน
+
+**A — document.py link_document bot ownership check**
+- อ่านโค้ดจริงที่ lines 244-253: `require_org_admin` + `.eq("organization_id", organization_id)` บน bots query มีอยู่แล้ว
+- ไม่มีช่องโหว่ cross-org bot linking — ไม่ต้องแก้ไข
+
+**B — LoginPage.tsx auth error XSS**
+- React JSX auto-escapes text content ทุก text node; ไม่มี `dangerouslySetInnerHTML` — ไม่ต้องแก้ไข
+
+**H — OrganizationPage window.location.href**
+- `window.location.href` ถูกแทนที่ด้วย `navigate()` ไปแล้วใน round ก่อนหน้า — ไม่ต้องแก้ไข
+
+### 47.3 Fixes ที่ดำเนินการ
+
+**C — ForgotPasswordPage + ResetPasswordPage i18n** (ปิด Sprint 2 ✅)
+- `ForgotPasswordPage.tsx`: Thai → `t("forgotPassword.sentDescBefore")` + `<span>{email}</span>` + `t("forgotPassword.sentDescAfter")`
+- `ResetPasswordPage.tsx`: Thai error → `t("resetPassword.updateFailed")`
+- i18n keys ใหม่: `forgotPassword.sentDescBefore/After`, `resetPassword.updateFailed` (ทั้ง en/th)
+
+**D — WebChatPage stale closure with t()**
+- `const tRef = useRef(t)` + `useEffect(() => { tRef.current = t }, [t])`
+- Poll callback ใช้ `tRef.current("chat.staffReturnedAI")` etc. แทน `t()` โดยตรง
+- ครอบคลุม 4 strings: staffReturnedAI, staffHelped, staffClosed, handoffFailed
+
+**E — llm_generator.py robustness**
+- JSON decode: ห่อ try-except → `logger.error()` + return `FALLBACK_MESSAGE`
+- Stream: non-JSON line → `logger.warning(line[:100])` + `continue`
+- Non-stream timeout: 300s → 60s
+
+**F — InboxPage polling race condition**
+- `selectSession()` reset `lastPollTimestampRef.current = null` ก่อน `loadMessages()`
+- Poll guard: `if (!lastPollTimestampRef.current) return` รอจนกว่า cursor จะถูกตั้ง
+
+**G — DashboardPage null reference + stale dep**
+- `raw?.sessions ?? (Array.isArray(raw) ? raw : [])` รองรับ paginated + legacy response
+- ลบ `isSupport` ออกจาก `useEffect` dependency array
+
+**I — DashboardLayout unapproved poll backoff**
+- Exponential backoff: เริ่ม 15s, double ทุก tick, ceiling 60s
+- `document.hidden` guard — ไม่ call API เมื่อ tab ถูกซ่อน
+
+**J — auth.py DB errors return 503**
+- Profile fetch exception: `HTTP 403` → `HTTP 503 SERVICE_UNAVAILABLE`
+- Detail: "Unable to verify user profile. Please try again later."
+
+**K — orgStore.ts fetchFailed auto-retry**
+- `setTimeout(() => { if (get().fetchFailed) get().fetchOrgs() }, 5000)` หลัง fail
+- UI recover ได้เองจาก transient network error โดยไม่ต้อง refresh
+
+**L — axios.ts token buffer + timeout leak**
+- Token expiry buffer: 300s → 600s (10 min) ทุก 3 check points
+- Timeout leak fix: `sessionPromise.finally(() => { if (timeoutId !== null) clearTimeout(timeoutId) })`
+
+**M (N-57) — auth.py deprecated fallback removed**
+- `active_org_id = active_org_header or None` (ลบ `or profile.get("organization_id")`)
+- Frontend ส่ง `X-Active-Org` header เสมอ; deprecated single-org field ไม่ควรถูก fallback
+
+**N — config.py validation + batch size fields**
+- `reranker_score_threshold`: เพิ่ม `ge=0.0, le=1.0` validators
+- เพิ่ม `parent_chunk_batch_size: int = Field(default=100, ...)` + `child_chunk_batch_size: int = Field(default=50, ...)`
+
+**P — vector_search.py configurable batch sizes**
+- `store_parent_chunks`: `BATCH_SIZE = get_settings().parent_chunk_batch_size`
+- `store_child_chunks`: `BATCH_SIZE = get_settings().child_chunk_batch_size`
+
+### 47.4 ไฟล์ที่เปลี่ยนแปลง
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/app/core/auth.py` | J: DB error → 503; M: ลบ deprecated org fallback |
+| `backend/app/core/config.py` | N: validators + batch size fields |
+| `backend/app/services/llm_generator.py` | E: JSON try-except; stream warning; timeout 60s |
+| `backend/app/services/vector_search.py` | P: configurable batch sizes from settings |
+| `frontend/src/layouts/DashboardLayout.tsx` | I: exponential backoff poll (15s-60s) |
+| `frontend/src/pages/ForgotPasswordPage.tsx` | C: Thai strings → i18n keys |
+| `frontend/src/pages/ResetPasswordPage.tsx` | C: Thai error → i18n key |
+| `frontend/src/pages/InboxPage.tsx` | F: lastPollTimestampRef reset + null guard |
+| `frontend/src/pages/DashboardPage.tsx` | G: null-safe response + remove stale dep |
+| `frontend/src/pages/WebChatPage.tsx` | D: tRef pattern for t() in polling |
+| `frontend/src/store/orgStore.ts` | K: fetchFailed auto-retry after 5s |
+| `frontend/src/api/axios.ts` | L: token buffer 600s + timeout leak fix |
+| `frontend/src/i18n/en.json` | C: 3 new keys (sentDescBefore, sentDescAfter, updateFailed) |
+| `frontend/src/i18n/th.json` | C: 3 new keys (same) |
+
+### 47.5 Sprint Progress หลัง Round 9
+
+| Sprint | Before | After |
+|--------|--------|-------|
+| Sprint 1 (Critical Security) | 12/13 | 12/13 (rate limiting ต้องการ infra) |
+| Sprint 2 (Robustness) | 24/25 | **25/25 ✅ COMPLETE** |
+| Sprint 3 (Architecture) | 4/10 | 6/10 (+N-57, +backoff) |
+| Overall fix rate | ~35% | ~43% |
+
+---
+
+## Section 49 — Sprint 3: Architecture Items Implementation [5 เมษายน 2569]
+
+### 49.1 ภาพรวม
+
+ดำเนินการแก้ไข Sprint 3 ทั้ง 4 items ครบ (10/10 รวมกับที่ fix ไปแล้วใน session ก่อนหน้า)
+
+| # | Item | สถานะ |
+|---|------|--------|
+| #22 | Config validation on startup | ✅ Fixed |
+| #19 | Redis cache (optional, multi-worker safe) | ✅ Fixed |
+| #20 | Owner assignment at invite time | ✅ Fixed |
+| #21 | Centralized error handling utility | ✅ Fixed |
+
+### 49.2 #22 — Startup Config Validation (main.py)
+
+เพิ่ม `_validate_startup_config()` ใน lifespan (เรียกก่อน `init_supabase()`):
+
+1. **Required env vars**: ตรวจสอบ `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET` — ถ้า missing → `RuntimeError` หยุด startup ทันที
+2. **Ollama reachability**: probe `{ollama_base_url}/api/tags` ด้วย timeout 5s — non-fatal, แค่ log warning ถ้า unreachable
+
+```python
+await _validate_startup_config()
+await init_supabase()
+```
+
+### 49.3 #19 — Optional Redis Cache (auth.py + config.py)
+
+เปลี่ยน `_ProfileCache` (sync, in-memory) เป็น 2 async classes:
+
+| Class | เหมาะกับ | Backend |
+|-------|---------|---------|
+| `_InMemoryCache` | single-worker, dev | Python dict + TTL |
+| `_RedisCache` | multi-worker, production | Redis `SETEX` + JSON serialize |
+
+**Config ใหม่** (config.py):
+- `REDIS_URL` — Redis connection string (optional, default None)
+- `CACHE_TTL_SECONDS` — TTL ใน seconds (default 300)
+
+**Lazy init** (`_get_cache()`):
+- ถ้า `REDIS_URL` set → try connect + `client.ping()` → use `_RedisCache`
+- ถ้า Redis fail หรือ URL ไม่ set → use `_InMemoryCache` (warn ถ้า Redis URL set แต่ไม่ตอบ)
+- Call sites: `await cache.get(user_id)` + `await cache.set(user_id, user)`
+
+**requirements.txt**: เพิ่ม `redis[asyncio]>=5.0.0`
+
+### 49.4 #20 — Owner Assignment at Invite Time (organization.py)
+
+**ปัญหาเดิม**: `accept_invitation` check ว่าองค์กรมี admin ไหมตอน accept → race condition ถ้า 2 คน accept พร้อมกัน → ทั้งคู่เป็น admin
+
+**วิธีแก้**: กำหนด role ตอน invite แทน:
+
+`invite_member`:
+```python
+admin_check = await supabase.table("org_members").select("user_id")
+    .eq("organization_id", org_id).eq("org_role", "admin").limit(1).execute()
+invited_role = "admin" if not admin_check.data else "member"
+# เก็บใน invitation row
+```
+
+`accept_invitation`:
+```python
+invited_role = inv.get("invited_role")
+if invited_role:
+    assigned_role = invited_role  # ใช้ role ที่กำหนดไว้แล้ว
+else:
+    # legacy fallback สำหรับ invitation เก่าที่ไม่มี column
+    ...first-accepter logic...
+```
+
+**DB Migration ที่ต้องรัน**:
+```sql
+ALTER TABLE org_invitations ADD COLUMN invited_role TEXT NOT NULL DEFAULT 'member';
+```
+
+นอกจากนี้ fix Thai strings ที่เหลือใน `invite_member`: email validation errors → English
+
+### 49.5 #21 — Centralized Error Handling (frontend)
+
+สร้าง `frontend/src/utils/apiError.ts`:
+
+```typescript
+export function getApiError(err: unknown, fallback: string): string {
+    // 1. err.response.data.detail (string) — FastAPI HTTPException
+    // 2. err.response.data.detail (array) — Pydantic validation error
+    // 3. err.message — network/JS error
+    // 4. fallback
+}
+```
+
+แทน 19 occurrences ของ:
+```typescript
+(err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("...")
+```
+
+ด้วย:
+```typescript
+getApiError(err, t("..."))
+```
+
+ครอบคลุม 7 ไฟล์: `OrganizationPage`, `ApprovalsPage`, `CreateOrgPage`, `DangerZonePage`, `IntegrationPage`, `ProfilePage`
+
+### 49.6 ไฟล์ที่เปลี่ยนแปลง
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/app/main.py` | `_validate_startup_config()` ก่อน startup |
+| `backend/app/core/auth.py` | `_InMemoryCache` + `_RedisCache` (async); `_get_cache()` lazy init |
+| `backend/app/core/config.py` | `redis_url` + `cache_ttl_seconds` fields |
+| `backend/requirements.txt` | `redis[asyncio]>=5.0.0` |
+| `backend/app/routers/organization.py` | `invited_role` at invite time; accept uses stored role; Thai strings → English |
+| `frontend/src/utils/apiError.ts` | `getApiError()` utility (NEW FILE) |
+| `frontend/src/pages/OrganizationPage.tsx` | 5 call sites → `getApiError()` |
+| `frontend/src/pages/ApprovalsPage.tsx` | 2 call sites → `getApiError()` |
+| `frontend/src/pages/CreateOrgPage.tsx` | 3 call sites → `getApiError()` |
+| `frontend/src/pages/DangerZonePage.tsx` | 3 call sites → `getApiError()` |
+| `frontend/src/pages/IntegrationPage.tsx` | 2 call sites → `getApiError()` |
+| `frontend/src/pages/ProfilePage.tsx` | 4 call sites → `getApiError()` |
+
+### 49.7 Sprint Progress Final
+
+| Sprint | สถานะ |
+|--------|--------|
+| Sprint 1 (Critical Security) | 12/13 — rate limiting ต้องการ infra |
+| Sprint 2 (Robustness) | **25/25 ✅ COMPLETE** |
+| Sprint 3 (Architecture) | **10/10 ✅ COMPLETE** |
+| **Overall fix rate** | **~50%** |
+
+---
+
+## Section 50 — Bugfix: Circular Import + Missing Dependencies [5 เมษายน 2569]
+
+### 50.1 ปัญหาที่พบหลัง Sprint 3
+
+หลัง `pip install -r requirements.txt` และรัน uvicorn พบ 2 errors:
+
+**Error 1**: `ModuleNotFoundError: No module named 'slowapi'`
+- สาเหตุ: `slowapi` เพิ่มใน Round 5 แต่ environment ใหม่ยังไม่ได้ install
+- แก้: `pip install -r requirements.txt`
+
+**Error 2**: `ImportError: cannot import name 'limiter' from partially initialized module 'app.main'`
+- สาเหตุ: Circular import — `main.py` → `widget.py` → `main.py` (import `limiter`)
+- แก้: ย้าย `limiter` ออกเป็นไฟล์แยก `app/core/limiter.py`
+
+### 50.2 วิธีแก้ Circular Import
+
+สร้าง `backend/app/core/limiter.py`:
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+```
+
+`main.py`: เปลี่ยน import จาก `from slowapi import Limiter, ...` → `from app.core.limiter import limiter` + ลบบรรทัด `limiter = Limiter(...)`
+
+`widget.py`: เปลี่ยน `from app.main import limiter` → `from app.core.limiter import limiter`
+
+### 50.3 ไฟล์ที่เปลี่ยนแปลง
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/app/core/limiter.py` | NEW — singleton `limiter` instance |
+| `backend/app/main.py` | import `limiter` จาก `core.limiter`; ลบ `limiter = Limiter(...)` |
+| `backend/app/routers/widget.py` | import `limiter` จาก `core.limiter` แทน `app.main` |

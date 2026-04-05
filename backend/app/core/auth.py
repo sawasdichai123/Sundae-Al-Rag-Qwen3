@@ -24,10 +24,12 @@ Usage in routers::
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Callable
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from fastapi import Depends, HTTPException, Request, status
 
@@ -53,7 +55,14 @@ class CurrentUser:
     active_org_id: str | None = None  # from X-Active-Org header
 
 
-# ── In-Memory Profile Cache ─────────────────────────────────────
+# ── Profile Cache ────────────────────────────────────────────────
+#
+# Two implementations:
+#   _InMemoryCache  — per-process dict, suitable for single-worker / dev
+#   _RedisCache     — Redis-backed, suitable for multi-worker production
+#
+# Selected at first use based on REDIS_URL setting.
+# Both expose the same async interface so the rest of the code is identical.
 
 @dataclass
 class _CacheEntry:
@@ -61,18 +70,14 @@ class _CacheEntry:
     expires_at: float
 
 
-class _ProfileCache:
-    """Simple in-memory TTL cache for user profiles.
+class _InMemoryCache:
+    """Per-process TTL cache. Not shared across uvicorn workers."""
 
-    NOT suitable for multi-process deployments — use Redis instead.
-    For single-process / dev / moderate traffic this is sufficient.
-    """
-
-    def __init__(self, ttl_seconds: int = 300):
-        self._ttl = ttl_seconds
+    def __init__(self, ttl: int = 300):
+        self._ttl = ttl
         self._store: dict[str, _CacheEntry] = {}
 
-    def get(self, user_id: str) -> CurrentUser | None:
+    async def get(self, user_id: str) -> CurrentUser | None:
         entry = self._store.get(user_id)
         if entry is None:
             return None
@@ -81,26 +86,105 @@ class _ProfileCache:
             return None
         return entry.user
 
-    def set(self, user_id: str, user: CurrentUser) -> None:
+    async def set(self, user_id: str, user: CurrentUser) -> None:
         self._store[user_id] = _CacheEntry(
             user=user,
             expires_at=time.monotonic() + self._ttl,
         )
 
-    def invalidate(self, user_id: str) -> None:
+    async def invalidate(self, user_id: str) -> None:
         self._store.pop(user_id, None)
 
-    def clear(self) -> None:
+    async def clear(self) -> None:
         self._store.clear()
 
 
-# Singleton cache instance (5-minute TTL)
-_profile_cache = _ProfileCache(ttl_seconds=300)
+class _RedisCache:
+    """Redis-backed distributed cache. Shared across all uvicorn workers."""
+
+    _PREFIX = "sundae:auth:"
+
+    def __init__(self, client: Any, ttl: int = 300):
+        self._r = client
+        self._ttl = ttl
+
+    async def get(self, user_id: str) -> CurrentUser | None:
+        try:
+            raw = await self._r.get(f"{self._PREFIX}{user_id}")
+            if raw is None:
+                return None
+            return CurrentUser(**json.loads(raw))
+        except Exception as exc:
+            logger.warning("[Cache] Redis get error: %s", exc)
+            return None
+
+    async def set(self, user_id: str, user: CurrentUser) -> None:
+        try:
+            await self._r.setex(
+                f"{self._PREFIX}{user_id}",
+                self._ttl,
+                json.dumps(dataclasses.asdict(user)),
+            )
+        except Exception as exc:
+            logger.warning("[Cache] Redis set error: %s", exc)
+
+    async def invalidate(self, user_id: str) -> None:
+        try:
+            await self._r.delete(f"{self._PREFIX}{user_id}")
+        except Exception as exc:
+            logger.warning("[Cache] Redis invalidate error: %s", exc)
+
+    async def clear(self) -> None:
+        try:
+            keys = await self._r.keys(f"{self._PREFIX}*")
+            if keys:
+                await self._r.delete(*keys)
+        except Exception as exc:
+            logger.warning("[Cache] Redis clear error: %s", exc)
 
 
-def get_profile_cache() -> _ProfileCache:
-    """Return the profile cache singleton (useful for testing/invalidation)."""
-    return _profile_cache
+# Lazy singleton — initialized on first request
+_cache: _InMemoryCache | _RedisCache | None = None
+
+
+async def _get_cache() -> _InMemoryCache | _RedisCache:
+    """Return the cache singleton, initializing it on first call.
+
+    Tries Redis if REDIS_URL is configured; falls back to in-memory on failure.
+    """
+    global _cache
+    if _cache is not None:
+        return _cache
+
+    from app.core.config import get_settings
+    settings = get_settings()
+
+    if settings.redis_url:
+        try:
+            import redis.asyncio as aioredis  # type: ignore[import]
+            client = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await client.ping()
+            _cache = _RedisCache(client, settings.cache_ttl_seconds)
+            logger.info("[Cache] Redis cache active at %s", settings.redis_url)
+        except Exception as exc:
+            logger.warning(
+                "[Cache] Redis unavailable (%s) — falling back to in-memory cache. "
+                "Not suitable for multi-worker deployments.",
+                exc,
+            )
+            _cache = _InMemoryCache(settings.cache_ttl_seconds)
+    else:
+        _cache = _InMemoryCache(settings.cache_ttl_seconds)
+        logger.debug(
+            "[Cache] Using in-memory cache (set REDIS_URL for multi-worker support)."
+        )
+
+    return _cache
+
+
+async def get_profile_cache() -> _InMemoryCache | _RedisCache:
+    """Return the active cache instance (useful for testing/invalidation)."""
+    return await _get_cache()
 
 
 # ── Core Dependency: Local JWT Decode + Cached Profile ───────────
@@ -159,7 +243,8 @@ async def get_current_user(request: Request) -> CurrentUser:
     user_id = auth_user.id
 
     # ── 3. Check cache first ─────────────────────────────────────
-    cached = _profile_cache.get(user_id)
+    cache = await _get_cache()
+    cached = await cache.get(user_id)
     if cached is not None:
         logger.debug("[Auth] Cache HIT for %s", cached.email)
         return cached
@@ -176,8 +261,8 @@ async def get_current_user(request: Request) -> CurrentUser:
     except Exception as exc:
         logger.error("Failed to fetch user profile for %s: %s", user_id, exc)
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User profile not found. Contact your administrator.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify user profile. Please try again later.",
         )
 
     if not profile:
@@ -187,8 +272,10 @@ async def get_current_user(request: Request) -> CurrentUser:
         )
 
     # Read active org from X-Active-Org header (multi-org support)
+    # Note: profile.organization_id is a legacy single-org field; do not fall back to it
+    # as it is null for users who joined via invitation. Frontend always sends X-Active-Org.
     active_org_header = request.headers.get("X-Active-Org")
-    active_org_id = active_org_header or profile.get("organization_id")
+    active_org_id = active_org_header or None
 
     current_user = CurrentUser(
         id=profile["id"],
@@ -203,7 +290,7 @@ async def get_current_user(request: Request) -> CurrentUser:
     )
 
     # ── 5. Store in cache ────────────────────────────────────────
-    _profile_cache.set(user_id, current_user)
+    await cache.set(user_id, current_user)
 
     logger.debug(
         "[Auth] Cache MISS → loaded %s (role=%s, approved=%s)",

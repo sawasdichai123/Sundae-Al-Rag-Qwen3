@@ -63,7 +63,7 @@ export default function ForgotPasswordPage() {
                             {t("forgotPassword.sent")}
                         </p>
                         <p className="text-xs text-emerald-600">
-                            กรุณาตรวจสอบอีเมล <span className="font-semibold">{email}</span> แล้วกดลิงก์ในอีเมลเพื่อตั้งรหัสผ่านใหม่
+                            {t("forgotPassword.sentDescBefore")} <span className="font-semibold">{email}</span> {t("forgotPassword.sentDescAfter")}
                         </p>
                     </div>
                     <Link

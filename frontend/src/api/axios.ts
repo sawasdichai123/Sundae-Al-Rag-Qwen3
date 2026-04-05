@@ -76,14 +76,14 @@ function readTokenFromStorage(): { token: string; expiresAt: number } | null {
 export async function getValidToken(): Promise<string | null> {
     const now = Math.floor(Date.now() / 1000);
 
-    // 1. Use in-memory cached token if valid (expires in more than 5 minutes)
-    if (_cachedToken && _cachedTokenExpiresAt - now > 300) {
+    // 1. Use in-memory cached token if valid (expires in more than 10 minutes)
+    if (_cachedToken && _cachedTokenExpiresAt - now > 600) {
         return _cachedToken;
     }
 
     // 2. Read from localStorage directly (fast, no lock contention)
     const stored = readTokenFromStorage();
-    if (stored && stored.expiresAt - now > 300) {
+    if (stored && stored.expiresAt - now > 600) {
         _cachedToken = stored.token;
         _cachedTokenExpiresAt = stored.expiresAt;
         return stored.token;
@@ -91,10 +91,13 @@ export async function getValidToken(): Promise<string | null> {
 
     // 3. Token near expiry or missing — try getSession with timeout
     try {
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("getSession timeout")), 8000)
-        );
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const sessionPromise = supabase.auth.getSession().finally(() => {
+            if (timeoutId !== null) clearTimeout(timeoutId);
+        });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error("getSession timeout")), 8000);
+        });
 
         let session;
         try {
@@ -112,8 +115,8 @@ export async function getValidToken(): Promise<string | null> {
         _cachedToken = session.access_token;
         _cachedTokenExpiresAt = session.expires_at ?? 0;
 
-        // Refresh if token expires within 5 minutes
-        if (_cachedTokenExpiresAt - now < 300) {
+        // Refresh if token expires within 10 minutes
+        if (_cachedTokenExpiresAt - now < 600) {
             const freshToken = await refreshTokenOnce();
             return freshToken || session.access_token;
         }
@@ -156,19 +159,9 @@ apiClient.interceptors.response.use(
             const freshToken = await refreshTokenOnce();
             if (!freshToken) {
                 // Refresh truly failed — session is dead.
-                // Import toast lazily to avoid circular deps.
-                try {
-                    const { useToastStore } = await import("../store/toastStore");
-                    useToastStore.getState().addToast(
-                        "warning",
-                        "เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่",
-                        8000,
-                    );
-                } catch { /* ignore if toast not available */ }
-
-                // Small delay so the toast is visible before redirect
-                await new Promise((r) => setTimeout(r, 1500));
-                window.location.href = "/login";
+                // Dispatch event instead of hard redirect so active forms
+                // are not silently discarded. App.tsx listens and calls signOut().
+                window.dispatchEvent(new CustomEvent("session-expired"));
                 return Promise.reject(error);
             }
 

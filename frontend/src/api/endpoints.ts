@@ -317,9 +317,9 @@ export const botsApi = {
 
 export const inboxApi = {
     /** List chat sessions for an organization. */
-    listSessions: (organizationId: string) =>
+    listSessions: (organizationId: string, page = 1, pageSize = 20) =>
         apiClient.get("/api/inbox/sessions", {
-            params: { organization_id: organizationId },
+            params: { organization_id: organizationId, page, page_size: pageSize },
         }),
 
     /** Get messages for a specific session. */
@@ -451,5 +451,22 @@ export const orgApi = {
         apiClient.put<{ first_name: string | null; last_name: string | null; avatar_url: string | null; email: string }>(
             "/api/orgs/profile/me",
             { first_name: firstName, last_name: lastName, ...(avatarUrl !== undefined ? { avatar_url: avatarUrl } : {}) },
+        ),
+
+    /** Get LINE integration config for an org. */
+    getLineConfig: (orgId: string) =>
+        apiClient.get<{ is_line_enabled: boolean; has_credentials: boolean; webhook_url: string }>(
+            `/api/orgs/${orgId}/line-config`
+        ),
+
+    /** Update LINE integration credentials / toggle. */
+    updateLineConfig: (orgId: string, data: {
+        line_channel_secret?: string;
+        line_access_token?: string;
+        is_line_enabled?: boolean;
+    }) =>
+        apiClient.put<{ is_line_enabled: boolean; has_credentials: boolean; webhook_url: string }>(
+            `/api/orgs/${orgId}/line-config`,
+            data,
         ),
 };

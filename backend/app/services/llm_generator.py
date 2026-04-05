@@ -120,7 +120,7 @@ async def generate_response(
     model: Optional[str] = None,
     temperature: float = 0.1,
     ollama_base_url: Optional[str] = None,
-    timeout: float = 300.0,
+    timeout: float = 60.0,
     system_prompt: Optional[str] = None,
 ) -> str:
     """Generate a grounded response using a local Ollama LLM.
@@ -173,7 +173,11 @@ async def generate_response(
             )
             response.raise_for_status()
 
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception as json_exc:
+            logger.error("Ollama response is not valid JSON: %s", json_exc)
+            return FALLBACK_MESSAGE
 
         # Extract the assistant's response
         assistant_message = (
@@ -279,6 +283,7 @@ async def generate_response_stream(
                         if data.get("done", False):
                             return
                     except json.JSONDecodeError:
+                        logger.warning("[LLM Stream] Non-JSON line from Ollama (skipped): %s", line[:100])
                         continue
 
     except httpx.ConnectError as exc:

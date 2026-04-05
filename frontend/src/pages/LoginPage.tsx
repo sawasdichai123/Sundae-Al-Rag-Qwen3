@@ -26,6 +26,7 @@ export default function LoginPage() {
     const [firstName, setFirstName] = useState("");
     const [lastName, setLastName] = useState("");
     const [registerMsg, setRegisterMsg] = useState("");
+    const [registerSuccess, setRegisterSuccess] = useState(false);
     const [registerLoading, setRegisterLoading] = useState(false);
 
     // Already logged in → redirect to dashboard
@@ -37,6 +38,7 @@ export default function LoginPage() {
         setTab(t);
         clearError();
         setRegisterMsg("");
+        setRegisterSuccess(false);
         if (resetSuccess) setSearchParams({}, { replace: true });
     };
 
@@ -67,8 +69,9 @@ export default function LoginPage() {
                 ? t("login.emailTaken")
                 : error.message.includes("Password should be")
                     ? t("login.passwordTooShort")
-                    : `❌ ${error.message}`;
+                    : error.message;
             setRegisterMsg(msg);
+            setRegisterSuccess(false);
             setRegisterLoading(false);
             return;
         }
@@ -77,6 +80,7 @@ export default function LoginPage() {
         // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
 
         setRegisterMsg(t("login.registerSuccess"));
+        setRegisterSuccess(true);
         setRegisterLoading(false);
         setPassword("");
         // Auto-switch to login tab after 1.5s
@@ -130,13 +134,12 @@ export default function LoginPage() {
             {/* Error / Success Messages */}
             {authError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
-                    <span className="text-red-500 text-sm mt-0.5">⚠</span>
                     <p className="text-sm text-red-700 flex-1">{authError}</p>
-                    <button onClick={clearError} className="text-red-400 hover:text-red-600 text-sm cursor-pointer">✕</button>
+                    <button onClick={clearError} className="text-red-400 hover:text-red-600 text-sm cursor-pointer">&times;</button>
                 </div>
             )}
             {registerMsg && (
-                <div className={`mb-4 p-3 rounded-xl border text-sm ${registerMsg.startsWith("✅")
+                <div className={`mb-4 p-3 rounded-xl border text-sm ${registerSuccess
                         ? "bg-emerald-50 border-emerald-200 text-emerald-700"
                         : "bg-red-50 border-red-200 text-red-700"
                     }`}>

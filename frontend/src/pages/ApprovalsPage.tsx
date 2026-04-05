@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useToastStore } from "../store/toastStore";
 import { adminApi } from "../api/endpoints";
+import { getApiError } from "../utils/apiError";
 import type { PendingUser } from "../types";
 import { useT } from "../i18n";
 
@@ -46,7 +47,7 @@ export default function ApprovalsPage() {
             await loadUsers();
         } catch (err: unknown) {
             console.error("[Approvals] Approve failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("approvals.approveFailed");
+            const msg = getApiError(err, t("approvals.approveFailed"));
             toast("error", msg);
         } finally {
             setApprovingId(null);
@@ -63,7 +64,7 @@ export default function ApprovalsPage() {
             await loadUsers();
         } catch (err: unknown) {
             console.error("[Approvals] Reject failed:", err);
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("approvals.rejectFailed");
+            const msg = getApiError(err, t("approvals.rejectFailed"));
             toast("error", msg);
         } finally {
             setRejectingId(null);

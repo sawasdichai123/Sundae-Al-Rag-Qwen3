@@ -73,6 +73,13 @@ export const useOrgStore = create<OrgState>((set, get) => ({
         } catch (err) {
             console.error("[OrgStore] Failed to fetch orgs:", err);
             set({ isLoading: false, hasFetched: true, fetchFailed: true });
+            // Auto-retry once after 5s — resets fetchFailed so UI can recover
+            setTimeout(() => {
+                if (get().fetchFailed) {
+                    console.log("[OrgStore] Auto-retrying fetchOrgs after failure...");
+                    get().fetchOrgs();
+                }
+            }, 5000);
         }
     },
 

@@ -13,6 +13,7 @@ SECURITY NOTE:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -29,6 +30,8 @@ _client: Optional[AsyncClient] = None
 async def init_supabase() -> AsyncClient:
     """Initialise the async Supabase client (call once at startup).
 
+    Retries up to 3 times with exponential backoff (1s → 2s → 4s) on failure.
+
     Returns:
         The initialised ``AsyncClient`` instance.
     """
@@ -37,24 +40,35 @@ async def init_supabase() -> AsyncClient:
         logger.warning("Supabase client already initialised — skipping.")
         return _client
 
-    import asyncio
-
     s = get_settings()
-    try:
-        _client = await asyncio.wait_for(
-            acreate_client(
-                supabase_url=s.supabase_url,
-                supabase_key=s.supabase_service_role_key,
-            ),
-            timeout=30,
-        )
-    except asyncio.TimeoutError:
-        raise RuntimeError(
-            "Supabase async client creation timed out after 30s. "
-            "Check network connectivity to: " + s.supabase_url
-        )
-    logger.info("Supabase async client initialised (URL: %s)", s.supabase_url)
-    return _client
+    max_retries = 3
+
+    for attempt in range(max_retries):
+        try:
+            _client = await asyncio.wait_for(
+                acreate_client(
+                    supabase_url=s.supabase_url,
+                    supabase_key=s.supabase_service_role_key,
+                ),
+                timeout=10,
+            )
+            logger.info("Supabase async client initialised (URL: %s)", s.supabase_url)
+            return _client
+        except Exception as exc:
+            if attempt < max_retries - 1:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                logger.warning(
+                    "Supabase init failed (attempt %d/%d): %s — retrying in %ds",
+                    attempt + 1, max_retries, exc, wait,
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise RuntimeError(
+                    f"Supabase async client failed after {max_retries} attempts. "
+                    f"Last error: {exc}. Check connectivity to: {s.supabase_url}"
+                ) from exc
+
+    raise RuntimeError("Supabase init failed unexpectedly.")
 
 
 async def close_supabase() -> None:

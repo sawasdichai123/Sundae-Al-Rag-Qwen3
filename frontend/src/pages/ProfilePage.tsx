@@ -13,6 +13,7 @@ import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import { orgApi } from "../api/endpoints";
+import { getApiError } from "../utils/apiError";
 import { supabase } from "../api/supabaseClient";
 import type { MyInvitation } from "../types";
 import Spinner from "../components/Spinner";
@@ -84,7 +85,7 @@ export default function ProfilePage() {
             // Refresh profile in store
             if (user?.id) await fetchProfile(user.id);
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("profile.saveFailed");
+            const msg = getApiError(err, t("profile.saveFailed"));
             toast("error", msg);
         } finally {
             setSaving(false);
@@ -158,7 +159,7 @@ export default function ProfilePage() {
             setInvitations((prev) => prev.filter((inv) => inv.id !== invitationId));
             await fetchOrgs();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("profile.acceptFailed");
+            const msg = getApiError(err, t("profile.acceptFailed"));
             toast("error", msg);
         } finally {
             setAcceptingId(null);
@@ -173,7 +174,7 @@ export default function ProfilePage() {
             toast("success", t("profile.declineSuccess"));
             setInvitations((prev) => prev.filter((inv) => inv.id !== invitationId));
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("profile.declineFailed");
+            const msg = getApiError(err, t("profile.declineFailed"));
             toast("error", msg);
         } finally {
             setDecliningId(null);
@@ -192,7 +193,7 @@ export default function ProfilePage() {
             if (detail === "LAST_ORG_ADMIN") {
                 setLastAdminOrgId(orgId);
             } else {
-                toast("error", detail || t("profile.leaveFailed"));
+                toast("error", getApiError(err, t("profile.leaveFailed")));
             }
         } finally {
             setLeavingOrgId(null);

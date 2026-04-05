@@ -11,6 +11,7 @@
 import { create } from "zustand";
 import { supabase } from "../api/supabaseClient";
 import { useOrgStore } from "./orgStore";
+import { getT } from "../i18n";
 import type { UserProfile, Organization, UserRole } from "../types";
 import type { Session } from "@supabase/supabase-js";
 
@@ -51,14 +52,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             });
 
             if (error) {
+                const t = getT();
                 const errMsg = error.message;
                 set({
                     authError: errMsg === "Invalid login credentials"
-                        ? "อีเมลหรือรหัสผ่านไม่ถูกต้อง"
+                        ? t("auth.invalidCredentials")
                         : errMsg.toLowerCase().includes("email not confirmed")
-                            ? "กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ (ตรวจสอบในกล่องอีเมลของท่าน)"
+                            ? t("auth.emailNotConfirmed")
                             : errMsg.includes("Failed to fetch")
-                                ? "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง"
+                                ? t("auth.connectionFailed")
                                 : errMsg,
                 });
                 return;
@@ -70,9 +72,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             }
         } catch (err) {
             console.error("[Auth] signIn error:", err);
-            set({
-                authError: "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาลองใหม่อีกครั้ง",
-            });
+            set({ authError: getT()("auth.connectionFailed") });
         } finally {
             set({ isLoading: false });
         }
@@ -127,10 +127,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         if (profileError || !profile) {
             console.error("[Auth] Failed to fetch user profile:", profileError);
-            set({
-                authError: "ไม่พบโปรไฟล์ผู้ใช้ กรุณาติดต่อผู้ดูแลระบบ",
-                isLoading: false,
-            });
+            set({ authError: getT()("auth.profileNotFound"), isLoading: false });
             return;
         }
 

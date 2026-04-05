@@ -20,17 +20,21 @@ SECURITY:
 
 from __future__ import annotations
 
+import hashlib
+import hmac as hmac_lib
 import json
 import logging
 import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.config import get_settings
 from app.core.database import get_supabase
+from app.core.limiter import limiter
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response_stream
 from app.services.vector_search import search_parent_chunks
@@ -40,15 +44,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/widget", tags=["Web Widget"])
 
 
+# ── Session HMAC Helpers ─────────────────────────────────────────
+
+
+def _sign_session(session_id: str) -> str:
+    secret = get_settings().supabase_jwt_secret
+    return hmac_lib.new(secret.encode(), session_id.encode(), hashlib.sha256).hexdigest()
+
+
+def _verify_session_token(session_id: str, token: str) -> bool:
+    expected = _sign_session(session_id)
+    return hmac_lib.compare_digest(expected, token)
+
+
 # ── Models ───────────────────────────────────────────────────────
 
 
 class WidgetChatRequest(BaseModel):
     """Request for sending a chat message from the widget."""
 
-    message: str = Field(..., min_length=1, description="The visitor's question")
+    message: str = Field(..., min_length=1, max_length=5000, description="The visitor's question")
     session_id: Optional[str] = Field(
         None, description="Existing session ID (from localStorage)"
+    )
+    session_token: Optional[str] = Field(
+        None, description="HMAC token for session ownership verification"
     )
 
 
@@ -56,6 +76,7 @@ class WidgetSessionResponse(BaseModel):
     """Response when creating a new widget session."""
 
     session_id: str
+    session_token: str
     bot_name: str
 
 
@@ -115,7 +136,8 @@ async def _get_widget_bot(bot_id: str) -> dict:
 
 
 @router.post("/session/{bot_id}", response_model=WidgetSessionResponse)
-async def create_widget_session(bot_id: str) -> WidgetSessionResponse:
+@limiter.limit("20/minute")
+async def create_widget_session(request: Request, bot_id: str) -> WidgetSessionResponse:
     """Create a new anonymous chat session for the widget.
 
     The frontend stores the returned session_id in localStorage
@@ -150,6 +172,7 @@ async def create_widget_session(bot_id: str) -> WidgetSessionResponse:
 
     return WidgetSessionResponse(
         session_id=session_id,
+        session_token=_sign_session(session_id),
         bot_name=bot.get("name", "SUNDAE Bot"),
     )
 
@@ -158,7 +181,9 @@ async def create_widget_session(bot_id: str) -> WidgetSessionResponse:
 
 
 @router.post("/chat/{bot_id}")
+@limiter.limit("30/minute")
 async def widget_chat(
+    request: Request,
     bot_id: str,
     body: WidgetChatRequest,
 ) -> StreamingResponse:
@@ -180,6 +205,11 @@ async def widget_chat(
 
     # ── Resolve or create session ────────────────────────────────
     session_id = body.session_id
+
+    if session_id:
+        # Verify HMAC token ownership before trusting session_id
+        if not body.session_token or not _verify_session_token(session_id, body.session_token):
+            session_id = None
 
     if session_id:
         # Verify session exists and belongs to this bot
@@ -219,11 +249,10 @@ async def widget_chat(
                     # Return a non-streaming response indicating handoff
                     async def handoff_stream():
                         data = json.dumps(
-                            {"type": "token", "content": "กำลังรอเจ้าหน้าที่ตอบกลับ กรุณารอสักครู่ค่ะ"},
-                            ensure_ascii=False,
+                            {"type": "token", "content": "A human agent will respond shortly. Please wait."},
                         )
                         yield f"data: {data}\n\n"
-                        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id)})}\n\n"
 
                     return StreamingResponse(
                         handoff_stream(),
@@ -348,13 +377,12 @@ async def widget_chat(
         except Exception as stream_exc:
             logger.error("[Widget] LLM streaming failed: %s", stream_exc)
             err = json.dumps(
-                {"type": "token", "content": "\n\n(ขออภัย เกิดข้อผิดพลาดขณะประมวลผล)"},
-                ensure_ascii=False,
+                {"type": "token", "content": "\n\n(An error occurred while processing your request.)"},
             )
             yield f"data: {err}\n\n"
 
-        # Done signal with session_id
-        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+        # Done signal with session_id and signed token
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id)})}\n\n"
 
         # Save assistant message
         answer_text = "".join(full_answer)
@@ -399,12 +427,21 @@ async def widget_chat(
 
 
 @router.get("/history/{session_id}", response_model=list[WidgetMessageResponse])
-async def get_widget_history(session_id: str) -> list[WidgetMessageResponse]:
+@limiter.limit("30/minute")
+async def get_widget_history(
+    request: Request,
+    session_id: str,
+    session_token: str = Query(..., description="HMAC token for session ownership verification"),
+) -> list[WidgetMessageResponse]:
     """Get chat history for a widget session.
 
     Used when the visitor refreshes the page — the widget reloads
     messages from localStorage session_id.
+    Requires session_token (HMAC) to prevent session enumeration.
     """
+    if not _verify_session_token(session_id, session_token):
+        raise HTTPException(status_code=403, detail="Invalid session token.")
+
     supabase = get_supabase()
 
     try:

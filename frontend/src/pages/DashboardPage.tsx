@@ -334,7 +334,8 @@ export default function DashboardPage() {
             }
 
             if (sessionsRes.status === "fulfilled") {
-                const allSessions = sessionsRes.value.data as any[];
+                const raw = sessionsRes.value.data as any;
+                const allSessions: any[] = raw?.sessions ?? (Array.isArray(raw) ? raw : []);
                 const today = new Date().toDateString();
                 setSessionTodayCount(
                     allSessions.filter((s: any) => {
@@ -347,7 +348,7 @@ export default function DashboardPage() {
                 );
             }
         });
-    }, [activeOrgId, user?.organization_id, isSupport]);
+    }, [activeOrgId, user?.organization_id]);
 
     // Format a nullable count for display
     const fmt = (val: number | null) =>
@@ -416,16 +417,16 @@ export default function DashboardPage() {
             {/* Quick Actions */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
                 {[
-                    { label: t("dashboard.manageKnowledge"), desc: t("dashboard.manageKnowledgeDesc"), icon: "📄", to: "/knowledge-base", color: "hover:border-brand-300" },
-                    { label: t("dashboard.manageBots"), desc: t("dashboard.manageBotsDesc"), icon: "🤖", to: "/bots", color: "hover:border-violet-300" },
-                    { label: t("dashboard.viewInbox"), desc: t("dashboard.viewInboxDesc"), icon: "💬", to: "/inbox", color: "hover:border-emerald-300" },
+                    { label: t("dashboard.manageKnowledge"), desc: t("dashboard.manageKnowledgeDesc"), icon: "KB", to: "/knowledge-base", color: "hover:border-brand-300" },
+                    { label: t("dashboard.manageBots"), desc: t("dashboard.manageBotsDesc"), icon: "Bot", to: "/bots", color: "hover:border-violet-300" },
+                    { label: t("dashboard.viewInbox"), desc: t("dashboard.viewInboxDesc"), icon: "Inbox", to: "/inbox", color: "hover:border-emerald-300" },
                 ].map((action) => (
                     <button
                         key={action.to}
                         onClick={() => navigate(action.to)}
                         className={`bg-white rounded-2xl border border-steel-100 p-5 text-left cursor-pointer transition-all duration-200 hover:shadow-md ${action.color}`}
                     >
-                        <span className="text-2xl mb-3 block">{action.icon}</span>
+                        <span className="text-xs font-bold px-2 py-1 rounded-lg bg-steel-100 text-steel-600 mb-3 inline-block">{action.icon}</span>
                         <p className="text-sm font-semibold text-steel-900">{action.label}</p>
                         <p className="text-xs text-steel-500 mt-0.5">{action.desc}</p>
                     </button>

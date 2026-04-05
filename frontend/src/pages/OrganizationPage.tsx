@@ -13,6 +13,7 @@ import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
+import { getApiError } from "../utils/apiError";
 import type { OrgMember } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
@@ -57,7 +58,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             toast("success", t("org.inviteSuccess").replace("{email}", inviteEmail.trim()));
             setInviteEmail("");
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.inviteFailed");
+            const msg = getApiError(err, t("org.inviteFailed"));
             toast("error", msg);
         } finally {
             setInviting(false);
@@ -74,7 +75,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             await fetchOrgs();
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.promoteFailed");
+            const msg = getApiError(err, t("org.promoteFailed"));
             toast("error", msg);
         } finally {
             setPromotingId(null);
@@ -90,7 +91,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             await fetchOrgs();
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.demoteFailed");
+            const msg = getApiError(err, t("org.demoteFailed"));
             toast("error", msg);
         } finally {
             setDemotingId(null);
@@ -105,7 +106,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             toast("success", t("org.removeSuccess"));
             await loadMembers();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.removeFailed");
+            const msg = getApiError(err, t("org.removeFailed"));
             toast("error", msg);
         } finally {
             setRemovingId(null);
@@ -264,7 +265,7 @@ export default function OrganizationPage() {
             toast("success", t("org.updateSuccess"));
             await fetchOrgs();
         } catch (err: unknown) {
-            const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || t("org.updateFailed");
+            const msg = getApiError(err, t("org.updateFailed"));
             toast("error", msg);
         } finally {
             setSaving(false);

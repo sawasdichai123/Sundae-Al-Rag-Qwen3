@@ -7,15 +7,55 @@ import logging
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.database import init_supabase, close_supabase
 from app.core.config import get_settings
+from app.core.limiter import limiter
 from app.routers import health, document, chat, bot, inbox, approval, organization, webhook_line, widget
 from app.services.ai_models import get_embedding_service, get_reranker_service
 
 logger = logging.getLogger(__name__)
+
+
+async def _validate_startup_config() -> None:
+    """Validate required env vars and check service connectivity on startup."""
+    settings = get_settings()
+
+    # ── 1. Required env vars ─────────────────────────────────────
+    missing = []
+    if not settings.supabase_url:
+        missing.append("SUPABASE_URL")
+    if not settings.supabase_service_role_key:
+        missing.append("SUPABASE_SERVICE_ROLE_KEY")
+    if not settings.supabase_jwt_secret:
+        missing.append("SUPABASE_JWT_SECRET")
+    if missing:
+        raise RuntimeError(
+            f"Missing required environment variables: {', '.join(missing)}. "
+            "Check your .env file."
+        )
+
+    # ── 2. Ollama reachability (non-fatal — just log) ─────────────
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if resp.status_code == 200:
+                logger.info("[Startup] Ollama reachable at %s", settings.ollama_base_url)
+            else:
+                logger.warning(
+                    "[Startup] Ollama returned HTTP %d — AI features may be degraded.",
+                    resp.status_code,
+                )
+    except Exception as exc:
+        logger.warning(
+            "[Startup] Ollama not reachable at %s (%s) — AI features will be unavailable until Ollama starts.",
+            settings.ollama_base_url,
+            exc,
+        )
 
 
 async def _warmup_models() -> None:
@@ -64,9 +104,15 @@ async def _warmup_models() -> None:
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle hook."""
     # ── Startup ──────────────────────────────────────────────────
+    await _validate_startup_config()
     await init_supabase()
     # Preload models in background so they don't block server start
-    asyncio.create_task(_warmup_models())
+    _warmup_task = asyncio.create_task(_warmup_models())
+    _warmup_task.add_done_callback(
+        lambda t: logger.error("[Warmup] Unhandled exception: %s", t.exception())
+        if not t.cancelled() and t.exception()
+        else None
+    )
     yield
     # ── Shutdown ─────────────────────────────────────────────────
     await close_supabase()
@@ -78,6 +124,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Middleware ───────────────────────────────────────────────────
 _settings = get_settings()
