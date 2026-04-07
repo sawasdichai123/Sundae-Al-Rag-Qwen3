@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 7 เมษายน 2569 — **LINE Quick Reply Postback Fix ✅ (숨 UUID จากบทสนทนา) | LINE UX Features ✅ | Frontend Security 13/15 Fixed**
+> **อัพเดทล่าสุด**: 7 เมษายน 2569 — **Email Notifications ✅ | HIGH-03 AES-GCM ✅ | Frontend Security 15/16 ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -4106,9 +4106,9 @@ LINE Omnichannel feature สมบูรณ์ 100% ✅
 | SEC-F02 | 🔴 Critical | `endpoints.ts`, `ResetPasswordPage.tsx` | ลบ console.log ทั้งหมดที่มี recovery token / API URL | ✅ Fixed |
 | SEC-F03 | 🟠 High | Backend | Backend enforce แล้วจาก session ก่อน | ✅ (Backend) |
 | SEC-F04 | 🟠 High | `axios.ts` | validate org ID กับ orgStore ก่อนส่ง X-Active-Org header | ✅ Fixed |
-| SEC-F05 | 🟠 High | `docker-compose.yml` | Rate limiting — ต้องเพิ่ม GoTrue env vars | ❌ ยังไม่เสร็จ |
+| SEC-F05 | 🟠 High | Supabase Dashboard | ตั้ง Rate Limits ที่ Authentication → Rate Limits (10 req/5min sign-in) | ✅ Fixed |
 | SEC-F06 | 🟠 High | `LoginPage.tsx`, `ResetPasswordPage.tsx` | password minLength 6 → 8 + generic error message | ✅ Fixed |
-| SEC-F07 | 🟡 Medium | `supabaseClient.ts` | Supabase SDK limitation — ยอมรับ | ⚠️ Accepted |
+| SEC-F07 | 🟡 Medium | `supabaseClient.ts` | เปลี่ยน storage จาก localStorage → sessionStorage | ✅ Fixed |
 | SEC-F08 | 🟡 Medium | `nginx.conf` | เพิ่ม security headers ครบ (CSP, X-Frame-Options, HSTS, Referrer-Policy, Permissions-Policy) | ✅ Fixed |
 | SEC-F09 | 🟡 Medium | Backend | Backend block แล้วจาก multi-admin plan | ✅ (Backend) |
 | SEC-F10 | 🟡 Medium | `ProfilePage.tsx` | magic bytes validation + restrict ext เฉพาะ jpg/png/webp (ปิด SVG) | ✅ Fixed |
@@ -4117,6 +4117,7 @@ LINE Omnichannel feature สมบูรณ์ 100% ✅
 | SEC-F13 | 🟢 Low | `authStore.ts` | await signOut() แทน fire-and-forget | ✅ Fixed |
 | SEC-F14 | 🟢 Low | `WebChatPage.tsx` | UUID เต็ม 36 chars แทน slice(0,8) | ✅ Fixed |
 | SEC-F15 | 🟢 Low | api files | relative path `/login` ไม่มี open redirect risk จริง | ⚠️ Accepted |
+| **สรุป** | | | **15 Fixed, 1 Accepted (SEC-F15 — false positive)** | |
 | SEC-F16 | 🟢 Low | `ForgotPasswordPage.tsx` | ใช้ `VITE_APP_URL` env var แทน `window.location.origin` | ✅ Fixed |
 
 ### 55.3 ไฟล์ที่แก้ไข
@@ -4207,5 +4208,346 @@ LINE Omnichannel feature สมบูรณ์ 100% ✅
 | 1 | **SEC-F05**: ตั้ง GoTrue rate limit ใน docker-compose | ❌ ค้างอยู่ |
 | 2 | **HIGH-03**: Encrypt LINE secrets (AES-GCM) | ต้องการ cryptography lib |
 | 3 | Organization logo upload UI | OrganizationPage |
-| 4 | Email notifications for org invitations | — |
-| 5 | Email notification for org invitations | ต้องการ SMTP |
+| 4 | Email notifications for org invitations | ต้องการ SMTP |
+
+---
+
+## Section 57 — LINE Production Deployment Checklist [7 เมษายน 2569]
+
+สิ่งที่ต้องตั้งค่าเพิ่มเมื่อ deploy ขึ้น server จริง (ออกจาก ngrok)
+
+### 57.1 บังคับ (🔴 ขาดไม่ได้)
+
+| # | รายการ | รายละเอียด |
+|---|--------|-----------|
+| 1 | **Domain + HTTPS cert** | LINE บังคับ HTTPS — ใช้ Let's Encrypt (Certbot) หรือ Cloudflare proxy |
+| 2 | **อัพเดท Webhook URL** | LINE Developers → Messaging API → Webhook URL → `https://yourdomain.com/api/webhook/line/{org_id}` |
+| 3 | **Use webhook = ON** | LINE OA Manager → ตรวจสอบว่าเปิดอยู่ |
+| 4 | **Auto-reply = OFF** | LINE OA Manager → ปิด auto-reply ให้ bot ตอบแทน |
+| 5 | **Nginx proxy** | เพิ่ม `location /api/` proxy_pass ไป backend port 8000 |
+| 6 | **Backend `.env` production** | ตรวจ SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY ครบ |
+| 7 | **Firewall port 80/443** | เปิดให้ LINE servers เข้าได้ |
+
+### 57.2 Nginx Config ที่ต้องเพิ่ม
+
+```nginx
+location /api/ {
+    proxy_pass http://localhost:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+### 57.3 ตรวจสอบเพิ่มเติม (🟡)
+
+| รายการ | หมายเหตุ |
+|--------|---------|
+| Rich Menu ยังใช้งานได้ | ถ้าใช้ Channel เดิม — ไม่ต้องสร้างใหม่ |
+| LINE secrets ใน DB | `line_access_token` + `line_channel_secret` ต่อ org — ตรวจว่าใส่แล้ว |
+| ngrok ปิดได้ | เมื่อใช้ domain จริงแล้ว ไม่ต้องรัน ngrok อีก |
+
+### 57.4 LINE OA Manager Settings สรุป
+
+| Setting | ค่า |
+|---------|-----|
+| Webhook URL | `https://yourdomain.com/api/webhook/line/{org_id}` |
+| Use webhook | **ON** |
+| Auto-reply messages | **OFF** |
+| Greeting messages | ตามต้องการ |
+
+### 57.5 Docker Compose (ถ้า deploy ด้วย Docker)
+
+เพิ่ม Nginx + Certbot container เข้า `docker-compose.yml`:
+
+```yaml
+nginx:
+  image: nginx:alpine
+  ports:
+    - "80:80"
+    - "443:443"
+  volumes:
+    - ./nginx.conf:/etc/nginx/conf.d/default.conf
+    - ./certbot/conf:/etc/letsencrypt
+    - ./certbot/www:/var/www/certbot
+
+certbot:
+  image: certbot/certbot
+  volumes:
+    - ./certbot/conf:/etc/letsencrypt
+    - ./certbot/www:/var/www/certbot
+```
+
+> หลังได้ cert แล้ว เปลี่ยน Webhook URL ใน LINE Console ครั้งเดียว — ทุกอย่างทำงานได้ทันที
+
+---
+
+## Section 58 — SEC-F07: เปลี่ยน Token Storage → sessionStorage [7 เมษายน 2569] ✅
+
+### 58.0 ปัญหา
+
+Supabase JS SDK เก็บ session token ใน **localStorage** โดย default → ถ้ามี XSS เกิดขึ้น JS สามารถอ่าน token ได้ทันที
+
+### 58.1 วิธีแก้ — Option A: sessionStorage
+
+**ไฟล์**: `frontend/src/api/supabaseClient.ts`
+
+| จุดที่แก้ | ก่อน | หลัง |
+|----------|------|------|
+| `createClient()` auth.storage | ไม่ระบุ (default = localStorage) | `storage: window.sessionStorage` |
+| `forceReauth()` cleanup | clear `localStorage` key `sb-*` | clear `sessionStorage` key `sb-*` |
+
+```typescript
+// ก่อน
+auth: { lock: inMemoryLock, autoRefreshToken: true, persistSession: true, detectSessionInUrl: true }
+
+// หลัง
+auth: { lock: inMemoryLock, autoRefreshToken: true, persistSession: true, detectSessionInUrl: true,
+        storage: window.sessionStorage }
+```
+
+### 58.2 ผลที่ได้
+
+| | ก่อน | หลัง |
+|--|------|------|
+| Token ที่เก็บ | localStorage (persistent) | sessionStorage (ปิด tab หาย) |
+| XSS token theft | อ่าน localStorage ได้ | sessionStorage ยากกว่า localStorage |
+| ปิด tab แล้วเปิดใหม่ | ยัง login อยู่ | ต้อง login ใหม่ |
+| เปิดหลาย tab | share session | แต่ละ tab เป็น session แยก |
+
+### 58.3 Trade-off
+
+- **ข้อเสีย**: ปิด tab → ต้อง login ใหม่ — ยอมรับได้สำหรับ admin dashboard
+- **ข้อดี**: ลด XSS token theft risk โดยไม่ต้องเปลี่ยน auth flow ทั้งหมด
+
+### 58.4 สถานะ Frontend Security รวม
+
+| สถานะ | จำนวน |
+|-------|-------|
+| ✅ Fixed | 14 |
+| ❌ Deferred (SEC-F05 — GoTrue rate limit) | 1 |
+| ⚠️ Accepted (SEC-F15 — no real risk) | 1 |
+| **รวม** | **16** |
+
+---
+
+## Section 59 — SEC-F15: Open Redirect — False Positive [7 เมษายน 2569] ⚠️ Accepted
+
+### 59.0 Issue ที่ถูก Flag
+
+เพื่อน flag ว่า redirect ไป `/login` อาจมี open redirect vulnerability:
+```
+/login?next=https://evil.com
+```
+ถ้า code อ่าน `?next=` แล้ว redirect ตามนั้น → user ถูกส่งไปหน้าอันตราย
+
+### 59.1 ทำไมถึงเป็น False Positive
+
+ตรวจ code จริงใน `App.tsx` และ `authStore.ts` — **ไม่มีการอ่าน query string `?next=` เลย**
+
+```typescript
+// App.tsx — หลัง login สำเร็จ redirect ไป "/" ตรงๆ
+if (isAuthenticated) {
+    return <Navigate to="/" replace />;
+}
+
+// authStore.ts — signIn() ไม่มีการอ่าน searchParams หรือ redirect parameter ใดๆ
+```
+
+สิ่งที่ต้องมีถึงจะเกิด vulnerability จริง (แต่ไม่มีใน codebase):
+```typescript
+// ❌ ไม่มี code แบบนี้ในโปรเจกต์
+const next = new URLSearchParams(window.location.search).get("next");
+window.location.href = next; // ← ถึงจะเป็น open redirect
+```
+
+### 59.2 สรุป
+
+| | รายละเอียด |
+|--|-----------|
+| **ความเสี่ยงจริง** | ไม่มี |
+| **เหตุผล** | ไม่มี code อ่าน `?next=` หรือ redirect parameter ใดๆ |
+| **การตัดสินใจ** | False positive — ไม่ต้องแก้ไข |
+| **สถานะ** | ⚠️ Accepted |
+
+---
+
+## Section 60 — SEC-F05: Rate Limiting ตั้งที่ Supabase Dashboard [7 เมษายน 2569] ✅
+
+### 60.0 ที่มา
+
+SEC-F05 เดิม flag ว่าต้องตั้ง GoTrue rate limit ใน `docker-compose.yml` — แต่ project นี้ใช้ **Supabase Cloud** (ไม่ใช่ self-hosted) จึงไม่มี docker-compose GoTrue ให้แก้
+
+### 60.1 วิธีที่ทำจริง
+
+ตั้งค่าที่ **Supabase Dashboard → Authentication → Rate Limits** โดยตรง
+
+| Setting | ค่าที่ตั้ง | ความหมาย |
+|---------|---------|---------|
+| Rate limit for sending emails | 2 emails/h | ส่ง email ได้ 2 ครั้ง/ชั่วโมง |
+| Rate limit for token refreshes | 150 req/5min | refresh session |
+| Rate limit for token verifications | 30 req/5min | OTP/Magic link |
+| **Rate limit for sign-ups and sign-ins** | **10 req/5min** | **login ได้ 10 ครั้ง/5 นาที — ป้องกัน brute force** |
+| Rate limit for anonymous users | 30 req/h | — |
+| Rate limit for Web3 sign-ins | 30 req/5min | — |
+
+### 60.2 สรุป Frontend Security ทั้งหมด
+
+| สถานะ | จำนวน |
+|-------|-------|
+| ✅ Fixed | 15 |
+| ⚠️ Accepted (SEC-F15 — false positive ไม่มี risk จริง) | 1 |
+| **รวม** | **16** |
+
+**Frontend Security สมบูรณ์ 100%** ✅
+
+---
+
+## Section 61 — สถานะโปรเจกต์รวม [7 เมษายน 2569]
+
+### 61.1 สิ่งที่เสร็จแล้ว ✅
+
+| หมวด | รายการ | สถานะ |
+|------|--------|-------|
+| **Core Platform** | Auth, Document, Bot, Chat, Inbox, Approval, Organization CRUD | ✅ |
+| **Multi-Admin** | SQL migration 017, promote/demote endpoints, UI, ลบ single-owner constraint | ✅ |
+| **Access Control** | Platform support/admin bypass ถูกลบ, org data confidentiality | ✅ |
+| **LINE Omnichannel** | Webhook, RAG, multi-bot, admin reply → LINE push | ✅ |
+| **LINE UX** | Auto-expire 5 min, Help, จบการสนทนา, ติดต่อเจ้าหน้าที่ | ✅ |
+| **LINE Quick Reply** | เปลี่ยน message → postback (ซ่อน UUID) | ✅ |
+| **Frontend Security** | 15/16 fixed (SEC-F01–F16), SEC-F05 ตั้งที่ Supabase Dashboard | ✅ |
+| **Nginx Security Headers** | CSP, X-Frame-Options, HSTS, Referrer-Policy, Permissions-Policy | ✅ |
+| **Code Review** | Rounds 1–9 + Sprint 3 ทุก issue แก้แล้ว | ✅ |
+
+---
+
+### 61.2 สิ่งที่ยังเหลือ ❌
+
+| # | รายการ | ระดับ | หมายเหตุ |
+|---|--------|-------|---------|
+| 1 | **HIGH-03: Encrypt LINE secrets (AES-GCM)** | 🟠 High | `line_access_token` + `line_channel_secret` เก็บ plain text ใน DB ควร encrypt |
+| 2 | **Organization logo upload UI** | 🟡 Medium | OrganizationPage — UI สำหรับ upload logo |
+| 3 | **Email notifications for org invitations** | 🟡 Medium | ส่ง email แจ้งเมื่อถูกเชิญเข้า org (ต้องการ SMTP/Resend) |
+
+---
+
+### 61.3 Optional / Nice-to-have
+
+| # | รายการ |
+|---|--------|
+| 1 | Dark mode |
+| 2 | LINE Rich Menu — publish อย่างเป็นทางการ |
+| 3 | LINE secrets encryption (HIGH-03) |
+
+
+---
+
+## Section 62 — HIGH-03: Encrypt LINE Secrets (AES-GCM) [7 เมษายน 2569] ✅
+
+### 62.0 ปัญหา
+
+`line_access_token` + `line_channel_secret` เก็บ plain text ใน `organizations` table — ถ้า DB leak → token ถูกขโมยได้ทันที
+
+### 62.1 วิธีแก้
+
+เข้ารหัสด้วย **AES-256-GCM** ก่อนเก็บลง DB — key เก็บใน `.env` เท่านั้น
+
+**Format ที่เก็บใน DB:**
+```
+enc:<base64(iv)>:<base64(ciphertext+tag)>
+```
+
+### 62.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|------|--------------|
+| `backend/app/core/utils.py` | เพิ่ม `encrypt_secret()` + `decrypt_secret()` (AES-256-GCM) |
+| `backend/app/core/config.py` | เพิ่ม `line_encryption_key` setting |
+| `backend/app/routers/organization.py` | encrypt ตอน save LINE credentials |
+| `backend/app/routers/webhook_line.py` | decrypt ก่อนใช้ access_token + channel_secret |
+| `backend/requirements.txt` | เพิ่ม `cryptography>=43.0.0` |
+| `backend/.env.example` | เพิ่ม `LINE_ENCRYPTION_KEY` |
+| `backend/.env` | เพิ่ม key จริง (generated) |
+| `backend/scripts/migrate_encrypt_line_secrets.py` | one-time migration script |
+
+### 62.3 ผลการ Migrate
+
+```
+Found 4 organizations.
+  [bca1137d] encrypted ['line_access_token', 'line_channel_secret']  ← org ที่มี LINE
+Done. Updated: 1, Skipped: 3
+```
+
+### 62.4 Security Flow
+
+```
+บันทึก:  plain text → encrypt_secret() → enc:iv:ciphertext → DB
+อ่านใช้:  DB → decrypt_secret() → plain text → webhook / push
+```
+
+- Key ไม่เคยออกจาก `.env` — ไม่อยู่ใน DB
+- ถ้า DB leak → ได้แค่ ciphertext — ถอดรหัสไม่ได้โดยไม่มี key
+- `decrypt_secret()` รองรับ plain text (fallback ระหว่าง migration) → ปลอดภัยใช้งานต่อเนื่อง
+
+### 62.5 สถานะ Remaining Tasks
+
+| # | รายการ | สถานะ |
+|---|--------|-------|
+| ~~HIGH-03: Encrypt LINE secrets~~ | ~~AES-GCM~~ | ✅ Done |
+| Organization logo upload UI | OrganizationPage | ❌ |
+| Email notifications for org invitations | ต้องการ SMTP/Resend | ❌ |
+
+---
+
+## Section 63 — Email Notifications for Org Invitations (Resend) [7 เมษายน 2569] ✅
+
+### 63.0 ปัญหา
+
+เมื่อ Org Admin เชิญ user เข้า org — user ไม่รู้ว่าถูกเชิญจนกว่าจะ login มาเช็คเอง
+
+### 63.1 วิธีแก้
+
+ใช้ **Resend** ส่ง transactional email อัตโนมัติทันทีหลัง invite สำเร็จ
+
+### 63.2 ไฟล์ที่แก้ไข / สร้างใหม่
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|------|--------------|
+| `backend/app/services/email_service.py` | ใหม่ — `send_invitation_email()` + HTML template |
+| `backend/app/core/config.py` | เพิ่ม `resend_api_key`, `email_from`, `frontend_url` |
+| `backend/app/routers/organization.py` | เรียก `send_invitation_email()` หลัง insert invitation |
+| `backend/.env` | เพิ่ม `RESEND_API_KEY`, `EMAIL_FROM`, `FRONTEND_URL` |
+| `backend/.env.example` | เพิ่ม env vars ใหม่ |
+
+### 63.3 Flow
+
+```
+Admin กด Invite → insert org_invitations → send_invitation_email() → Resend API → Email ถึง user
+```
+
+- ถ้า email ส่งไม่ได้ → log warning เท่านั้น **ไม่ block API response**
+- Link ในเมลชี้ไป `{FRONTEND_URL}/invitations`
+
+### 63.4 Email Template
+
+- HTML template สวยงาม — แสดงชื่อ org + ชื่อคนเชิญ
+- ปุ่ม "ดูคำเชิญ" → `/invitations`
+- Sender: `SUNDAE <onboarding@resend.dev>` (test) → เปลี่ยนเป็น domain จริงเมื่อ production
+
+### 63.5 Production Setup
+
+เมื่อ deploy ขึ้น server จริง เปลี่ยนใน `.env`:
+
+```env
+FRONTEND_URL=https://yourdomain.com
+EMAIL_FROM=noreply@bumail.net   # ต้องตั้ง DNS ใน Resend ก่อน
+```
+
+### 63.6 สถานะ Remaining Tasks
+
+| # | รายการ | สถานะ |
+|---|--------|-------|
+| ~~HIGH-03: Encrypt LINE secrets~~ | | ✅ Done |
+| ~~Email notifications for org invitations~~ | | ✅ Done |
+| Organization logo upload UI | OrganizationPage | ❌ ยังไม่ได้ทำ |

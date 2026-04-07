@@ -27,6 +27,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from app.core.database import get_supabase
 from app.core.line_auth import verify_line_signature_with_secret
+from app.core.utils import decrypt_secret
 from app.services.line_service import reply_message, reply_with_quick_reply
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response
@@ -360,8 +361,8 @@ async def line_webhook(
     if not org.get("is_line_enabled"):
         return {"status": "ignored", "reason": "line_disabled"}
 
-    access_token = org.get("line_access_token")
-    channel_secret = org.get("line_channel_secret")
+    access_token = decrypt_secret(org.get("line_access_token") or "")
+    channel_secret = decrypt_secret(org.get("line_channel_secret") or "")
 
     if not access_token or not channel_secret:
         logger.error("[LINE] Org %s missing LINE credentials", org_id)

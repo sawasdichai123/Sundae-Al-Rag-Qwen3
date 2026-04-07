@@ -1,9 +1,9 @@
 /**
  * DangerZonePage — Organization deletion management
  *
- * - Owner can request deletion
+ * - Org Admin can request deletion
  * - Support/Admin can confirm or cancel deletion
- * - Owner can cancel their own request
+ * - Org Admin can cancel their own request
  */
 
 import { useState, useEffect, useCallback } from "react";

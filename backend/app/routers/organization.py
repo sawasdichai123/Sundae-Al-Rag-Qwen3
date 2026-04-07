@@ -7,7 +7,8 @@ Endpoints:
     POST   /api/orgs                              → Create org (support/admin only)
     GET    /api/orgs                              → List user's orgs
     GET    /api/orgs/{org_id}                     → Org details
-    PUT    /api/orgs/{org_id}                     → Edit org (owner)
+    PUT    /api/orgs/{org_id}                     → Edit org (Org Admin)
+    PUT    /api/orgs/{org_id}/logo               → Upload org logo (Org Admin)
     POST   /api/orgs/{org_id}/request-deletion    → Request deletion
     POST   /api/orgs/{org_id}/confirm-deletion    → Confirm deletion
     POST   /api/orgs/{org_id}/leave               → Leave org (admin cannot leave if last admin)
@@ -24,7 +25,7 @@ Endpoints:
 
 SECURITY:
     Org creation restricted to support/admin roles.
-    Write ops require org owner role (via org_members).
+    Write ops require Org Admin role (via org_members).
     Read ops require org membership (via verify_organization).
 """
 
@@ -36,10 +37,11 @@ import re
 import string
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from pydantic import BaseModel
 
-from app.core.utils import validate_uuid_param
+from app.core.utils import validate_uuid_param, encrypt_secret, decrypt_secret
+from app.services.email_service import send_invitation_email
 from app.core.auth import (
     CurrentUser,
     require_approved,
@@ -144,8 +146,8 @@ async def create_org(
 ):
     """Create a new organization. Support/Admin only.
 
-    The creator (support/admin) is NOT added as owner.
-    The first invited user who accepts becomes the owner.
+    The creator (support/admin) is NOT added as Org Admin.
+    The first invited user who accepts becomes the first Org Admin.
     """
     name = body.name.strip()
     if not name:
@@ -251,6 +253,7 @@ async def list_orgs(
                 id=org["id"],
                 name=org["name"],
                 slug=org.get("slug"),
+                logo_url=org.get("logo_url"),
                 org_role=org_role,
                 created_at=org.get("created_at", ""),
             ))
@@ -272,6 +275,7 @@ async def list_orgs(
             id=org["id"],
             name=org["name"],
             slug=org.get("slug"),
+            logo_url=org.get("logo_url"),
             org_role=row["org_role"],
             created_at=org.get("created_at", ""),
         ))
@@ -535,6 +539,7 @@ async def get_org(
         name=org["name"],
         slug=org.get("slug"),
         status=org.get("status"),
+        logo_url=org.get("logo_url"),
         created_at=org.get("created_at", ""),
     )
 
@@ -591,6 +596,77 @@ async def update_org(
         status=org.get("status"),
         created_at=org.get("created_at", ""),
     )
+
+
+# ── Org Logo Upload ──────────────────────────────────────────────
+
+_LOGO_ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
+_LOGO_MAX_SIZE = 2 * 1024 * 1024  # 2MB
+_LOGO_MAGIC = {
+    "jpg":  (b"\xff\xd8\xff", 3),
+    "jpeg": (b"\xff\xd8\xff", 3),
+    "png":  (b"\x89PNG",      4),
+    "webp": (b"RIFF",         4),
+}
+
+
+@router.put("/{org_id}/logo", response_model=MessageResponse)
+async def upload_org_logo(
+    org_id: str,
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_approved),
+):
+    """Upload or replace org logo. Org Admin only. Max 2MB, jpg/png/webp."""
+    validate_uuid_param(org_id, "org_id")
+    await verify_organization(user, org_id)
+    await verify_org_admin(user, org_id)
+
+    ext = (file.filename or "").rsplit(".", 1)[-1].lower()
+    if ext not in _LOGO_ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "Only JPG, PNG, and WebP files are allowed.")
+
+    contents = await file.read()
+    if len(contents) > _LOGO_MAX_SIZE:
+        raise HTTPException(400, "File too large. Maximum size is 2MB.")
+
+    # Magic bytes validation
+    magic, length = _LOGO_MAGIC.get(ext, (b"", 0))
+    if magic and contents[:length] != magic:
+        raise HTTPException(400, "File content does not match its extension.")
+
+    supabase = get_supabase()
+    file_path = f"{org_id}.{ext}"
+
+    # Upload to Supabase Storage bucket "org_logos"
+    try:
+        await supabase.storage.from_("org_logos").upload(
+            file_path, contents,
+            {"content-type": file.content_type or "image/jpeg", "upsert": "true"},
+        )
+    except Exception:
+        # Try update (upsert) if upload fails due to existing file
+        try:
+            await supabase.storage.from_("org_logos").update(
+                file_path, contents,
+                {"content-type": file.content_type or "image/jpeg"},
+            )
+        except Exception as exc:
+            logger.error("[Org] Logo upload failed for %s: %s", org_id, exc)
+            raise HTTPException(500, "Failed to upload logo.")
+
+    # Get public URL
+    url_resp = await supabase.storage.from_("org_logos").get_public_url(file_path)
+    logo_url = url_resp if isinstance(url_resp, str) else url_resp.get("publicUrl", "")
+
+    # Save logo_url to organizations table
+    await (
+        supabase.table("organizations")
+        .update({"logo_url": logo_url})
+        .eq("id", org_id)
+    ).execute()
+
+    logger.info("[Org] Logo uploaded for %s by %s", org_id[:8], user.email)
+    return MessageResponse(message="Logo updated successfully.")
 
 
 # ── Deletion Flow ────────────────────────────────────────────────
@@ -1179,6 +1255,25 @@ async def invite_member(
         raise HTTPException(500, "Failed to create invitation.")
 
     inv = inv_result.data[0]
+
+    # Send invitation email (non-blocking — failure does not affect API response)
+    org_result = await (
+        supabase.table("organizations")
+        .select("name")
+        .eq("id", org_id)
+        .limit(1)
+    ).execute()
+    org_name = org_result.data[0]["name"] if org_result.data else "องค์กร"
+    try:
+        await send_invitation_email(
+            invited_email=email,
+            org_name=org_name,
+            invited_by_email=user.email,
+            invitation_id=inv["id"],
+        )
+    except Exception as exc:
+        logger.warning("[Invite] Email send failed (non-critical): %s", exc)
+
     return InvitationResponse(
         id=inv["id"],
         organization_id=inv["organization_id"],
@@ -1201,7 +1296,7 @@ async def remove_member(
     await verify_org_admin(user, org_id)
 
     if member_user_id == user.id:
-        raise HTTPException(400, "Cannot remove yourself. Transfer ownership first.")
+        raise HTTPException(400, "Cannot remove yourself. Use the Leave endpoint instead.")
 
     supabase = get_supabase()
     result = await (
@@ -1341,9 +1436,9 @@ async def update_line_config(
 
     updates: dict = {}
     if body.line_channel_secret is not None:
-        updates["line_channel_secret"] = body.line_channel_secret or None
+        updates["line_channel_secret"] = encrypt_secret(body.line_channel_secret) if body.line_channel_secret else None
     if body.line_access_token is not None:
-        updates["line_access_token"] = body.line_access_token or None
+        updates["line_access_token"] = encrypt_secret(body.line_access_token) if body.line_access_token else None
     if body.is_line_enabled is not None:
         updates["is_line_enabled"] = body.is_line_enabled
 

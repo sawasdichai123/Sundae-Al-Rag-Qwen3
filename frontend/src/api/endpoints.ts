@@ -394,6 +394,15 @@ export const orgApi = {
     update: (orgId: string, name: string) =>
         apiClient.put(`/api/orgs/${orgId}`, { name }),
 
+    /** Upload org logo (jpg/png/webp, max 2MB). */
+    uploadLogo: (orgId: string, file: File) => {
+        const form = new FormData();
+        form.append("file", file);
+        return apiClient.put<{ message: string }>(`/api/orgs/${orgId}/logo`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
+        });
+    },
+
     /** Request organization deletion. */
     requestDeletion: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/request-deletion`),

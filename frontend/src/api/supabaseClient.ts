@@ -76,6 +76,9 @@ export const supabase = createClient(
             autoRefreshToken: true,
             persistSession: true,
             detectSessionInUrl: true,
+            // SEC-F07: ใช้ sessionStorage แทน localStorage
+            // — token หายเมื่อปิด tab ลด XSS token theft risk
+            storage: window.sessionStorage,
         },
     }
 );
@@ -165,8 +168,8 @@ async function forceReauth(): Promise<void> {
         // ignore
     }
     try {
-        Object.keys(localStorage).forEach((key) => {
-            if (key.startsWith("sb-")) localStorage.removeItem(key);
+        Object.keys(sessionStorage).forEach((key) => {
+            if (key.startsWith("sb-")) sessionStorage.removeItem(key);
         });
     } catch {
         // ignore

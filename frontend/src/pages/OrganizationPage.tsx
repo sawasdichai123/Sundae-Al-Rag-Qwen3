@@ -2,13 +2,13 @@
  * OrganizationPage — Org settings + member management
  *
  * Shows:
- * 1. Org settings (name edit) — owner/admin only
- * 2. Member list + invite + transfer/remove
+ * 1. Org settings (name edit) — Org Admin only
+ * 2. Member list + invite + promote/demote/remove
  *
  * Danger Zone moved to DangerZonePage.
  */
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
@@ -17,6 +17,14 @@ import { getApiError } from "../utils/apiError";
 import type { OrgMember } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
+
+const LOGO_ALLOWED = ["jpg", "jpeg", "png", "webp"];
+const LOGO_MAGIC: Record<string, { bytes: number[]; length: number }> = {
+    jpg:  { bytes: [0xff, 0xd8, 0xff], length: 3 },
+    jpeg: { bytes: [0xff, 0xd8, 0xff], length: 3 },
+    png:  { bytes: [0x89, 0x50, 0x4e, 0x47], length: 4 },
+    webp: { bytes: [0x52, 0x49, 0x46, 0x46], length: 4 },
+};
 
 // ── Member Management Section ──────────────────────────────────
 
@@ -232,8 +240,11 @@ export default function OrganizationPage() {
     // Org details
     const [orgName, setOrgName] = useState("");
     const [orgSlug, setOrgSlug] = useState<string | null>(null);
+    const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [uploadingLogo, setUploadingLogo] = useState(false);
+    const logoInputRef = useRef<HTMLInputElement>(null);
 
     const isProtectedOrg = orgSlug === "sundae";
 
@@ -244,6 +255,7 @@ export default function OrganizationPage() {
             const { data } = await orgApi.get(activeOrgId);
             setOrgName(data.name);
             setOrgSlug(data.slug ?? null);
+            setOrgLogoUrl(data.logo_url ?? null);
         } catch (err) {
             console.error("[Org] Load failed:", err);
             toast("error", t("org.loadFailed"));
@@ -255,6 +267,48 @@ export default function OrganizationPage() {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !activeOrgId) return;
+
+        const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+        if (!LOGO_ALLOWED.includes(ext)) {
+            toast("error", "ไฟล์ต้องเป็น JPG, PNG หรือ WebP เท่านั้น");
+            return;
+        }
+        if (file.size > 2 * 1024 * 1024) {
+            toast("error", "ไฟล์ใหญ่เกิน 2MB");
+            return;
+        }
+
+        // Magic bytes validation
+        const magic = LOGO_MAGIC[ext];
+        if (magic) {
+            const valid = await new Promise<boolean>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const buf = new Uint8Array(reader.result as ArrayBuffer);
+                    resolve(magic.bytes.every((b, i) => buf[i] === b));
+                };
+                reader.readAsArrayBuffer(file.slice(0, magic.length));
+            });
+            if (!valid) { toast("error", "ไฟล์ไม่ถูกต้อง"); return; }
+        }
+
+        setUploadingLogo(true);
+        try {
+            await orgApi.uploadLogo(activeOrgId, file);
+            toast("success", "อัพโหลดโลโก้สำเร็จ");
+            await loadData();
+            await fetchOrgs();
+        } catch (err: unknown) {
+            toast("error", getApiError(err, "อัพโหลดโลโก้ล้มเหลว"));
+        } finally {
+            setUploadingLogo(false);
+            if (logoInputRef.current) logoInputRef.current.value = "";
+        }
+    };
 
     const handleUpdateName = async (e: FormEvent) => {
         e.preventDefault();
@@ -302,6 +356,44 @@ export default function OrganizationPage() {
             {!loading && canManage && (
                 <div className="bg-white rounded-2xl border border-steel-100 p-6 mb-6">
                     <h2 className="text-sm font-semibold text-steel-800 mb-4">{t("org.settings")}</h2>
+
+                    {/* Logo Upload */}
+                    <div className="flex items-center gap-4 mb-5 pb-5 border-b border-steel-100">
+                        <div
+                            className="w-16 h-16 rounded-2xl border-2 border-steel-200 bg-steel-50 flex items-center justify-center overflow-hidden shrink-0 cursor-pointer hover:border-brand-400 transition-colors"
+                            onClick={() => logoInputRef.current?.click()}
+                            title="คลิกเพื่ออัพโหลดโลโก้"
+                        >
+                            {orgLogoUrl ? (
+                                <img src={orgLogoUrl} alt="org logo" className="w-full h-full object-cover" />
+                            ) : (
+                                <span className="text-2xl font-bold text-steel-300">
+                                    {orgName?.[0]?.toUpperCase() || "O"}
+                                </span>
+                            )}
+                        </div>
+                        <div>
+                            <p className="text-sm font-medium text-steel-700 mb-1">โลโก้องค์กร</p>
+                            <p className="text-xs text-steel-400 mb-2">JPG, PNG, WebP — สูงสุด 2MB</p>
+                            <button
+                                type="button"
+                                onClick={() => logoInputRef.current?.click()}
+                                disabled={uploadingLogo}
+                                className="text-xs px-3 py-1.5 bg-steel-100 hover:bg-steel-200 text-steel-700 font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                                {uploadingLogo ? <><Spinner /> กำลังอัพโหลด...</> : "อัพโหลดโลโก้"}
+                            </button>
+                            <input
+                                ref={logoInputRef}
+                                type="file"
+                                accept=".jpg,.jpeg,.png,.webp"
+                                className="hidden"
+                                onChange={handleLogoUpload}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Org Name */}
                     <form onSubmit={handleUpdateName} className="flex gap-3">
                         <input
                             type="text"

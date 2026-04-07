@@ -40,8 +40,10 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                     open ? "bg-white/10" : "hover:bg-white/[0.06]"
                 } ${collapsed ? "justify-center" : ""}`}
             >
-                <div className="w-6 h-6 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-400 text-xs font-bold shrink-0">
-                    {activeOrg?.name?.[0]?.toUpperCase() || "O"}
+                <div className="w-6 h-6 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-400 text-xs font-bold shrink-0 overflow-hidden">
+                    {activeOrg?.logo_url
+                        ? <img src={activeOrg.logo_url} alt="" className="w-full h-full object-cover" />
+                        : activeOrg?.name?.[0]?.toUpperCase() || "O"}
                 </div>
                 {!collapsed && (
                     <>
@@ -73,8 +75,10 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                                     : "text-steel-300 hover:bg-white/[0.06] hover:text-white"
                             }`}
                         >
-                            <div className="w-5 h-5 rounded bg-white/10 flex items-center justify-center text-[10px] font-bold shrink-0">
-                                {org.name?.[0]?.toUpperCase() || "O"}
+                            <div className="w-5 h-5 rounded bg-white/10 flex items-center justify-center text-[10px] font-bold shrink-0 overflow-hidden">
+                                {org.logo_url
+                                    ? <img src={org.logo_url} alt="" className="w-full h-full object-cover" />
+                                    : org.name?.[0]?.toUpperCase() || "O"}
                             </div>
                             <span className="truncate flex-1 text-left">{org.name}</span>
                             <span className="text-[9px] text-steel-500">{org.org_role === "admin" ? t("role.adminOrg") : org.org_role}</span>

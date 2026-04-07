@@ -219,7 +219,7 @@ export default function App() {
                                     {/* Profile — all roles */}
                                     <Route path="/profile" element={<ExternalOrgGuard><ProfilePage /></ExternalOrgGuard>} />
 
-                                    {/* Admin + User (owner) — content management pages */}
+                                    {/* Admin + User — content management pages */}
                                     <Route element={<ProtectedRoute allowedRoles={["user", "admin"]} />}>
                                         <Route path="/knowledge-base" element={<ExternalOrgGuard><KnowledgeBasePage /></ExternalOrgGuard>} />
                                         <Route path="/bots" element={<ExternalOrgGuard><BotsPage /></ExternalOrgGuard>} />

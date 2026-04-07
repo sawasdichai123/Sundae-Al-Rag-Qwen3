@@ -32,9 +32,28 @@ class Settings(BaseSettings):
         description="Direct PostgreSQL connection string (for migrations)",
     )
 
+    # ── Email (Resend) ───────────────────────────────────────────
+    resend_api_key: str = Field(
+        default="",
+        description="Resend API key for transactional emails (re_xxxxx). Get from resend.com",
+    )
+    email_from: str = Field(
+        default="onboarding@resend.dev",
+        description="Sender address shown in outgoing emails",
+    )
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Public-facing frontend URL used in invitation email links",
+    )
+
     # ── LINE Platform ────────────────────────────────────────────
     line_channel_secret: str = Field(
         default="", description="LINE Channel Secret for webhook signature verification"
+    )
+    line_encryption_key: str = Field(
+        default="",
+        description="32-byte hex key for AES-GCM encryption of LINE secrets in DB. "
+                    "Generate with: python -c \"import secrets; print(secrets.token_hex(32))\"",
     )
     public_api_url: str = Field(
         default="",
