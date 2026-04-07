@@ -4,6 +4,7 @@ SUNDAE Backend — FastAPI Application Entry Point
 
 import asyncio
 import logging
+import uuid as _uuid_module
 from contextlib import asynccontextmanager
 
 import httpx
@@ -118,17 +119,22 @@ async def lifespan(app: FastAPI):
     await close_supabase()
 
 
+_settings = get_settings()
+
 app = FastAPI(
     title="SUNDAE API",
     description="On-premise AI Chatbot SaaS Platform for Thai Government & SMEs",
     version="0.1.0",
     lifespan=lifespan,
+    # MED-04: Disable interactive docs in production to avoid leaking schema
+    docs_url="/docs" if _settings.debug else None,
+    redoc_url="/redoc" if _settings.debug else None,
+    openapi_url="/openapi.json" if _settings.debug else None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Middleware ───────────────────────────────────────────────────
-_settings = get_settings()
 _cors_origins = (
     [o.strip() for o in _settings.cors_origins.split(",") if o.strip()]
     if hasattr(_settings, "cors_origins") and _settings.cors_origins
@@ -141,6 +147,39 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Active-Org"],
 )
+
+
+# REC-03: Security headers — reduce common browser-based attack surface
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    from starlette.requests import ClientDisconnect
+    from starlette.responses import Response as _Response
+    try:
+        response = await call_next(request)
+    except ClientDisconnect:
+        return _Response(status_code=200)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if not _settings.debug:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# REC-01: Request ID — add X-Request-ID header to every response for tracing
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    from starlette.requests import ClientDisconnect
+    from starlette.responses import Response as _Response
+    request_id = _uuid_module.uuid4().hex[:8]
+    logger.info("[%s] %s %s", request_id, request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except ClientDisconnect:
+        return _Response(status_code=200)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 # ── Routers ──────────────────────────────────────────────────────
 app.include_router(health.router)

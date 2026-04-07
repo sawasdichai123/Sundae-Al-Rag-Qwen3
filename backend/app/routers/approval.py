@@ -22,8 +22,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.core.auth import CurrentUser, require_role
+from app.core.auth import CurrentUser, get_profile_cache, require_role
 from app.core.database import get_supabase
+from app.core.utils import validate_uuid_param
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ async def approve_user(
     2. Auto-accepts any pending org invitations for the user's email
        → creates org_members rows so user appears in org member list immediately
     """
+    validate_uuid_param(user_id, "user_id")
     supabase = get_supabase()
 
     # 1. Fetch the pending user profile
@@ -130,6 +132,14 @@ async def approve_user(
     except Exception as exc:
         logger.error("Failed to approve user %s: %s", user_id, exc)
         raise HTTPException(status_code=500, detail="Failed to approve user.")
+
+    # LOW-02: Invalidate profile cache so the approval takes effect immediately
+    # without waiting for the TTL to expire.
+    try:
+        cache = await get_profile_cache()
+        await cache.invalidate(user_id)
+    except Exception as cache_exc:
+        logger.warning("Failed to invalidate cache for user %s: %s", user_id, cache_exc)
 
     # 3. Auto-accept pending org invitations for this user's email
     user_email = (profile.get("email") or "").strip().lower()
@@ -227,6 +237,7 @@ async def reject_user(
     user: CurrentUser = Depends(require_role("support", "admin")),
 ) -> RejectResponse:
     """Reject a pending user by deleting their profile."""
+    validate_uuid_param(user_id, "user_id")
     supabase = get_supabase()
 
     try:
@@ -248,6 +259,13 @@ async def reject_user(
             .delete()
             .eq("id", user_id)
         ).execute()
+
+        # LOW-02: Invalidate cache in case the rejected user had a cached session
+        try:
+            cache = await get_profile_cache()
+            await cache.invalidate(user_id)
+        except Exception as cache_exc:
+            logger.warning("Failed to invalidate cache for rejected user %s: %s", user_id, cache_exc)
 
         logger.info("User rejected: %s (by %s)", user_id, user.email)
 

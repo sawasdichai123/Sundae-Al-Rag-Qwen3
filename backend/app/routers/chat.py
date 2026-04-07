@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import CurrentUser, require_approved, verify_organization, verify_session_access
 from app.core.database import get_supabase
+from app.core.utils import sanitize_user_input
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response, generate_response_stream
 from app.services.vector_search import search_parent_chunks
@@ -49,7 +50,7 @@ router = APIRouter(prefix="/api/chat", tags=["Chat"])
 class ChatRequest(BaseModel):
     """Request schema for the omnichannel RAG chat endpoint."""
 
-    user_query: str = Field(..., min_length=1, description="The user's question")
+    user_query: str = Field(..., min_length=1, max_length=5000, description="The user's question")
     organization_id: str = Field(..., description="UUID of the tenant organization")
     bot_id: str = Field(..., description="UUID of the bot handling this chat")
     platform_user_id: str = Field(
@@ -161,7 +162,7 @@ async def ask_question(
         HTTPException 404: Bot not found.
         HTTPException 500: Pipeline processing failure.
     """
-    user_query = request.user_query.strip()
+    user_query = sanitize_user_input(request.user_query)
     organization_id = request.organization_id
     bot_id = request.bot_id
     platform_user_id = request.platform_user_id
@@ -365,7 +366,7 @@ async def ask_question_stream(
       data: {"type":"sources","sources":[...]}
       data: {"type":"done"}
     """
-    user_query = request.user_query.strip()
+    user_query = sanitize_user_input(request.user_query)
     organization_id = request.organization_id
     bot_id = request.bot_id
     platform_user_id = request.platform_user_id

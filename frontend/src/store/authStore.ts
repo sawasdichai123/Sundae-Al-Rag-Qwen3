@@ -96,10 +96,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 if (key.startsWith("sb-")) localStorage.removeItem(key);
             });
         } catch { /* ignore storage errors */ }
-        // Fire-and-forget: invalidate token on the server
-        supabase.auth.signOut().catch((err) => {
-            console.warn("[Auth] signOut API error (local state already cleared):", err);
-        });
+        // Await server-side token invalidation — prevents token reuse after sign out
+        try {
+            await supabase.auth.signOut();
+        } catch { /* ignore network errors — local state already cleared */ }
     },
 
     // ── Set Session (from onAuthStateChange) ────────────────────

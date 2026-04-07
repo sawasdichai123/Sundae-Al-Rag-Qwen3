@@ -33,17 +33,11 @@ export default function ResetPasswordPage() {
         const errorCode = params.get("error_code");
         const errorDesc = params.get("error_description");
 
-        console.log("[ResetPassword] URL hash:", hash);
-        console.log("[ResetPassword] error_code:", errorCode, "error_description:", errorDesc);
-
         // ── Case 1: URL hash has explicit error from Supabase ──
         if (errorCode || params.get("error")) {
-            console.log("[ResetPassword] Supabase returned error in URL hash");
-
             // But still check if there's somehow a valid session (edge case)
             supabase.auth.getSession().then(({ data }) => {
                 if (data.session) {
-                    console.log("[ResetPassword] Session found despite URL error — showing form");
                     setPageState("ready");
                 } else {
                     const msg = errorCode === "otp_expired" || errorDesc?.includes("expired")
@@ -62,21 +56,19 @@ export default function ResetPasswordPage() {
         // mounts), so we also accept INITIAL_SESSION and SIGNED_IN with a session.
         let resolved = false;
 
-        const markReady = (source: string) => {
+        const markReady = () => {
             if (resolved) return;
             resolved = true;
-            console.log("[ResetPassword] Session found via:", source);
             setPageState("ready");
         };
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-            console.log("[ResetPassword] onAuthStateChange:", event, !!session);
             if (resolved) return;
             // Accept any event that provides a valid session — PASSWORD_RECOVERY
             // may have already fired before this listener was set up, in which case
             // we receive INITIAL_SESSION or SIGNED_IN instead.
             if (session && (event === "PASSWORD_RECOVERY" || event === "INITIAL_SESSION" || event === "SIGNED_IN")) {
-                markReady(`event:${event}`);
+                markReady();
             }
         });
 
@@ -85,10 +77,9 @@ export default function ResetPasswordPage() {
         // be processing the hash asynchronously.
         const checkSession = (attempt: number) => {
             supabase.auth.getSession().then(({ data }) => {
-                console.log("[ResetPassword] getSession (attempt", attempt, "):", !!data.session);
                 if (resolved) return;
                 if (data.session) {
-                    markReady(`getSession:attempt${attempt}`);
+                    markReady();
                 } else if (attempt < 3) {
                     setTimeout(() => checkSession(attempt + 1), 1500);
                 }
@@ -100,7 +91,6 @@ export default function ResetPasswordPage() {
         const timeout = setTimeout(() => {
             if (resolved) return;
             resolved = true;
-            console.log("[ResetPassword] Timeout — no recovery session found");
             setError(t("resetPassword.sessionExpired"));
             setPageState("expired");
         }, 10000);
@@ -119,7 +109,7 @@ export default function ResetPasswordPage() {
             setError(t("resetPassword.mismatch"));
             return;
         }
-        if (password.length < 6) {
+        if (password.length < 8) {
             setError(t("resetPassword.tooShort"));
             return;
         }

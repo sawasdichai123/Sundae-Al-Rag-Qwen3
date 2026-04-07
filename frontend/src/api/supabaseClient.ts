@@ -19,9 +19,10 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-    console.warn(
-        "[SUNDAE] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY.\n" +
-        "Auth will not work until these are set in your .env file."
+    throw new Error(
+        "[SUNDAE] FATAL: Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. " +
+        "Application cannot start without valid Supabase configuration. " +
+        "Copy .env.example to .env and fill in your values."
     );
 }
 
@@ -64,8 +65,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 export const supabase = createClient(
-    supabaseUrl || "http://localhost:54321",
-    supabaseAnonKey || "placeholder-key",
+    supabaseUrl,
+    supabaseAnonKey,
     {
         auth: {
             // In-memory mutex lock — avoids navigator.locks deadlock (Bug B17)

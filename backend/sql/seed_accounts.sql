@@ -2,8 +2,10 @@
 -- SUNDAE — Seed Accounts
 --
 -- สร้าง account เริ่มต้นสำหรับระบบ:
---   1. admin@sundae.local   (role=admin,   password=Sundae@2025)
---   2. support@sundae.local (role=support, password=Sundae@2025)
+--   1. admin@sundae.local   (role=admin)
+--   2. support@sundae.local (role=support)
+--
+-- SECURITY: อย่าใส่ password ใน SQL file — ตั้งรหัสผ่านผ่าน Supabase Dashboard เท่านั้น
 --
 -- วิธีใช้:
 --   ขั้นตอนที่ 1: สร้าง auth users ผ่าน Supabase Dashboard

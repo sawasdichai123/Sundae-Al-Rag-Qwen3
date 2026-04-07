@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from app.core.config import get_settings
 from app.core.database import get_supabase
 from app.core.limiter import limiter
+from app.core.utils import sanitize_user_input
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response_stream
 from app.services.vector_search import search_parent_chunks
@@ -196,7 +197,7 @@ async def widget_chat(
     """
     bot = await _get_widget_bot(bot_id)
     organization_id = bot["organization_id"]
-    user_text = body.message.strip()
+    user_text = sanitize_user_input(body.message)
 
     if not user_text:
         raise HTTPException(status_code=400, detail="Message must not be empty.")
@@ -244,6 +245,7 @@ async def widget_chat(
                         supabase.table("chat_sessions")
                         .update({"last_message_at": "now()"})
                         .eq("id", session_id)
+                        .eq("organization_id", organization_id)
                     ).execute()
 
                     # Return a non-streaming response indicating handoff
@@ -346,7 +348,7 @@ async def widget_chat(
 
     except Exception as exc:
         logger.error("[Widget] RAG pre-processing failed: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
+        raise HTTPException(status_code=500, detail="Processing failed. Please try again.")
 
     t_pre = time.time()
     logger.info("[Widget] Pre-processing: %.1fs (bot=%s)", t_pre - t0, bot_id)
@@ -406,6 +408,7 @@ async def widget_chat(
                 sb.table("chat_sessions")
                 .update({"last_message_at": "now()"})
                 .eq("id", session_id)
+                .eq("organization_id", organization_id)
             ).execute()
         except Exception as log_exc:
             logger.warning("[Widget] Failed to save assistant message: %s", log_exc)

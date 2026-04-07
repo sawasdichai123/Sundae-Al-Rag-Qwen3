@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 5 เมษายน 2569 — **Sprint 3 complete + circular import bugfix (limiter → core/limiter.py)**
+> **อัพเดทล่าสุด**: 7 เมษายน 2569 — **LINE Quick Reply Postback Fix ✅ (숨 UUID จากบทสนทนา) | LINE UX Features ✅ | Frontend Security 13/15 Fixed**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -3935,3 +3935,277 @@ limiter = Limiter(key_func=get_remote_address)
 | `backend/app/core/limiter.py` | NEW — singleton `limiter` instance |
 | `backend/app/main.py` | import `limiter` จาก `core.limiter`; ลบ `limiter = Limiter(...)` |
 | `backend/app/routers/widget.py` | import `limiter` จาก `core.limiter` แทน `app.main` |
+
+---
+
+## Section 51 — LINE Per-Org: Setup & Verification [6 เมษายน 2569] ✅
+
+### 51.1 สิ่งที่ตั้งค่าในเซสชันนี้
+
+| รายการ | สถานะ |
+|--------|--------|
+| ติดตั้ง ngrok + สร้าง static domain | ✅ Done |
+| เพิ่ม `PUBLIC_API_URL` ใน `.env` | ✅ Done |
+| สร้าง LINE Provider + OA ใน LINE Developers Console | ✅ Done |
+| Enable Messaging API บน LINE OA Manager | ✅ Done |
+| บันทึก Channel Secret + Access Token ผ่าน IntegrationPage | ✅ Done |
+| แก้บัค `update_line_config` — `.select()` หลัง `.update()` ไม่รองรับ | ✅ Fixed |
+| ตั้ง Webhook URL ใน LINE Console | ✅ Done |
+| Verify Webhook → 200 OK | ✅ Done |
+| ทดสอบส่งข้อความ LINE → Bot ตอบ RAG | ✅ Done |
+
+### 51.2 ngrok Setup
+
+- **Static domain**: `overjealously-unfoul-shoshana.ngrok-free.dev`
+- **Forwarding**: `https://overjealously-unfoul-shoshana.ngrok-free.dev` → `http://localhost:8001`
+- **PUBLIC_API_URL** ใน `.env`: `https://overjealously-unfoul-shoshana.ngrok-free.dev`
+- ngrok ต้องรันทุกครั้งที่ทดสอบ LINE:
+  ```
+  ngrok http --domain=overjealously-unfoul-shoshana.ngrok-free.dev 8001
+  ```
+
+### 51.3 LINE Console Setup
+
+- **Provider**: Sundae
+- **Channel**: SUNDAE (Messaging API)
+- **Channel ID**: 2009711038
+- **Webhook URL**:
+  ```
+  https://overjealously-unfoul-shoshana.ngrok-free.dev/api/webhook/line/bca1137d-53da-4484-af03-8b5210d60d7c
+  ```
+- **Use webhook**: ON ✅
+
+### 51.4 Bug ที่พบและแก้ไข
+
+**`organization.py` — `update_line_config`**: supabase-py ไม่รองรับ `.select()` ต่อท้าย `.update()` โดยตรง
+- แก้: แยก update + query เป็น 2 calls อิสระ
+
+---
+
+## Section 52 — Security Hardening + LINE ClientDisconnect Fix [6 เมษายน 2569] ✅
+
+### 52.1 Security Issues Fixed (19/20 จาก Friend_implementation_plan_backend.md)
+
+| # | Issue | ระดับ | สถานะ |
+|---|-------|-------|-------|
+| CRIT-03 | ลบ hardcoded password `Sundae@2025` จาก `seed_accounts.sql` | CRITICAL | ✅ Fixed |
+| HIGH-01 | X-Active-Org stale in cache hit — re-read from current request | HIGH | ✅ Fixed |
+| HIGH-02 | `match_child_chunks` RPC ไม่มี `document_name`/`page` columns | HIGH | ✅ Fixed (SQL 018) |
+| MED-01 | Prompt injection — sanitize user input + delimiter framing | MEDIUM | ✅ Fixed |
+| MED-02 | `max_length=5000` ใน ChatRequest.user_query | MEDIUM | ✅ Fixed |
+| MED-04 | FastAPI docs disabled in production (`DEBUG=false`) | MEDIUM | ✅ Fixed |
+| MED-05 | Widget session org isolation — `.eq("organization_id", ...)` | MEDIUM | ✅ Fixed |
+| REC-01 | Security headers middleware (X-Frame-Options, HSTS, etc.) | REC | ✅ Fixed |
+| REC-02 | UUID path parameter validation utility | REC | ✅ Fixed |
+| REC-03 | Request ID middleware (X-Request-ID header) | REC | ✅ Fixed |
+| LOW-01 | Generic error messages (ไม่เปิดเผย exception detail) | LOW | ✅ Fixed |
+| LOW-02 | Profile cache invalidation on approve/reject | LOW | ✅ Fixed |
+| LOW-04 | `.env.example` ตั้ง `DEBUG=false` by default | LOW | ✅ Fixed |
+| HIGH-03 | LINE secrets encryption AES-GCM | HIGH | ⏳ Deferred |
+
+### 52.2 SQL Migrations ที่รันใน Session นี้
+
+| Migration | เนื้อหา | สถานะ |
+|-----------|---------|-------|
+| `017_multi_admin_and_access_control.sql` | Drop single-owner index, owner→admin, get_org_overview RPC | ✅ รันแล้ว |
+| `018_match_child_chunks_with_metadata.sql` | UPDATE match_child_chunks ให้ JOIN documents → return document_name, page_start, page_end | ✅ รันแล้ว |
+
+### 52.3 LINE ClientDisconnect Fix
+
+**ปัญหา**: LINE ส่ง webhook verification request แล้ว disconnect ก่อน backend อ่าน body ทัน → `starlette.requests.ClientDisconnect` crash ทั้ง server
+
+**ไฟล์ที่แก้**:
+- `backend/app/main.py` — `security_headers` + `add_request_id` middleware: catch `ClientDisconnect` → return 200
+- `backend/app/routers/webhook_line.py` — `line_webhook()`: wrap `await request.body()` ใน try/except
+
+### 52.4 สถานะ LINE End-to-End
+
+| ขั้นตอน | สถานะ |
+|---------|-------|
+| LINE OA → ngrok → Backend | ✅ ทำงาน |
+| Webhook Verify | ✅ Success |
+| Use webhook ON | ✅ |
+| ส่งข้อความ LINE → RAG ตอบ | ✅ ทำงาน |
+| ทดสอบ Admin reply Inbox → LINE push | ✅ ทำงาน |
+| ทดสอบ Multi-bot Quick Reply | ✅ ทำงาน |
+
+### 52.5 Next Steps
+
+| # | รายการ | หมายเหตุ |
+|---|--------|---------|
+| 1 | ~~Admin ตอบใน Inbox → ตรวจว่าข้อความถึง LINE user~~ | ✅ Done |
+| 2 | HIGH-03: Encrypt LINE secrets ใน DB (AES-GCM) | ต้องการ `cryptography` lib + key management |
+| 3 | Organization logo upload UI | OrganizationPage |
+| 4 | Email notification สำหรับ org invitations | ต้องการ SMTP |
+| 5 | Dark mode | Frontend only |
+
+---
+
+---
+
+## Section 53 — LINE End-to-End Complete [7 เมษายน 2569] ✅
+
+### 53.0 สรุปผลการทดสอบ LINE ครบทุก Feature
+
+| Feature | สถานะ |
+|---------|-------|
+| Webhook URL ตั้งใน LINE Console + Verify | ✅ |
+| Use webhook ON | ✅ |
+| LINE user ส่งข้อความ → RAG ตอบ | ✅ |
+| Single bot — auto-select ทันที | ✅ |
+| Multi-bot — Quick Reply ให้เลือก bot | ✅ |
+| Switch bot ด้วย "เปลี่ยนบอท" / "เมนู" | ✅ |
+| Admin ตอบใน Inbox → push ถึง LINE user | ✅ |
+
+LINE Omnichannel feature สมบูรณ์ 100% ✅
+
+---
+
+## Section 54 — LINE UX Features [7 เมษายน 2569] ✅
+
+### 54.0 Feature ที่เพิ่ม
+
+**ไฟล์**: `backend/app/routers/webhook_line.py`
+
+| Feature | คำสั่งที่รองรับ | ทำงาน | สถานะ |
+|---------|--------------|-------|-------|
+| **Auto-expire session** | อัตโนมัติ | idle ≥ 5 นาที → resolve session เมื่อ message ใหม่มา | ✅ |
+| **Help** | ช่วยเหลือ, วิธีใช้, help, /help, ?, คำสั่ง | แสดงรายการคำสั่งทั้งหมด | ✅ |
+| **จบการสนทนา** | จบการสนทนา, ปิดการสนทนา, end, /end | resolve session + แจ้ง user | ✅ |
+| **ติดต่อเจ้าหน้าที่** | ติดต่อเจ้าหน้าที่, คุยกับเจ้าหน้าที่, agent, /agent | เปลี่ยน session → `human_takeover` → admin เห็นใน Inbox | ✅ |
+
+### 54.1 Keyword สรุปทั้งหมดที่ LINE รองรับ
+
+| กลุ่ม | คำสั่ง |
+|-------|--------|
+| Switch bot | เปลี่ยนบอท, สลับบอท, เมนู, /menu, menu |
+| Help | ช่วยเหลือ, วิธีใช้, help, /help, ?, คำสั่ง |
+| จบสนทนา | จบการสนทนา, ปิดการสนทนา, end, /end |
+| เจ้าหน้าที่ | ติดต่อเจ้าหน้าที่, คุยกับเจ้าหน้าที่, agent, /agent |
+
+### 54.2 Next Steps — LINE Rich Menu
+
+| # | รายการ |
+|---|--------|
+| 1 | ออกแบบ Rich Menu ใน LINE Official Account Manager |
+| 2 | ผูกปุ่มกับ keyword (เปลี่ยนบอท, ติดต่อเจ้าหน้าที่, จบการสนทนา, ช่วยเหลือ) |
+
+---
+
+## Section 55 — Frontend Security Hardening [6 เมษายน 2569] ✅
+
+### 55.1 ที่มา
+
+ตรวจสอบช่องโหว่จาก `Friend_implementation_plan_frontend.md` — พบ 15 issues (2 Critical, 4 High, 5 Medium, 4 Low)
+
+### 55.2 สรุปผลการแก้ไข (13/15 issues)
+
+| ID | ระดับ | ไฟล์ | สิ่งที่แก้ | สถานะ |
+|---|---|---|---|---|
+| SEC-F01 | 🔴 Critical | `supabaseClient.ts` | throw error แทน warn + ลบ fallback placeholder URL/key | ✅ Fixed |
+| SEC-F02 | 🔴 Critical | `endpoints.ts`, `ResetPasswordPage.tsx` | ลบ console.log ทั้งหมดที่มี recovery token / API URL | ✅ Fixed |
+| SEC-F03 | 🟠 High | Backend | Backend enforce แล้วจาก session ก่อน | ✅ (Backend) |
+| SEC-F04 | 🟠 High | `axios.ts` | validate org ID กับ orgStore ก่อนส่ง X-Active-Org header | ✅ Fixed |
+| SEC-F05 | 🟠 High | `docker-compose.yml` | Rate limiting — ต้องเพิ่ม GoTrue env vars | ❌ ยังไม่เสร็จ |
+| SEC-F06 | 🟠 High | `LoginPage.tsx`, `ResetPasswordPage.tsx` | password minLength 6 → 8 + generic error message | ✅ Fixed |
+| SEC-F07 | 🟡 Medium | `supabaseClient.ts` | Supabase SDK limitation — ยอมรับ | ⚠️ Accepted |
+| SEC-F08 | 🟡 Medium | `nginx.conf` | เพิ่ม security headers ครบ (CSP, X-Frame-Options, HSTS, Referrer-Policy, Permissions-Policy) | ✅ Fixed |
+| SEC-F09 | 🟡 Medium | Backend | Backend block แล้วจาก multi-admin plan | ✅ (Backend) |
+| SEC-F10 | 🟡 Medium | `ProfilePage.tsx` | magic bytes validation + restrict ext เฉพาะ jpg/png/webp (ปิด SVG) | ✅ Fixed |
+| SEC-F11 | 🟡 Medium | `LoginPage.tsx` | generic error แทน raw Supabase message | ✅ Fixed |
+| SEC-F12 | 🟡 Medium | `index.html` | CSP meta tag fallback + Vite env interpolation สำหรับ connect-src | ✅ Fixed |
+| SEC-F13 | 🟢 Low | `authStore.ts` | await signOut() แทน fire-and-forget | ✅ Fixed |
+| SEC-F14 | 🟢 Low | `WebChatPage.tsx` | UUID เต็ม 36 chars แทน slice(0,8) | ✅ Fixed |
+| SEC-F15 | 🟢 Low | api files | relative path `/login` ไม่มี open redirect risk จริง | ⚠️ Accepted |
+| SEC-F16 | 🟢 Low | `ForgotPasswordPage.tsx` | ใช้ `VITE_APP_URL` env var แทน `window.location.origin` | ✅ Fixed |
+
+### 55.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|------|--------------|
+| `frontend/src/api/supabaseClient.ts` | throw error + ลบ fallback placeholder |
+| `frontend/src/api/endpoints.ts` | ลบ console.log sensitive |
+| `frontend/src/api/axios.ts` | validate org ID กับ orgStore |
+| `frontend/src/pages/ResetPasswordPage.tsx` | ลบ console.log recovery token, min password 6→8 |
+| `frontend/src/pages/LoginPage.tsx` | min password 6→8, generic error, rate limit message |
+| `frontend/src/pages/ProfilePage.tsx` | magic bytes + restrict extensions |
+| `frontend/src/pages/ForgotPasswordPage.tsx` | VITE_APP_URL แทน window.location.origin |
+| `frontend/src/store/authStore.ts` | await signOut() |
+| `frontend/src/pages/WebChatPage.tsx` | UUID เต็ม |
+| `frontend/nginx.conf` | security headers ครบ |
+| `frontend/index.html` | CSP meta tag + connect-src via Vite env |
+| `frontend/.env.example` | เพิ่ม VITE_APP_URL |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม `login.rateLimited` key |
+
+### 55.4 SEC-F05 — Rate Limiting (ยังไม่เสร็จ ❌)
+
+- Self-hosted Supabase ไม่ได้ตั้ง GoTrue rate limit ใน `docker-compose.yml`
+- Frontend lockout ทดสอบแล้วไม่ทำงาน
+- **สิ่งที่ต้องทำ**: เพิ่ม GoTrue rate limit env vars ใน `docker-compose.yml` (Supabase service)
+
+### 55.5 Next Steps
+
+| # | รายการ | หมายเหตุ |
+|---|--------|---------|
+| 1 | **SEC-F05**: ตั้ง GoTrue rate limit ใน docker-compose (Supabase service) | ❌ ยังไม่ได้ทำ |
+| 2 | HIGH-03: Encrypt LINE secrets (AES-GCM) | ต้องการ cryptography lib |
+| 3 | Organization logo upload UI | OrganizationPage |
+
+---
+
+## Section 56 — LINE Quick Reply: ซ่อน Bot UUID [7 เมษายน 2569] ✅
+
+### 56.0 ปัญหา
+
+เมื่อ user กด Quick Reply เพื่อเลือก bot ใน LINE — action type เป็น `"message"` ทำให้ข้อความ `bot:e6f69811-6a39-4b14-b19b-499e1094a49a` แสดงเป็น chat bubble ที่มองเห็นได้ ดูไม่ professional
+
+### 56.1 วิธีแก้
+
+เปลี่ยน Quick Reply action จาก `message` → `postback`:
+
+| | ก่อน | หลัง |
+|--|------|------|
+| action.type | `"message"` | `"postback"` |
+| ข้อความใน chat | `bot:e6f69811-...` (UUID ดิบ) | `เลือก: {ชื่อ Bot}` (friendly) |
+| data ที่ส่งมา backend | text field | postback.data field (ไม่แสดงใน chat) |
+
+### 56.2 ไฟล์ที่แก้ไข
+
+**`backend/app/routers/webhook_line.py`**
+
+1. **`_send_bot_selection()`** — เปลี่ยน action:
+   ```python
+   # ก่อน
+   "action": {"type": "message", "label": bot["name"][:20], "text": f"bot:{bot['id']}"}
+   
+   # หลัง
+   "action": {"type": "postback", "label": bot["name"][:20], "data": f"bot:{bot['id']}", "displayText": f"เลือก: {bot['name'][:20]}"}
+   ```
+
+2. **`line_webhook()` event loop** — เพิ่ม handler สำหรับ `postback` event type:
+   ```python
+   if event_type == "postback":
+       postback_data = event.get("postback", {}).get("data", "").strip()
+       if postback_data.startswith("bot:"):
+           background_tasks.add_task(_handle_bot_selection, ...)
+   ```
+
+### 56.3 ผลลัพธ์
+
+| | ก่อน | หลัง |
+|--|------|------|
+| ผู้ใช้เห็นใน chat | `bot:e6f69811-6a39-4b14-b19b-499e1094a49a` | `เลือก: ชื่อบอท` |
+| UX | ไม่ professional | เรียบร้อย ✅ |
+| Bot selection ยังทำงาน | ✅ | ✅ |
+
+> **หมายเหตุ**: path `bot:{uuid}` แบบ message event ยังคงไว้เป็น fallback สำหรับ Rich Menu text button
+
+### 56.4 Next Steps
+
+| # | รายการ | หมายเหตุ |
+|---|--------|---------|
+| 1 | **SEC-F05**: ตั้ง GoTrue rate limit ใน docker-compose | ❌ ค้างอยู่ |
+| 2 | **HIGH-03**: Encrypt LINE secrets (AES-GCM) | ต้องการ cryptography lib |
+| 3 | Organization logo upload UI | OrganizationPage |
+| 4 | Email notifications for org invitations | — |
+| 5 | Email notification for org invitations | ต้องการ SMTP |

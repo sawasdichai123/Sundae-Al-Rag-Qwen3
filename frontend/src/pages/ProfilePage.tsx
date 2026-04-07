@@ -101,21 +101,42 @@ export default function ProfilePage() {
         const file = e.target.files?.[0];
         if (!file || !user?.id) return;
 
-        // Validate
+        // Validate size
         const MAX_SIZE = 2 * 1024 * 1024; // 2MB
         if (file.size > MAX_SIZE) {
             toast("error", t("profile.avatarTooBig"));
             return;
         }
-        if (!file.type.startsWith("image/")) {
+
+        // Validate extension — block SVG (XSS risk) and other non-image types
+        const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
+        const ext = (file.name.split(".").pop() || "").toLowerCase();
+        if (!ALLOWED_EXTENSIONS.includes(ext)) {
+            toast("error", t("profile.avatarInvalid"));
+            return;
+        }
+
+        // Validate magic bytes (first 4 bytes) to prevent MIME spoofing
+        const magicValid = await new Promise<boolean>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const buf = new Uint8Array(reader.result as ArrayBuffer);
+                const isJpeg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+                const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+                const isWebp = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+                resolve(isJpeg || isPng || isWebp);
+            };
+            reader.onerror = () => resolve(false);
+            reader.readAsArrayBuffer(file.slice(0, 4));
+        });
+        if (!magicValid) {
             toast("error", t("profile.avatarInvalid"));
             return;
         }
 
         setUploadingAvatar(true);
         try {
-            // File path: avatars/{user_id}.{ext}
-            const ext = file.name.split(".").pop() || "jpg";
+            // File path: avatars/{user_id}.{ext} — ext is validated above
             const filePath = `${user.id}.${ext}`;
 
             // Upload to Supabase Storage (upsert = overwrite if exists)

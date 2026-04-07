@@ -4,6 +4,9 @@
  * Two tabs: Sign In / Sign Up
  * Uses supabase.auth under the hood (via authStore).
  * NT Corporate Identity: White / Yellow (#ffd100) / Gray (#545659).
+ *
+ * Rate limiting: handled by Supabase built-in (server-side).
+ * Frontend shows appropriate message when 429 / rate limit error received.
  */
 
 import { useState, type FormEvent } from "react";
@@ -34,8 +37,14 @@ export default function LoginPage() {
         return <Navigate to="/" replace />;
     }
 
-    const switchTab = (t: Tab) => {
-        setTab(t);
+    const isRateLimited = !!authError && (
+        authError.toLowerCase().includes("rate") ||
+        authError.toLowerCase().includes("too many") ||
+        authError.toLowerCase().includes("429")
+    );
+
+    const switchTab = (newTab: Tab) => {
+        setTab(newTab);
         clearError();
         setRegisterMsg("");
         setRegisterSuccess(false);
@@ -57,7 +66,6 @@ export default function LoginPage() {
         setRegisterMsg("");
         clearError();
 
-        // 1. Create auth user — org is created later via CreateOrgPage
         const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password: password.trim(),
@@ -67,23 +75,17 @@ export default function LoginPage() {
         if (error) {
             const msg = error.message.includes("already registered") || error.message.includes("User already registered")
                 ? t("login.emailTaken")
-                : error.message.includes("Password should be")
-                    ? t("login.passwordTooShort")
-                    : error.message;
+                : t("login.passwordTooShort");
             setRegisterMsg(msg);
             setRegisterSuccess(false);
             setRegisterLoading(false);
             return;
         }
 
-        // user_profiles row ถูกสร้างอัตโนมัติโดย DB trigger (handle_new_auth_user)
-        // ไม่ต้อง insert ตรงนี้ — trigger ใช้ SECURITY DEFINER bypass RLS ได้
-
         setRegisterMsg(t("login.registerSuccess"));
         setRegisterSuccess(true);
         setRegisterLoading(false);
         setPassword("");
-        // Auto-switch to login tab after 1.5s
         setTimeout(() => { setTab("login"); setRegisterMsg(""); }, 1500);
     };
 
@@ -131,8 +133,15 @@ export default function LoginPage() {
                 </div>
             )}
 
+            {/* Rate Limited Warning */}
+            {isRateLimited && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700">
+                    {t("login.rateLimited")}
+                </div>
+            )}
+
             {/* Error / Success Messages */}
-            {authError && (
+            {authError && !isRateLimited && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2">
                     <p className="text-sm text-red-700 flex-1">{authError}</p>
                     <button onClick={clearError} className="text-red-400 hover:text-red-600 text-sm cursor-pointer">&times;</button>
@@ -230,7 +239,7 @@ export default function LoginPage() {
                             id="reg-password" type="password" value={password}
                             onChange={(e) => setPassword(e.target.value)}
                             placeholder="••••••••" required autoComplete="new-password"
-                            minLength={6}
+                            minLength={8}
                             disabled={registerLoading}
                             className="w-full px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
                         />

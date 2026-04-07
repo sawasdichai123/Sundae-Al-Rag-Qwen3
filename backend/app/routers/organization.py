@@ -39,6 +39,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from app.core.utils import validate_uuid_param
 from app.core.auth import (
     CurrentUser,
     require_approved,
@@ -175,7 +176,7 @@ async def create_org(
                 logger.warning("Slug '%s' collision — retrying with random suffix", slug)
                 continue
             logger.error("Org create failed (insert organizations): %s", exc)
-            raise HTTPException(status_code=500, detail=f"Failed to create organization: {exc}")
+            raise HTTPException(status_code=500, detail="Failed to create organization.")
 
     if org_result is None:
         raise HTTPException(status_code=500, detail="Failed to create organization after retry.")
@@ -287,6 +288,7 @@ async def get_org_overview(
 
     Returns high-level stats without exposing confidential data.
     """
+    validate_uuid_param(org_id, "org_id")
     supabase = get_supabase()
 
     # Verify org exists
@@ -512,6 +514,7 @@ async def get_org(
     without being a member — needed for DangerZone confirm/cancel deletion.
     Regular users must be org members (verify_organization).
     """
+    validate_uuid_param(org_id, "org_id")
     if user.role not in ("support", "admin"):
         await verify_organization(user, org_id)
 
@@ -543,6 +546,7 @@ async def update_org(
     user: CurrentUser = Depends(require_approved),
 ):
     """Update organization name. Org Admin only."""
+    validate_uuid_param(org_id, "org_id")
     await verify_organization(user, org_id)
     await verify_org_admin(user, org_id)
 
@@ -1347,17 +1351,23 @@ async def update_line_config(
         raise HTTPException(status_code=400, detail="No fields to update.")
 
     supabase = get_supabase()
-    result = await (
+    await (
         supabase.table("organizations")
         .update(updates)
         .eq("id", org_id)
-        .select("is_line_enabled, line_access_token, line_channel_secret")
     ).execute()
 
-    if not result.data:
+    org_result = await (
+        supabase.table("organizations")
+        .select("is_line_enabled, line_access_token, line_channel_secret")
+        .eq("id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not org_result.data:
         raise HTTPException(status_code=404, detail="Organization not found.")
 
-    org = result.data[0]
+    org = org_result.data[0]
     settings = get_settings()
     base_url = settings.public_api_url.rstrip("/") if settings.public_api_url else ""
     webhook_url = (

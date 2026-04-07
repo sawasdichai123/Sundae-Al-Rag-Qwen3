@@ -118,11 +118,8 @@ export const chatApi = {
                     return;
                 }
 
-                console.log("[askStream] Step 1: getting valid token");
-
                 // Get token — uses shared getValidToken() which auto-refreshes if near expiry
                 const token = await getValidToken();
-                console.log("[askStream] Step 1 done, token:", token ? "YES" : "NO");
 
                 if (!token) {
                     try {
@@ -144,7 +141,6 @@ export const chatApi = {
                     return;
                 }
 
-                console.log("[askStream] Sending fetch to", import.meta.env.VITE_API_BASE_URL);
                 const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
 
                 const payload = {

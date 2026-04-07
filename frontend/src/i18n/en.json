@@ -58,6 +58,7 @@
   "login.passwordTooShort": "Password is too short",
   "login.registerSuccess": "Account created! Awaiting approval.",
   "login.resetSuccess": "Password reset successfully",
+  "login.rateLimited": "Too many login attempts. Please wait a moment and try again.",
 
   "forgotPassword.title": "Forgot Password",
   "forgotPassword.desc": "Enter your email address and we'll send you a password reset link.",

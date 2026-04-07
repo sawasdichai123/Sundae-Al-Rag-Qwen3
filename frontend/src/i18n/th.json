@@ -58,6 +58,7 @@
   "login.passwordTooShort": "รหัสผ่านสั้นเกินไป",
   "login.registerSuccess": "สร้างบัญชีสำเร็จ! รอการอนุมัติ",
   "login.resetSuccess": "รีเซ็ตรหัสผ่านสำเร็จ",
+  "login.rateLimited": "พยายามเข้าสู่ระบบมากเกินไป กรุณารอสักครู่แล้วลองใหม่",
 
   "forgotPassword.title": "ลืมรหัสผ่าน",
   "forgotPassword.desc": "กรอกอีเมลที่ใช้สมัคร เราจะส่งลิงก์สำหรับรีเซ็ตรหัสผ่านให้คุณ",

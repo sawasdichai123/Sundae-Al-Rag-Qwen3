@@ -22,6 +22,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from app.core.database import get_supabase
@@ -35,14 +36,23 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhook", tags=["LINE Webhook"])
 
-SWITCH_KEYWORDS = {"เปลี่ยนบอท", "สลับบอท", "เมนู", "/menu", "menu"}
+SESSION_IDLE_MINUTES = 5   # auto-expire session หลังจาก idle กี่นาที
+
+SWITCH_KEYWORDS     = {"เปลี่ยนบอท", "สลับบอท", "เมนู", "/menu", "menu"}
+END_KEYWORDS        = {"จบการสนทนา", "ปิดการสนทนา", "end", "/end"}
+AGENT_KEYWORDS      = {"ติดต่อเจ้าหน้าที่", "คุยกับเจ้าหน้าที่", "agent", "/agent"}
+HELP_KEYWORDS       = {"ช่วยเหลือ", "วิธีใช้", "help", "/help", "?", "คำสั่ง"}
 
 
 # ── Helpers: Session management ──────────────────────────────────
 
 
 async def _get_active_session(line_user_id: str, organization_id: str) -> dict | None:
-    """Return the most recent active or human_takeover session for this LINE user."""
+    """Return the most recent active or human_takeover session for this LINE user.
+
+    Auto-expires sessions idle for more than SESSION_IDLE_MINUTES minutes —
+    marks them resolved and returns None so the caller starts a fresh session.
+    """
     supabase = get_supabase()
     try:
         result = await (
@@ -55,7 +65,30 @@ async def _get_active_session(line_user_id: str, organization_id: str) -> dict |
             .order("last_message_at", desc=True)
             .limit(1)
         ).execute()
-        return result.data[0] if result.data else None
+
+        if not result.data:
+            return None
+
+        session = result.data[0]
+
+        # ── Auto-expire: resolve session if idle too long ─────────
+        last_msg_str = session.get("last_message_at")
+        if last_msg_str:
+            try:
+                last_msg = datetime.fromisoformat(last_msg_str.replace("Z", "+00:00"))
+                idle_minutes = (datetime.now(timezone.utc) - last_msg).total_seconds() / 60
+                if idle_minutes >= SESSION_IDLE_MINUTES:
+                    await (
+                        supabase.table("chat_sessions")
+                        .update({"status": "resolved"})
+                        .eq("id", session["id"])
+                    ).execute()
+                    logger.info("[LINE] Session %s auto-expired (idle %.1fm)", session["id"][:8], idle_minutes)
+                    return None
+            except Exception:
+                pass  # ถ้า parse ไม่ได้ใช้ session ปกติ
+
+        return session
     except Exception as exc:
         logger.warning("[LINE] Failed to get active session: %s", exc)
         return None
@@ -167,9 +200,10 @@ async def _send_bot_selection(
         {
             "type": "action",
             "action": {
-                "type": "message",
+                "type": "postback",
                 "label": bot["name"][:20],  # LINE label limit: 20 chars
-                "text": f"bot:{bot['id']}",
+                "data": f"bot:{bot['id']}",
+                "displayText": f"เลือก: {bot['name'][:20]}",
             },
         }
         for bot in bots
@@ -209,6 +243,22 @@ async def _handle_bot_selection(
 
     logger.info("[LINE] User %s selected bot %s", line_user_id[:10], bot["name"])
     return True
+
+
+# ── Helper: Human takeover ──────────────────────────────────────
+
+
+async def _request_human_takeover(session_id: str) -> None:
+    """Set session status to human_takeover."""
+    supabase = get_supabase()
+    try:
+        await (
+            supabase.table("chat_sessions")
+            .update({"status": "human_takeover"})
+            .eq("id", session_id)
+        ).execute()
+    except Exception as exc:
+        logger.warning("[LINE] Failed to set human_takeover for session %s: %s", session_id, exc)
 
 
 # ── Helper: RAG pipeline ─────────────────────────────────────────
@@ -305,7 +355,7 @@ async def line_webhook(
         raise
     except Exception as exc:
         logger.error("[LINE] Failed to look up org %s: %s", org_id, exc)
-        raise HTTPException(status_code=500, detail=f"Failed to look up organization: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to look up organization.")
 
     if not org.get("is_line_enabled"):
         return {"status": "ignored", "reason": "line_disabled"}
@@ -321,7 +371,11 @@ async def line_webhook(
         )
 
     # ── 2. Verify signature ──────────────────────────────────────
-    body = await request.body()
+    try:
+        body = await request.body()
+    except Exception:
+        # LINE may disconnect before body is fully sent (timeout/verify ping)
+        return {"status": "ok"}
     signature = request.headers.get("X-Line-Signature")
     verify_line_signature_with_secret(body, signature, channel_secret)
 
@@ -342,10 +396,25 @@ async def line_webhook(
         logger.warning("[LINE] Org %s has no active bots", org_id)
         return {"status": "ok", "events": 0}
 
-    # ── 5. Process each text message event ───────────────────────
+    # ── 5. Process each event (message or postback) ──────────────
     processed = 0
     for event in events:
-        if event.get("type") != "message":
+        event_type = event.get("type")
+
+        # Postback events — bot selection via Quick Reply (no visible text in chat)
+        if event_type == "postback":
+            postback_data = event.get("postback", {}).get("data", "").strip()
+            if not postback_data.startswith("bot:"):
+                continue
+            reply_token = event.get("replyToken", "")
+            line_user_id = event.get("source", {}).get("userId", "unknown")
+            background_tasks.add_task(
+                _handle_bot_selection, postback_data, reply_token, line_user_id, org_id, access_token, bots
+            )
+            processed += 1
+            continue
+
+        if event_type != "message":
             continue
         if event.get("message", {}).get("type") != "text":
             continue
@@ -357,7 +426,48 @@ async def line_webhook(
         reply_token = event.get("replyToken", "")
         line_user_id = event.get("source", {}).get("userId", "unknown")
 
-        # 5a. Switch keyword → reset session + show bot selection
+        # 5a. Help keyword → แสดงคำสั่งที่ใช้ได้
+        if user_text.lower() in HELP_KEYWORDS:
+            help_text = (
+                "📋 คำสั่งที่ใช้ได้:\n"
+                "• พิมพ์คำถามได้เลย — AI จะตอบจากเอกสาร\n"
+                "• เปลี่ยนบอท — เลือกบริการใหม่\n"
+                "• ติดต่อเจ้าหน้าที่ — ขอคุยกับเจ้าหน้าที่\n"
+                "• จบการสนทนา — ปิดการสนทนาปัจจุบัน\n"
+                "• ช่วยเหลือ — แสดงคำสั่งนี้"
+            )
+            background_tasks.add_task(reply_message, reply_token, help_text, access_token)
+            processed += 1
+            continue
+
+        # 5b. End keyword → resolve session
+        if user_text.lower() in END_KEYWORDS:
+            await _resolve_active_sessions(line_user_id, org_id)
+            end_text = "ขอบคุณที่ใช้บริการค่ะ หากต้องการความช่วยเหลืออีกครั้ง พิมพ์ข้อความมาได้เลยค่ะ 😊"
+            background_tasks.add_task(reply_message, reply_token, end_text, access_token)
+            processed += 1
+            continue
+
+        # 5c. Agent keyword → human takeover
+        if user_text.lower() in AGENT_KEYWORDS:
+            session = await _get_active_session(line_user_id, org_id)
+            if session:
+                await _request_human_takeover(session["id"])
+                agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
+                background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
+                background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
+            else:
+                # ไม่มี session — สร้างใหม่แล้ว takeover ทันที
+                if bots:
+                    session = await _create_line_session(line_user_id, bots[0]["id"], org_id)
+                    await _request_human_takeover(session["id"])
+                    agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
+                    background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
+                    background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
+            processed += 1
+            continue
+
+        # 5e. Switch keyword → reset session + show bot selection
         if user_text.lower() in SWITCH_KEYWORDS:
             await _resolve_active_sessions(line_user_id, org_id)
             if len(bots) == 1:
@@ -370,7 +480,7 @@ async def line_webhook(
             processed += 1
             continue
 
-        # 5b. Bot selection from Quick Reply "bot:{bot_id}"
+        # 5f. Bot selection from Quick Reply "bot:{bot_id}"
         if user_text.startswith("bot:"):
             handled = await _handle_bot_selection(
                 text=user_text,
@@ -384,7 +494,7 @@ async def line_webhook(
                 processed += 1
                 continue
 
-        # 5c. Existing active session → RAG with that bot
+        # 5g. Existing active session → RAG with that bot
         session = await _get_active_session(line_user_id, org_id)
         if session:
             background_tasks.add_task(
@@ -398,7 +508,7 @@ async def line_webhook(
             processed += 1
             continue
 
-        # 5d. No session + single bot → auto-select + RAG
+        # 5h. No session + single bot → auto-select + RAG
         if len(bots) == 1:
             session = await _create_line_session(line_user_id, bots[0]["id"], org_id)
             background_tasks.add_task(
@@ -412,7 +522,7 @@ async def line_webhook(
             processed += 1
             continue
 
-        # 5e. No session + multiple bots → show selection menu
+        # 5i. No session + multiple bots → show selection menu
         background_tasks.add_task(_send_bot_selection, reply_token, bots, access_token)
         processed += 1
 

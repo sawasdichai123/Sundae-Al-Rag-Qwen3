@@ -23,9 +23,12 @@ export default function ForgotPasswordPage() {
         setLoading(true);
         setError("");
 
+        // Use VITE_APP_URL (set in .env) to prevent open redirect via spoofed origin.
+        // Falls back to window.location.origin only in development.
+        const appUrl = import.meta.env.VITE_APP_URL || window.location.origin;
         const { error: err } = await supabase.auth.resetPasswordForEmail(
             email.trim(),
-            { redirectTo: `${window.location.origin}/reset-password` },
+            { redirectTo: `${appUrl}/reset-password` },
         );
 
         if (err) {

@@ -247,6 +247,11 @@ async def get_current_user(request: Request) -> CurrentUser:
     cached = await cache.get(user_id)
     if cached is not None:
         logger.debug("[Auth] Cache HIT for %s", cached.email)
+        # Always re-read X-Active-Org from current request — never use the
+        # cached value, because the user may switch orgs between requests
+        # without invalidating the cache (cache only stores auth profile).
+        active_org_header = request.headers.get("X-Active-Org")
+        cached.active_org_id = active_org_header or None
         return cached
 
     # ── 4. Cache miss → fetch from DB ────────────────────────────

@@ -135,10 +135,14 @@ apiClient.interceptors.request.use(
             config.headers.Authorization = `Bearer ${token}`;
         }
         // Attach active org header for multi-tenant isolation
+        // Validate against known orgs to prevent IDOR via localStorage tampering
         try {
             const activeOrgId = localStorage.getItem("sundae_active_org_id");
             if (activeOrgId) {
-                config.headers["X-Active-Org"] = activeOrgId;
+                const { useOrgStore } = await import("../store/orgStore");
+                const orgs = useOrgStore.getState().orgs;
+                const isValid = orgs.length === 0 || orgs.some((o) => o.id === activeOrgId);
+                if (isValid) config.headers["X-Active-Org"] = activeOrgId;
             }
         } catch { /* ignore storage errors */ }
         return config;
