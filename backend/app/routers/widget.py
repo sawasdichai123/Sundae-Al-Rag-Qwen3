@@ -251,10 +251,10 @@ async def widget_chat(
                     # Return a non-streaming response indicating handoff
                     async def handoff_stream():
                         data = json.dumps(
-                            {"type": "token", "content": "A human agent will respond shortly. Please wait."},
+                            {"type": "token", "content": "กำลังเชื่อมต่อ Admin กรุณารอสักครู่..."},
                         )
                         yield f"data: {data}\n\n"
-                        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id)})}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id), 'session_status': 'human_takeover'})}\n\n"
 
                     return StreamingResponse(
                         handoff_stream(),
@@ -383,8 +383,8 @@ async def widget_chat(
             )
             yield f"data: {err}\n\n"
 
-        # Done signal with session_id and signed token
-        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id)})}\n\n"
+        # Done signal with session_id, signed token, and current status
+        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'session_token': _sign_session(session_id), 'session_status': 'active'})}\n\n"
 
         # Save assistant message
         answer_text = "".join(full_answer)
@@ -460,3 +460,95 @@ async def get_widget_history(
     except Exception as exc:
         logger.error("[Widget] Failed to get history for session %s: %s", session_id, exc)
         raise HTTPException(status_code=500, detail="Failed to load chat history.")
+
+
+# ── List bots in same org ────────────────────────────────────────
+
+
+@router.get("/bots")
+@limiter.limit("30/minute")
+async def list_widget_bots(
+    request: Request,
+    bot_id: str = Query(..., description="Any web-enabled bot in the org"),
+) -> list[dict]:
+    """Return all web-enabled bots in the same org as the given bot.
+
+    Used by the widget to build the bot selection screen when an org
+    has multiple web-enabled bots.
+    """
+    bot = await _get_widget_bot(bot_id)
+    org_id = bot["organization_id"]
+    supabase = get_supabase()
+    try:
+        result = await (
+            supabase.table("bots")
+            .select("id, name")
+            .eq("organization_id", org_id)
+            .eq("is_web_enabled", True)
+            .eq("is_active", True)
+            .order("name")
+        ).execute()
+        return result.data or []
+    except Exception as exc:
+        logger.error("[Widget] Failed to list bots for org %s: %s", org_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to list bots.")
+
+
+# ── Poll for admin replies ───────────────────────────────────────
+
+
+class WidgetPollResponse(BaseModel):
+    """Response for widget polling — new messages and session status."""
+
+    messages: list[WidgetMessageResponse] = []
+    session_status: str = "active"
+
+
+@router.get("/poll/{session_id}", response_model=WidgetPollResponse)
+@limiter.limit("60/minute")
+async def poll_widget_session(
+    request: Request,
+    session_id: str,
+    after: str = Query(..., description="ISO timestamp — return messages created after this"),
+    token: str = Query(..., description="HMAC session token for ownership verification"),
+) -> WidgetPollResponse:
+    """Poll for new messages in a widget session (admin replies).
+
+    Called by the widget every 3–10 seconds when the session is in
+    human_takeover status.  Returns:
+      - messages: admin replies received since 'after'
+      - session_status: current status of the session
+    """
+    if not _verify_session_token(session_id, token):
+        raise HTTPException(status_code=403, detail="Invalid session token.")
+
+    supabase = get_supabase()
+    try:
+        sess = await (
+            supabase.table("chat_sessions")
+            .select("status")
+            .eq("id", session_id)
+            .limit(1)
+        ).execute()
+        if not sess.data:
+            raise HTTPException(status_code=404, detail="Session not found.")
+
+        session_status = sess.data[0].get("status", "active")
+
+        msgs = await (
+            supabase.table("chat_messages")
+            .select("id, role, content, created_at")
+            .eq("session_id", session_id)
+            .gt("created_at", after)
+            .order("created_at", desc=False)
+        ).execute()
+
+        return WidgetPollResponse(
+            messages=[WidgetMessageResponse(**m) for m in (msgs.data or [])],
+            session_status=session_status,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Widget] Poll failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail="Poll failed.")

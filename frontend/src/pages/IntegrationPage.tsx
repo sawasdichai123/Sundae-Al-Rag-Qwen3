@@ -11,10 +11,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
-import { orgApi } from "../api/endpoints";
+import { orgApi, botsApi } from "../api/endpoints";
 import { getApiError } from "../utils/apiError";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
+import type { Bot } from "../types";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -70,6 +71,13 @@ export default function IntegrationPage() {
     const [accessToken, setAccessToken] = useState("");
     const [savingCreds, setSavingCreds] = useState(false);
 
+    // Website / Widget state
+    const [bots, setBots] = useState<Bot[]>([]);
+    const [selectedBotId, setSelectedBotId] = useState("");
+    const [embedTheme, setEmbedTheme] = useState("#ffd100");
+    const [embedTitle, setEmbedTitle] = useState("");
+    const [embedCopied, setEmbedCopied] = useState(false);
+
     // Load LINE config on mount
     const loadLineConfig = useCallback(async () => {
         if (!activeOrgId) return;
@@ -87,6 +95,19 @@ export default function IntegrationPage() {
     }, [activeOrgId]);
 
     useEffect(() => { loadLineConfig(); }, [loadLineConfig]);
+
+    // Load bots for widget selector
+    useEffect(() => {
+        if (!activeOrgId) return;
+        botsApi.list(activeOrgId).then((res) => {
+            const webBots = res.data.filter((b: Bot) => b.is_web_enabled);
+            setBots(webBots);
+            if (webBots.length > 0) {
+                setSelectedBotId(webBots[0].id);
+                setEmbedTitle(webBots[0].name);
+            }
+        }).catch(() => {});
+    }, [activeOrgId]);
 
     const handleToggleLine = async () => {
         if (!activeOrgId) return;
@@ -129,6 +150,26 @@ export default function IntegrationPage() {
     const handleCopyWebhook = () => {
         navigator.clipboard.writeText(webhookUrl);
         toast("success", t("integration.webhookCopied"));
+    };
+
+    const serverUrl = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/$/, "");
+    const selectedBot = bots.find((b) => b.id === selectedBotId);
+    const embedCode = selectedBotId
+        ? `<script src="${serverUrl}/static/widget.js"\n        data-bot-id="${selectedBotId}"\n        data-server="${serverUrl}"\n        data-theme="${embedTheme}"\n        data-title="${embedTitle || selectedBot?.name || "Chat"}">\n</script>`
+        : "";
+
+    const handleCopyEmbed = () => {
+        if (!embedCode) return;
+        navigator.clipboard.writeText(embedCode).then(() => {
+            setEmbedCopied(true);
+            setTimeout(() => setEmbedCopied(false), 2000);
+        });
+    };
+
+    const handleBotSelect = (botId: string) => {
+        setSelectedBotId(botId);
+        const bot = bots.find((b) => b.id === botId);
+        if (bot) setEmbedTitle(bot.name);
     };
 
     return (
@@ -238,9 +279,9 @@ export default function IntegrationPage() {
                     )}
                 </div>
 
-                {/* ── Website Card (UI-only) ───────────────────── */}
+                {/* ── Website / Widget Card ────────────────────── */}
                 <div className="bg-white rounded-2xl border border-steel-200 p-6 hover:shadow-md hover:shadow-steel-100/50 transition-all duration-200">
-                    <div className="flex items-start gap-4">
+                    <div className="flex items-start gap-4 mb-4">
                         <WebIcon />
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
@@ -251,6 +292,82 @@ export default function IntegrationPage() {
                             </div>
                             <p className="text-xs text-steel-500 leading-relaxed">{t("integration.webDesc")}</p>
                         </div>
+                    </div>
+
+                    {/* Widget embed section */}
+                    <div className="border-t border-steel-100 pt-4 space-y-4">
+                        {bots.length === 0 ? (
+                            <p className="text-xs text-steel-400 italic">{t("integration.noBotEnabled")}</p>
+                        ) : (
+                            <>
+                                {/* Bot selector */}
+                                <div>
+                                    <label className="block text-xs font-medium text-steel-600 mb-1.5">{t("integration.selectBot")}</label>
+                                    <select
+                                        value={selectedBotId}
+                                        onChange={(e) => handleBotSelect(e.target.value)}
+                                        className="w-full px-3 py-2 text-sm border border-steel-200 rounded-xl bg-steel-50 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 cursor-pointer"
+                                    >
+                                        {bots.map((b) => (
+                                            <option key={b.id} value={b.id}>{b.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                {/* Customization */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-medium text-steel-600 mb-1">{t("integration.widgetTitle")}</label>
+                                        <input
+                                            type="text"
+                                            value={embedTitle}
+                                            onChange={(e) => setEmbedTitle(e.target.value)}
+                                            className="w-full px-3 py-2 text-sm border border-steel-200 rounded-xl bg-steel-50 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-medium text-steel-600 mb-1">{t("integration.widgetTheme")}</label>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="color"
+                                                value={embedTheme}
+                                                onChange={(e) => setEmbedTheme(e.target.value)}
+                                                className="w-10 h-9 rounded-lg border border-steel-200 cursor-pointer p-0.5 bg-steel-50"
+                                            />
+                                            <span className="text-sm text-steel-500 font-mono">{embedTheme}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Embed code */}
+                                <div>
+                                    <label className="block text-xs font-medium text-steel-600 mb-1.5">
+                                        {t("integration.embedLabel")} <code className="bg-steel-100 px-1 rounded">&lt;body&gt;</code>
+                                    </label>
+                                    <div className="relative">
+                                        <pre className="bg-steel-900 text-emerald-300 text-xs rounded-xl p-4 overflow-x-auto leading-relaxed font-mono whitespace-pre">
+{embedCode}
+                                        </pre>
+                                        <button
+                                            onClick={handleCopyEmbed}
+                                            className={`absolute top-2.5 right-2.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                                                embedCopied
+                                                    ? "bg-emerald-500 text-white"
+                                                    : "bg-steel-700 text-steel-200 hover:bg-steel-600"
+                                            }`}
+                                        >
+                                            {embedCopied ? "✓ Copied!" : t("common.copy")}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Bot ID */}
+                                <div className="flex items-center gap-2 text-xs text-steel-400">
+                                    <span className="font-medium text-steel-500">Bot ID:</span>
+                                    <code className="font-mono bg-steel-100 px-2 py-0.5 rounded text-steel-600 select-all">{selectedBotId}</code>
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 

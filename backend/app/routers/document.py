@@ -24,6 +24,7 @@ import uuid
 from typing import Optional
 
 import fitz  # PyMuPDF
+import docx  # python-docx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
@@ -326,6 +327,48 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     return full_text
 
 
+def extract_text_from_docx(docx_bytes: bytes) -> str:
+    """Extract all text from a .docx file using python-docx.
+
+    Paragraphs are joined with newlines.  Page numbers are not available
+    in the OOXML format without rendering, so all text is treated as
+    a single page (page sentinels are omitted — chunking still works
+    correctly, page_start / page_end will be None for these documents).
+
+    Args:
+        docx_bytes: Raw bytes of the .docx file.
+
+    Returns:
+        Plain text extracted from the document.
+
+    Raises:
+        ValueError: If the file cannot be opened or contains no text.
+    """
+    import io
+
+    try:
+        doc = docx.Document(io.BytesIO(docx_bytes))
+    except Exception as exc:
+        raise ValueError(f"Cannot open .docx file — it may be corrupted: {exc}")
+
+    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+
+    # Also extract text from tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                cell_text = cell.text.strip()
+                if cell_text:
+                    paragraphs.append(cell_text)
+
+    full_text = "\n\n".join(paragraphs)
+    if not full_text.strip():
+        raise ValueError(".docx file contains no extractable text.")
+
+    full_text = full_text.replace("\x00", "")
+    return full_text
+
+
 # ── Endpoint ─────────────────────────────────────────────────────
 
 
@@ -351,25 +394,31 @@ async def upload_document(
         UploadResponse with document ID and chunk counts.
 
     Raises:
-        HTTPException 400: Invalid file type or empty PDF.
+        HTTPException 400: Invalid file type or empty file.
         HTTPException 500: Processing or storage failure.
     """
     # ── Security: verify user belongs to this org ────────────
     await verify_organization(user, organization_id)
 
     # ── 1. Validate file type ────────────────────────────────────
-    if file.content_type not in ("application/pdf",):
+    DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ALLOWED_TYPES = ("application/pdf", DOCX_MIME)
+
+    if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {file.content_type}. Only PDF files are accepted.",
+            detail=f"Invalid file type: {file.content_type}. Only PDF and DOCX files are accepted.",
         )
+
+    is_pdf = file.content_type == "application/pdf"
 
     # Normalize empty bot_id to None (DB expects UUID or NULL)
     if not bot_id or bot_id.strip() == "":
         bot_id = None
 
     document_id = str(uuid.uuid4())
-    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
+    default_name = "untitled.pdf" if is_pdf else "untitled.docx"
+    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or default_name)
     supabase = get_supabase()
 
     try:
@@ -377,12 +426,14 @@ async def upload_document(
         MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
         doc_bytes = await file.read()
 
-        # Validate PDF magic bytes (don't rely solely on client-provided MIME type)
-        if not doc_bytes[:5] == b"%PDF-":
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file: not a valid PDF (bad magic bytes).",
-            )
+        # Validate magic bytes (don't rely solely on client-provided MIME type)
+        if is_pdf:
+            if not doc_bytes[:5] == b"%PDF-":
+                raise HTTPException(status_code=400, detail="Invalid file: not a valid PDF (bad magic bytes).")
+        else:
+            # DOCX is a ZIP archive — magic bytes: PK\x03\x04
+            if not doc_bytes[:4] == b"PK\x03\x04":
+                raise HTTPException(status_code=400, detail="Invalid file: not a valid DOCX (bad magic bytes).")
 
         if len(doc_bytes) > MAX_FILE_SIZE:
             raise HTTPException(
@@ -392,6 +443,7 @@ async def upload_document(
 
         # ── 3. Insert document record (status = processing) ──────
         file_size = len(doc_bytes)
+        mime_type = "application/pdf" if is_pdf else DOCX_MIME
 
         doc_row = {
             "id": document_id,
@@ -399,17 +451,17 @@ async def upload_document(
             "bot_id": bot_id,
             "name": sanitized_name,
             "file_size_bytes": file_size,
-            "mime_type": "application/pdf",
+            "mime_type": mime_type,
             "status": "processing",
         }
         await (supabase.table("documents").insert(doc_row)).execute()
         logger.info(
-            "Document record created: %s (org=%s)", document_id, organization_id
+            "Document record created: %s (org=%s, type=%s)", document_id, organization_id, mime_type
         )
 
-        # ── 3. Extract text from PDF ────────────────────────────
+        # ── 4. Extract text ──────────────────────────────────────
         try:
-            full_text = extract_text_from_pdf(doc_bytes)
+            full_text = extract_text_from_pdf(doc_bytes) if is_pdf else extract_text_from_docx(doc_bytes)
         except ValueError as exc:
             # Update status to error and return 400
             await (

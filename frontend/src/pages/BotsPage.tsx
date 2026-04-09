@@ -422,7 +422,7 @@ export default function BotsPage() {
                 </div>
 
                 {/* Web Enabled Toggle */}
-                <div className="mb-6 flex items-center justify-between p-4 bg-white rounded-2xl border border-steel-200">
+                <div className="mb-4 flex items-center justify-between p-4 bg-white rounded-2xl border border-steel-200">
                     <div>
                         <p className="text-sm font-bold text-steel-800">{t("bots.webChatEnabled")}</p>
                         <p className="text-xs text-steel-400 mt-0.5">{t("bots.webChatEnabledDesc")}</p>

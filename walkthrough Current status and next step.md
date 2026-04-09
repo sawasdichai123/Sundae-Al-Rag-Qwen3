@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 7 เมษายน 2569 — **Email Notifications ✅ | HIGH-03 AES-GCM ✅ | Frontend Security 15/16 ✅**
+> **อัพเดทล่าสุด**: 9 เมษายน 2569 — **DOCX Upload Support ✅ | Web Widget v2 ✅ | Inbox Filter Tabs ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -4550,4 +4550,125 @@ EMAIL_FROM=noreply@bumail.net   # ต้องตั้ง DNS ใน Resend ก
 |---|--------|-------|
 | ~~HIGH-03: Encrypt LINE secrets~~ | | ✅ Done |
 | ~~Email notifications for org invitations~~ | | ✅ Done |
-| Organization logo upload UI | OrganizationPage | ❌ ยังไม่ได้ทำ |
+| ~~Organization logo upload UI~~ | | ✅ Done |
+| ~~Web Widget v2~~ | | ✅ Done |
+| ~~DOCX Upload Support~~ | | ✅ Done |
+
+---
+
+## 65. DOCX Upload Support — Knowledge Base
+
+> **วันที่**: 9 เมษายน 2569
+> **สถานะ**: ✅ เสร็จสมบูรณ์
+
+### 65.1 ปัญหาที่แก้
+
+Knowledge Base รองรับเฉพาะ PDF ไม่สามารถอัพโหลด `.docx` ได้
+
+### 65.2 สิ่งที่ทำ
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|---|---|
+| `backend/requirements.txt` | เพิ่ม `python-docx>=1.1.0` |
+| `backend/app/routers/document.py` | เพิ่ม `import docx`, เพิ่ม `extract_text_from_docx()`, รองรับ MIME type DOCX, magic bytes check `PK\x03\x04` |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | `accept=".pdf,.docx"`, แก้ client-side validation ทั้ง click upload และ drag & drop |
+| `frontend/src/i18n/en.json` + `th.json` | เพิ่ม error message สำหรับ format ที่ไม่รองรับ |
+
+### 65.3 Flow
+
+```
+.docx อัพโหลด → magic bytes check (PK\x03\x04)
+→ extract_text_from_docx() — ดึง text จาก paragraphs + tables
+→ chunking → embedding → Supabase (เหมือน PDF ทุกอย่าง)
+```
+
+### 65.4 ข้อจำกัด
+
+- **`.doc` (Word เก่า)** ยังไม่รองรับ — ต้องใช้ LibreOffice หรือ textract (ซับซ้อนกว่า)
+- `.docx` ไม่มี page number จริง ดังนั้น `page_start` / `page_end` จะเป็น `null`
+- ขนาดไฟล์สูงสุด 50 MB เหมือนเดิม
+
+---
+
+## 64. Web Widget v2 — Bot Selector + Admin Reply Polling
+
+> **วันที่**: 8 เมษายน 2569
+> **สถานะ**: ✅ Phase 1 เสร็จสมบูรณ์ — **⏸️ หยุดพัก รอ requirement เพิ่มเติม**
+
+### 64.1 ปัญหาที่แก้
+
+Widget เดิม (v1) ทำงานได้แค่พื้นฐาน — ส่งข้อความ → AI ตอบ ไม่มี:
+- Bot selector เมื่อ org มีหลายบอท
+- รับ reply จาก Admin ที่ตอบผ่าน Inbox
+- สถานะ human_takeover ชัดเจนในฝั่ง visitor
+- Filter channel ใน Inbox UI
+
+### 64.2 สิ่งที่ทำ
+
+#### Backend — `backend/app/routers/widget.py`
+
+| Endpoint ใหม่ | รายละเอียด |
+|---|---|
+| `GET /api/widget/bots?bot_id=...` | คืน bots ทั้งหมด web-enabled ใน org เดียวกัน |
+| `GET /api/widget/poll/{session_id}?after=&token=` | poll admin replies + session status (รองรับ 60 req/min) |
+
+- Done SSE event ตอนนี้มี `session_status` field (`"active"` / `"human_takeover"`)
+- ข้อความ handoff เปลี่ยนเป็นภาษาไทย
+
+#### Widget — `backend/static/widget.js` (เขียนใหม่ทั้งไฟล์)
+
+| Feature | รายละเอียด |
+|---|---|
+| **Bot Selector Screen** | ถ้า org มีหลายบอท → แสดงปุ่มเลือกบอทก่อนเริ่มแชท |
+| **Switch Bot Button** | ปุ่มในหัว widget สำหรับกลับไปเลือกบอทใหม่ |
+| **Status Banner** | แถบสีเหลือง "Admin กำลังช่วย..." / สีเขียว "จบแล้ว" |
+| **Admin Reply Polling** | ทุก 3 วิ (เปิด) / 10 วิ (ปิด) เมื่ออยู่ใน `human_takeover` |
+| **Unread Badge** | ตัวเลขแดงบน FAB เมื่อ admin ตอบขณะ widget ปิด |
+| **HMAC Token** | ส่ง session_token ทุก request, เก็บใน localStorage |
+| **Admin Message Style** | bubble สีน้ำเงิน label "Admin" แยกจาก AI |
+
+#### Frontend — `frontend/src/pages/InboxPage.tsx`
+
+- เพิ่ม filter tabs **ทั้งหมด / LINE / Web** ใต้ช่องค้นหา
+- `PlatformBadge` component — badge สี (🟢 L = LINE, 🔵 globe = Web) แทน text
+
+#### Frontend — `frontend/src/pages/IntegrationPage.tsx`
+
+- Website card ขยายออก — bot selector + ปรับชื่อ/สี + embed code block + Bot ID
+- โหลด bots ที่ `is_web_enabled = true` ของ org อัตโนมัติ
+
+### 64.3 Flow การทำงาน (ปัจจุบัน)
+
+```
+[Visitor เปิด Widget]
+  → ถ้า org มีหลายบอท: แสดง Bot Selector
+  → เลือกบอท → เริ่มแชท (AI ตอบ streaming)
+
+[Admin เปิด Inbox]
+  → กด "Takeover" → status = human_takeover
+  → Admin ตอบ → Widget poll รับ reply ทันที
+  → Visitor เห็น bubble สีน้ำเงิน "Admin:"
+
+[Admin กด Return to AI]
+  → status = active → AI กลับมาตอบ, polling หยุด
+
+[Visitor เปลี่ยนบอท]
+  → กดปุ่ม "เปลี่ยนบอท" → session ใหม่กับบอทอื่น
+```
+
+### 64.4 สิ่งที่ยังเหลือ (⏸️ หยุดพัก)
+
+| รายการ | หมายเหตุ |
+|---|---|
+| Real-time push (WebSocket/SSE) แทน polling | polling 3 วินาทีใช้งานได้แต่ไม่ ideal |
+| Push notification เบราว์เซอร์เมื่อ admin ตอบ | ต้องขอ Permission จาก visitor |
+| Widget customization เพิ่มเติม (avatar, greeting message) | ค่อยทำทีหลัง |
+| ทดสอบ end-to-end บน production server | รอ deploy |
+| Rate limit tuning ตามปริมาณ traffic จริง | รอข้อมูล |
+
+### 64.5 วิธีใช้งาน
+
+1. ไป **Bots** → เปิด Web Chat Enabled บนบอทที่ต้องการ
+2. ไป **Integration** → Website card → เลือกบอท → Copy embed code
+3. แปะ `<script>` tag ใน website ก่อนปิด `</body>`
+4. ดู session ที่เข้ามาใน **Inbox** → กด Takeover เพื่อตอบเอง

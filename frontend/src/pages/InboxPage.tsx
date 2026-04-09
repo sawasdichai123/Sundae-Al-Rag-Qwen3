@@ -57,15 +57,33 @@ function SearchIcon() {
     );
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
+// ── Platform Badge ───────────────────────────────────────────────
 
-function platformLabel(source: string): string {
-    switch (source) {
-        case "line": return "LINE";
-        case "web": return "Web";
-        default: return "API";
+function PlatformBadge({ source }: { source: string }) {
+    if (source === "line") {
+        return (
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-emerald-500 text-white text-[9px] font-bold shrink-0">
+                L
+            </span>
+        );
     }
+    if (source === "web") {
+        return (
+            <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-blue-500 text-white shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                    <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm-.75 1.56a5.5 5.5 0 0 0-4.69 4.69H4.5a.75.75 0 0 0 0-1.5H2.56c.27-.72.67-1.37 1.17-1.93L4.5 5.09a.75.75 0 1 0 1.06-1.06l-.77-.77a5.53 5.53 0 0 1 2.46-.7ZM9.5 3.09a5.53 5.53 0 0 1 2.46.7l-.77.77a.75.75 0 1 0 1.06 1.06l.77-.76a5.5 5.5 0 0 1 1.17 1.93H12.5a.75.75 0 0 0 0 1.5h1.94a5.5 5.5 0 0 1-4.69 4.69V11.5a.75.75 0 0 0-1.5 0v1.94a5.5 5.5 0 0 1-4.69-4.69H4.5a.75.75 0 0 0 0-1.5H2.56A5.5 5.5 0 0 1 7.25 2.56V4.5a.75.75 0 0 0 1.5 0V3.09Z" />
+                </svg>
+            </span>
+        );
+    }
+    return (
+        <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-steel-400 text-white text-[9px] font-bold shrink-0">
+            API
+        </span>
+    );
 }
+
+// ── Helpers ──────────────────────────────────────────────────────
 
 function statusConfig(status: string) {
     switch (status) {
@@ -117,6 +135,7 @@ export default function InboxPage() {
     const [loading, setLoading] = useState(true);
     const [loadingMessages, setLoadingMessages] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
+    const [platformFilter, setPlatformFilter] = useState<"all" | "line" | "web">("all");
     const [replyText, setReplyText] = useState("");
     const [sendingReply, setSendingReply] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -296,10 +315,13 @@ export default function InboxPage() {
     };
 
     // ── Filtered sessions ───────────────────────────────────────
-    const filtered = sessions.filter((s) =>
-        (s.user_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.platform_source.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filtered = sessions.filter((s) => {
+        const matchesPlatform = platformFilter === "all" || s.platform_source === platformFilter;
+        const matchesSearch = !searchQuery ||
+            (s.user_name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+            s.platform_source.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesPlatform && matchesSearch;
+    });
 
     return (
         <div className="flex h-[calc(100vh-8rem)] bg-white rounded-2xl border border-steel-100 overflow-hidden animate-fade-in">
@@ -307,7 +329,7 @@ export default function InboxPage() {
             <div className="w-80 border-r border-steel-100 flex flex-col shrink-0">
                 <div className="p-4 border-b border-steel-100">
                     <h2 className="text-sm font-bold text-steel-800 mb-3">Inbox</h2>
-                    <div className="relative">
+                    <div className="relative mb-2">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-steel-400">
                             <SearchIcon />
                         </span>
@@ -318,6 +340,22 @@ export default function InboxPage() {
                             onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-9 pr-3 py-2 bg-steel-50 border border-steel-200 rounded-xl text-xs placeholder:text-steel-400 focus:outline-none focus:border-brand-400 transition-all"
                         />
+                    </div>
+                    {/* Platform filter tabs */}
+                    <div className="flex gap-1">
+                        {(["all", "line", "web"] as const).map((f) => (
+                            <button
+                                key={f}
+                                onClick={() => setPlatformFilter(f)}
+                                className={`flex-1 py-1.5 text-[10px] font-semibold rounded-lg transition-colors cursor-pointer ${
+                                    platformFilter === f
+                                        ? "bg-brand-400 text-steel-900"
+                                        : "bg-steel-100 text-steel-500 hover:bg-steel-200"
+                                }`}
+                            >
+                                {f === "all" ? "ทั้งหมด" : f === "line" ? "LINE" : "Web"}
+                            </button>
+                        ))}
                     </div>
                 </div>
 
@@ -346,7 +384,7 @@ export default function InboxPage() {
                                 >
                                     <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-base">{platformLabel(session.platform_source)}</span>
+                                            <PlatformBadge source={session.platform_source} />
                                             <span className="text-xs font-medium text-steel-800 truncate max-w-[140px]">
                                                 {session.user_name || "Anonymous"}
                                             </span>
@@ -360,7 +398,6 @@ export default function InboxPage() {
                                             <span className={`w-1 h-1 rounded-full ${sc.dot}`} />
                                             {t(sc.labelKey)}
                                         </span>
-                                        <span className="text-[10px] text-steel-400 capitalize">{session.platform_source}</span>
                                     </div>
                                 </button>
                             );
@@ -399,7 +436,7 @@ export default function InboxPage() {
                         {/* Header */}
                         <div className="px-6 py-3.5 border-b border-steel-100 flex items-center justify-between bg-white">
                             <div className="flex items-center gap-3">
-                                <span className="text-xl">{platformLabel(selectedSession.platform_source)}</span>
+                                <PlatformBadge source={selectedSession.platform_source} />
                                 <div>
                                     <p className="text-sm font-bold text-steel-800">
                                         {selectedSession.user_name || "Anonymous"}

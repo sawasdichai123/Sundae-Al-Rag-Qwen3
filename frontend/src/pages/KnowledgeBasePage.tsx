@@ -131,8 +131,9 @@ export default function KnowledgeBasePage() {
         const file = e.target.files?.[0];
         if (!file || !orgId) return;
 
-        if (!file.type.includes("pdf")) {
-            toast("error", t("kb.onlyPdf"));
+        const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (!file.type.includes("pdf") && file.type !== DOCX_MIME) {
+            toast("error", t("kb.onlyPdfDocx"));
             return;
         }
 
@@ -170,8 +171,9 @@ export default function KnowledgeBasePage() {
         setDragOver(false);
         const file = e.dataTransfer.files?.[0];
         if (!file || !orgId) return;
-        if (file.type !== "application/pdf") {
-            toast("warning", t("kb.onlyPdfWarning"));
+        const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        if (!file.type.includes("pdf") && file.type !== DOCX_MIME) {
+            toast("warning", t("kb.onlyPdfDocxWarning"));
             return;
         }
         setUploading(true);
@@ -208,7 +210,7 @@ export default function KnowledgeBasePage() {
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".pdf"
+                    accept=".pdf,.docx"
                     className="hidden"
                     onChange={handleUpload}
                 />
