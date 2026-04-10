@@ -138,7 +138,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 _cors_origins = (
     [o.strip() for o in _settings.cors_origins.split(",") if o.strip()]
     if hasattr(_settings, "cors_origins") and _settings.cors_origins
-    else ["http://localhost:3000", "http://localhost:5173"]
+    else ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:5500", "http://localhost:5500"]
 )
 app.add_middleware(
     CORSMiddleware,

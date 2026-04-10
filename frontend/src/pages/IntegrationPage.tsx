@@ -153,9 +153,8 @@ export default function IntegrationPage() {
     };
 
     const serverUrl = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8001").replace(/\/$/, "");
-    const selectedBot = bots.find((b) => b.id === selectedBotId);
-    const embedCode = selectedBotId
-        ? `<script src="${serverUrl}/static/widget.js"\n        data-bot-id="${selectedBotId}"\n        data-server="${serverUrl}"\n        data-theme="${embedTheme}"\n        data-title="${embedTitle || selectedBot?.name || "Chat"}">\n</script>`
+    const embedCode = activeOrgId
+        ? `<script src="${serverUrl}/static/widget.js"\n        data-org-id="${activeOrgId}"\n        data-server="${serverUrl}"\n        data-theme="${embedTheme}"\n        data-title="${embedTitle || "Chat"}">\n</script>`
         : "";
 
     const handleCopyEmbed = () => {

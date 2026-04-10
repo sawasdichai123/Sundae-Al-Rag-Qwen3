@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 9 เมษายน 2569 — **DOCX Upload Support ✅ | Web Widget v2 ✅ | Inbox Filter Tabs ✅**
+> **อัพเดทล่าสุด**: 10 เมษายน 2569 — **Widget Org-based + CORS Fix ✅ | DOCX Upload ✅ | Web Widget v2 ✅ | Inbox Filter Tabs ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -4553,6 +4553,7 @@ EMAIL_FROM=noreply@bumail.net   # ต้องตั้ง DNS ใน Resend ก
 | ~~Organization logo upload UI~~ | | ✅ Done |
 | ~~Web Widget v2~~ | | ✅ Done |
 | ~~DOCX Upload Support~~ | | ✅ Done |
+| ~~Widget Org-based + CORS Fix~~ | | ✅ Done |
 
 ---
 
@@ -4609,7 +4610,7 @@ Widget เดิม (v1) ทำงานได้แค่พื้นฐาน 
 
 | Endpoint ใหม่ | รายละเอียด |
 |---|---|
-| `GET /api/widget/bots?bot_id=...` | คืน bots ทั้งหมด web-enabled ใน org เดียวกัน |
+| `GET /api/widget/bots?org_id=...` | คืน bots ทั้งหมด web-enabled ใน org (รับ `org_id` โดยตรง หรือ `bot_id` สำหรับ legacy) |
 | `GET /api/widget/poll/{session_id}?after=&token=` | poll admin replies + session status (รองรับ 60 req/min) |
 
 - Done SSE event ตอนนี้มี `session_status` field (`"active"` / `"human_takeover"`)
@@ -4634,7 +4635,8 @@ Widget เดิม (v1) ทำงานได้แค่พื้นฐาน 
 
 #### Frontend — `frontend/src/pages/IntegrationPage.tsx`
 
-- Website card ขยายออก — bot selector + ปรับชื่อ/สี + embed code block + Bot ID
+- Website card ขยายออก — bot selector + ปรับชื่อ/สี + embed code block
+- Embed code ใช้ `data-org-id` แทน `data-bot-id` — widget ไม่ผูกกับบอทตัวเดียว
 - โหลด bots ที่ `is_web_enabled = true` ของ org อัตโนมัติ
 
 ### 64.3 Flow การทำงาน (ปัจจุบัน)
@@ -4669,6 +4671,53 @@ Widget เดิม (v1) ทำงานได้แค่พื้นฐาน 
 ### 64.5 วิธีใช้งาน
 
 1. ไป **Bots** → เปิด Web Chat Enabled บนบอทที่ต้องการ
-2. ไป **Integration** → Website card → เลือกบอท → Copy embed code
+2. ไป **Integration** → Website card → ปรับชื่อ/สี → Copy embed code
 3. แปะ `<script>` tag ใน website ก่อนปิด `</body>`
+
+---
+
+## 66. Web Widget — เปลี่ยนเป็น Org-based + CORS Fix
+
+> **วันที่**: 10 เมษายน 2569
+> **สถานะ**: ✅ เสร็จสมบูรณ์
+
+### 66.1 สิ่งที่เปลี่ยน
+
+#### เปลี่ยนจาก `data-bot-id` → `data-org-id`
+
+Widget เดิมผูกกับบอทตัวเดียวผ่าน `data-bot-id` — ไม่สามารถเปลี่ยนบอทได้โดยไม่แก้ embed code
+
+**ปัจจุบัน**: ใช้ `data-org-id` — widget โหลดรายชื่อบอทที่ web-enabled ทั้งหมดจาก org แล้ว visitor เลือกเองใน Bot Selector
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|---|---|
+| `backend/static/widget.js` | `init()` อ่าน `data-org-id` → เรียก `/api/widget/bots?org_id=...` |
+| `backend/app/routers/widget.py` | endpoint `/api/widget/bots` รับ `org_id` query param โดยตรง (ยังรับ `bot_id` เป็น fallback) |
+| `frontend/src/pages/IntegrationPage.tsx` | embed code แสดง `data-org-id="${activeOrgId}"` |
+| `widget-demo/index.html` | เปลี่ยนเป็น `data-org-id="bca1137d-..."` + port `8001` |
+
+#### Embed Code ตัวอย่าง
+
+```html
+<script src="https://your-server/static/widget.js"
+  data-org-id="YOUR_ORG_UUID"
+  data-server="https://your-server"
+  data-theme="#6C63FF"
+  data-title="ถามได้เลย!">
+</script>
+```
+
+#### CORS Fix สำหรับ Widget Demo
+
+Widget-demo เปิดจาก Live Server (`http://127.0.0.1:5500`) ไม่สามารถเรียก backend (`http://localhost:8001`) ได้เนื่องจาก CORS
+
+| ไฟล์ | สิ่งที่เปลี่ยน |
+|---|---|
+| `backend/app/main.py` | เพิ่ม `"http://127.0.0.1:5500"` + `"http://localhost:5500"` ใน CORS origins |
+
+### 66.2 วิธีทดสอบ Widget Demo
+
+1. Start backend: `cd backend && uvicorn app.main:app --port 8001`
+2. เปิด `widget-demo/index.html` ด้วย VS Code Live Server (port 5500)
+3. กดปุ่มแชทมุมขวาล่าง → Bot Selector ปรากฏ → เลือกบอท → แชทได้
 4. ดู session ที่เข้ามาใน **Inbox** → กด Takeover เพื่อตอบเอง

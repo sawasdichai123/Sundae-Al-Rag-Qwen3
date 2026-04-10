@@ -469,15 +469,21 @@ async def get_widget_history(
 @limiter.limit("30/minute")
 async def list_widget_bots(
     request: Request,
-    bot_id: str = Query(..., description="Any web-enabled bot in the org"),
+    org_id: str = Query(None, description="Organization ID"),
+    bot_id: str = Query(None, description="Any web-enabled bot (legacy, resolves to org)"),
 ) -> list[dict]:
-    """Return all web-enabled bots in the same org as the given bot.
+    """Return all web-enabled bots for an org.
 
-    Used by the widget to build the bot selection screen when an org
-    has multiple web-enabled bots.
+    Accepts either org_id directly OR bot_id to resolve the org.
+    Used by the widget to build the bot selection screen.
     """
-    bot = await _get_widget_bot(bot_id)
-    org_id = bot["organization_id"]
+    if not org_id and not bot_id:
+        raise HTTPException(status_code=400, detail="Provide org_id or bot_id.")
+
+    if not org_id:
+        bot = await _get_widget_bot(bot_id)
+        org_id = bot["organization_id"]
+
     supabase = get_supabase()
     try:
         result = await (

@@ -3,7 +3,7 @@
  *
  * Usage:
  *   <script src="https://YOUR_SERVER/static/widget.js"
- *           data-bot-id="BOT_UUID"
+ *           data-org-id="ORG_UUID"
  *           data-server="https://YOUR_SERVER"
  *           data-theme="#ffd100"
  *           data-title="SUNDAE Chat">
@@ -24,18 +24,18 @@
 
   // ── Config ─────────────────────────────────────────────────────
   const scriptTag = document.currentScript;
-  const INITIAL_BOT_ID = scriptTag?.getAttribute("data-bot-id") || "";
+  const ORG_ID = scriptTag?.getAttribute("data-org-id") || "";
   const SERVER = (scriptTag?.getAttribute("data-server") || "").replace(/\/$/, "");
   const THEME_COLOR = scriptTag?.getAttribute("data-theme") || "#6C63FF";
   const TITLE = scriptTag?.getAttribute("data-title") || "SUNDAE Chat";
 
-  if (!INITIAL_BOT_ID || !SERVER) {
-    console.error("[SUNDAE Widget] Missing data-bot-id or data-server attribute.");
+  if (!ORG_ID || !SERVER) {
+    console.error("[SUNDAE Widget] Missing data-org-id or data-server attribute.");
     return;
   }
 
   // ── State ──────────────────────────────────────────────────────
-  let currentBotId = INITIAL_BOT_ID;
+  let currentBotId = "";
   let sessionId = null;
   let sessionToken = null;
   let sessionStatus = "active";
@@ -240,20 +240,17 @@
 
   async function init() {
     try {
-      var res = await fetch(SERVER + "/api/widget/bots?bot_id=" + encodeURIComponent(INITIAL_BOT_ID));
+      var res = await fetch(SERVER + "/api/widget/bots?org_id=" + encodeURIComponent(ORG_ID));
       if (res.ok) allBots = await res.json();
     } catch (_) {}
-    if (!allBots.length) allBots = [{ id: INITIAL_BOT_ID, name: TITLE }];
-
-    loadStored(INITIAL_BOT_ID);
-
-    if (allBots.length > 1 && !sessionId) {
-      viewMode = "selector";
-      showSelector();
-    } else {
-      viewMode = "chat";
-      await showChat(currentBotId);
+    if (!allBots.length) {
+      console.error("[SUNDAE Widget] No web-enabled bots found for this org.");
+      return;
     }
+
+    // Always show selector first (no bot is pre-selected)
+    viewMode = "selector";
+    showSelector();
   }
 
   // ── View: Bot Selector ─────────────────────────────────────────
@@ -293,7 +290,7 @@
   async function showChat(botId) {
     var bot = allBots.find(function (b) { return b.id === botId; }) || { id: botId, name: TITLE };
     titleEl.textContent = bot.name;
-    if (allBots.length > 1) switchBtn.classList.add("sw-show");
+    switchBtn.classList.add("sw-show");
     inputArea.style.display = "flex";
     msgDiv.innerHTML = "";
     stopPoll();
@@ -311,15 +308,11 @@
   function handleSwitchBot() {
     stopPoll();
     sessionStatus = "active";
-    currentBotId = INITIAL_BOT_ID;
-    if (allBots.length > 1) {
-      viewMode = "selector";
-      showSelector();
-    } else {
-      loadStored(INITIAL_BOT_ID);
-      showChat(INITIAL_BOT_ID);
-    }
+    currentBotId = "";
+    viewMode = "selector";
+    showSelector();
   }
+
 
   // ── Messages ───────────────────────────────────────────────────
   function addWelcome() {
