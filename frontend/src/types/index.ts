@@ -60,7 +60,8 @@ export interface OrgInvitation {
     organization_id: string;
     invited_email: string;
     invited_by: string;
-    status: "pending" | "accepted" | "revoked";
+    invited_by_email?: string | null;
+    status: "pending" | "accepted" | "declined" | "expired" | "revoked";
     created_at: string;
 }
 

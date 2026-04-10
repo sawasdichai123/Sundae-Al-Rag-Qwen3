@@ -14,7 +14,7 @@ import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
 import { orgApi } from "../api/endpoints";
 import { getApiError } from "../utils/apiError";
-import type { OrgMember } from "../types";
+import type { OrgMember, OrgInvitation } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
 
@@ -43,6 +43,8 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const [removingId, setRemovingId] = useState<string | null>(null);
     const [promotingId, setPromotingId] = useState<string | null>(null);
     const [demotingId, setDemotingId] = useState<string | null>(null);
+    const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
+    const [invLoading, setInvLoading] = useState(true);
 
     const loadMembers = useCallback(async () => {
         try {
@@ -55,7 +57,18 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
         }
     }, [orgId]);
 
-    useEffect(() => { loadMembers(); }, [loadMembers]);
+    const loadInvitations = useCallback(async () => {
+        try {
+            const { data } = await orgApi.listOrgInvitations(orgId);
+            setInvitations(data || []);
+        } catch (err) {
+            console.error("[Org] Failed to load invitations:", err);
+        } finally {
+            setInvLoading(false);
+        }
+    }, [orgId]);
+
+    useEffect(() => { loadMembers(); loadInvitations(); }, [loadMembers, loadInvitations]);
 
     const handleInvite = async (e: FormEvent) => {
         e.preventDefault();
@@ -66,12 +79,14 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             toast("success", t("org.inviteSuccess").replace("{email}", inviteEmail.trim()));
             setInviteEmail("");
         } catch (err: unknown) {
-            const msg = getApiError(err, t("org.inviteFailed"));
+            const raw = getApiError(err, t("org.inviteFailed"));
+            const msg = raw.includes("not registered") ? t("org.userNotFound") : raw;
             toast("error", msg);
         } finally {
             setInviting(false);
         }
         loadMembers().catch(() => {});
+        loadInvitations().catch(() => {});
     };
 
     const handlePromote = async (userId: string, name: string) => {
@@ -221,6 +236,45 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                     </button>
                 </form>
             </div>
+
+            {/* Invitation History */}
+            <div className="border-t border-steel-100 pt-4 mt-4">
+                <p className="text-xs font-medium text-steel-600 mb-3">{t("org.invitationHistory")}</p>
+                {invLoading ? (
+                    <div className="flex items-center gap-2 text-steel-400 py-2">
+                        <Spinner /> <span className="text-sm">{t("common.loading")}</span>
+                    </div>
+                ) : invitations.length === 0 ? (
+                    <p className="text-xs text-steel-400 py-2">{t("org.noInvitations")}</p>
+                ) : (
+                    <div className="space-y-2">
+                        {invitations.map((inv) => {
+                            const statusColors: Record<string, string> = {
+                                pending: "bg-amber-100 text-amber-700",
+                                accepted: "bg-green-100 text-green-700",
+                                declined: "bg-red-100 text-red-700",
+                                expired: "bg-steel-100 text-steel-500",
+                                revoked: "bg-steel-100 text-steel-500",
+                            };
+                            const statusKey = `org.invStatus.${inv.status}` as const;
+                            return (
+                                <div key={inv.id} className="flex items-center gap-3 py-2 px-3 bg-steel-50 rounded-xl">
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-steel-800 truncate">{inv.invited_email}</p>
+                                        <p className="text-[11px] text-steel-400 truncate">
+                                            {inv.invited_by_email && <>{t("org.invitedBy")} {inv.invited_by_email} · </>}
+                                            {new Date(inv.created_at).toLocaleDateString()}
+                                        </p>
+                                    </div>
+                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${statusColors[inv.status] || "bg-steel-100 text-steel-500"}`}>
+                                        {t(statusKey)}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
@@ -239,12 +293,16 @@ export default function OrganizationPage() {
 
     // Org details
     const [orgName, setOrgName] = useState("");
+    const [orgNameDraft, setOrgNameDraft] = useState("");
+    const [editingName, setEditingName] = useState(false);
     const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null);
+    const [orgCreatedAt, setOrgCreatedAt] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
     const logoInputRef = useRef<HTMLInputElement>(null);
+    const nameInputRef = useRef<HTMLInputElement>(null);
 
     const isProtectedOrg = orgSlug === "sundae";
 
@@ -254,8 +312,10 @@ export default function OrganizationPage() {
         try {
             const { data } = await orgApi.get(activeOrgId);
             setOrgName(data.name);
+            setOrgNameDraft(data.name);
             setOrgSlug(data.slug ?? null);
-            setOrgLogoUrl(data.logo_url ?? null);
+            setOrgLogoUrl((data as any).logo_url ?? null);
+            setOrgCreatedAt((data as any).created_at ?? null);
         } catch (err) {
             console.error("[Org] Load failed:", err);
             toast("error", t("org.loadFailed"));
@@ -310,12 +370,24 @@ export default function OrganizationPage() {
         }
     };
 
-    const handleUpdateName = async (e: FormEvent) => {
-        e.preventDefault();
-        if (!activeOrgId || !orgName.trim()) return;
+    const handleStartEdit = () => {
+        setOrgNameDraft(orgName);
+        setEditingName(true);
+        setTimeout(() => nameInputRef.current?.focus(), 50);
+    };
+
+    const handleCancelEdit = () => {
+        setOrgNameDraft(orgName);
+        setEditingName(false);
+    };
+
+    const handleSaveName = async () => {
+        if (!activeOrgId || !orgNameDraft.trim()) return;
         setSaving(true);
         try {
-            await orgApi.update(activeOrgId, orgName.trim());
+            await orgApi.update(activeOrgId, orgNameDraft.trim());
+            setOrgName(orgNameDraft.trim());
+            setEditingName(false);
             toast("success", t("org.updateSuccess"));
             await fetchOrgs();
         } catch (err: unknown) {
@@ -352,64 +424,113 @@ export default function OrganizationPage() {
                 </div>
             )}
 
-            {/* 1. Org Settings */}
+            {/* 1. Org Info */}
             {!loading && canManage && (
-                <div className="bg-white rounded-2xl border border-steel-100 p-6 mb-6">
-                    <h2 className="text-sm font-semibold text-steel-800 mb-4">{t("org.settings")}</h2>
+                <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
+                    {/* Header band */}
+                    <div className="h-20 bg-gradient-to-r from-brand-400/20 via-brand-400/10 to-transparent" />
 
-                    {/* Logo Upload */}
-                    <div className="flex items-center gap-4 mb-5 pb-5 border-b border-steel-100">
-                        <div
-                            className="w-16 h-16 rounded-2xl border-2 border-steel-200 bg-steel-50 flex items-center justify-center overflow-hidden shrink-0 cursor-pointer hover:border-brand-400 transition-colors"
-                            onClick={() => logoInputRef.current?.click()}
-                            title="คลิกเพื่ออัพโหลดโลโก้"
-                        >
-                            {orgLogoUrl ? (
-                                <img src={orgLogoUrl} alt="org logo" className="w-full h-full object-cover" />
-                            ) : (
-                                <span className="text-2xl font-bold text-steel-300">
-                                    {orgName?.[0]?.toUpperCase() || "O"}
-                                </span>
+                    <div className="px-6 pb-6 -mt-10">
+                        <div className="flex items-end gap-5 mb-6">
+                            {/* Logo — overlaps header band */}
+                            <div
+                                className="w-24 h-24 rounded-2xl border-4 border-white bg-steel-50 flex items-center justify-center overflow-hidden cursor-pointer relative group shadow-sm shrink-0"
+                                onClick={() => logoInputRef.current?.click()}
+                            >
+                                {orgLogoUrl ? (
+                                    <img src={orgLogoUrl} alt="org logo" className="w-full h-full object-cover" />
+                                ) : (
+                                    <span className="text-3xl font-bold text-steel-300">
+                                        {orgName?.[0]?.toUpperCase() || "O"}
+                                    </span>
+                                )}
+                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" className="w-5 h-5">
+                                        <path fillRule="evenodd" d="M1 8a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 8.07 3h3.86a2 2 0 0 1 1.664.89l.812 1.22A2 2 0 0 0 16.07 6H17a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8Zm13.5 3a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM10 14a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clipRule="evenodd" />
+                                    </svg>
+                                </div>
+                                {uploadingLogo && (
+                                    <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                                        <Spinner />
+                                    </div>
+                                )}
+                            </div>
+                            <input ref={logoInputRef} type="file" accept=".jpg,.jpeg,.png,.webp" className="hidden" onChange={handleLogoUpload} />
+
+                            {/* Org Name */}
+                            <div className="flex-1 min-w-0 pb-1">
+                                {editingName ? (
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            ref={nameInputRef}
+                                            type="text"
+                                            value={orgNameDraft}
+                                            onChange={(e) => setOrgNameDraft(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveName(); if (e.key === "Escape") handleCancelEdit(); }}
+                                            className="flex-1 px-3 py-1.5 bg-steel-50 border-2 border-brand-400 rounded-xl text-xl font-bold text-steel-900 focus:ring-2 focus:ring-brand-200 outline-none transition-all"
+                                            disabled={saving}
+                                            maxLength={100}
+                                        />
+                                        <button
+                                            onClick={handleSaveName}
+                                            disabled={saving || !orgNameDraft.trim()}
+                                            className="w-9 h-9 flex items-center justify-center text-white bg-green-500 hover:bg-green-600 rounded-xl transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                            title={t("common.save")}
+                                        >
+                                            {saving ? <Spinner /> : (
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                    <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                                                </svg>
+                                            )}
+                                        </button>
+                                        <button
+                                            onClick={handleCancelEdit}
+                                            className="w-9 h-9 flex items-center justify-center text-steel-500 bg-steel-100 hover:bg-steel-200 rounded-xl transition-colors cursor-pointer shrink-0"
+                                            title={t("common.cancel")}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <h3 className="text-xl font-bold text-steel-900 truncate">{orgName}</h3>
+                                        <button
+                                            onClick={handleStartEdit}
+                                            className="p-1.5 text-steel-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-all cursor-pointer shrink-0"
+                                            title={t("common.edit")}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                <path d="m5.433 13.917 1.262-3.155A4 4 0 0 1 7.58 9.42l6.92-6.918a2.121 2.121 0 0 1 3 3l-6.92 6.918c-.383.383-.84.685-1.343.886l-3.154 1.262a.5.5 0 0 1-.65-.65Z" />
+                                                <path d="M3.5 5.75c0-.69.56-1.25 1.25-1.25H10A.75.75 0 0 0 10 3H4.75A2.75 2.75 0 0 0 2 5.75v9.5A2.75 2.75 0 0 0 4.75 18h9.5A2.75 2.75 0 0 0 17 15.25V10a.75.75 0 0 0-1.5 0v5.25c0 .69-.56 1.25-1.25 1.25h-9.5c-.69 0-1.25-.56-1.25-1.25v-9.5Z" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Info grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="bg-steel-50 rounded-xl px-4 py-3">
+                                <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">Org ID</p>
+                                <p className="text-xs text-steel-700 font-mono truncate" title={activeOrgId}>{activeOrgId}</p>
+                            </div>
+                            {orgSlug && (
+                                <div className="bg-steel-50 rounded-xl px-4 py-3">
+                                    <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">Slug</p>
+                                    <p className="text-xs text-steel-700 font-mono">{orgSlug}</p>
+                                </div>
+                            )}
+                            {orgCreatedAt && (
+                                <div className="bg-steel-50 rounded-xl px-4 py-3">
+                                    <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">{t("common.created")}</p>
+                                    <p className="text-xs text-steel-700">{new Date(orgCreatedAt).toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric" })}</p>
+                                </div>
                             )}
                         </div>
-                        <div>
-                            <p className="text-sm font-medium text-steel-700 mb-1">โลโก้องค์กร</p>
-                            <p className="text-xs text-steel-400 mb-2">JPG, PNG, WebP — สูงสุด 2MB</p>
-                            <button
-                                type="button"
-                                onClick={() => logoInputRef.current?.click()}
-                                disabled={uploadingLogo}
-                                className="text-xs px-3 py-1.5 bg-steel-100 hover:bg-steel-200 text-steel-700 font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
-                            >
-                                {uploadingLogo ? <><Spinner /> กำลังอัพโหลด...</> : "อัพโหลดโลโก้"}
-                            </button>
-                            <input
-                                ref={logoInputRef}
-                                type="file"
-                                accept=".jpg,.jpeg,.png,.webp"
-                                className="hidden"
-                                onChange={handleLogoUpload}
-                            />
-                        </div>
                     </div>
-
-                    {/* Org Name */}
-                    <form onSubmit={handleUpdateName} className="flex gap-3">
-                        <input
-                            type="text"
-                            value={orgName}
-                            onChange={(e) => setOrgName(e.target.value)}
-                            className="flex-1 px-4 py-2.5 bg-steel-50 border border-steel-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-200 focus:border-brand-400 outline-none transition-all disabled:opacity-50"
-                            disabled={saving}
-                        />
-                        <button
-                            type="submit"
-                            disabled={saving || !orgName.trim()}
-                            className="px-5 py-2.5 bg-brand-400 text-steel-900 text-sm font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                        >
-                            {saving ? <Spinner /> : t("common.save")}
-                        </button>
-                    </form>
                 </div>
             )}
 

@@ -1170,6 +1170,87 @@ async def list_members(
     return members
 
 
+# ── Org Invitations List ────────────────────────────────────────
+
+class OrgInvitationItem(BaseModel):
+    id: str
+    invited_email: str
+    invited_by: str | None = None
+    invited_by_email: str | None = None
+    status: str
+    created_at: str
+
+
+@router.get("/{org_id}/invitations", response_model=list[OrgInvitationItem])
+async def list_org_invitations(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """List all invitations for this org (Org Admin or platform staff)."""
+    supabase = get_supabase()
+    if user.role in ("support", "admin"):
+        pass  # platform staff can view
+    else:
+        await verify_organization(user, org_id)
+        await verify_org_admin(user, org_id)
+
+    result = await (
+        supabase.table("org_invitations")
+        .select("id, invited_email, invited_by, status, created_at")
+        .eq("organization_id", org_id)
+        .order("created_at", desc=True)
+        .limit(100)
+    ).execute()
+
+    rows = result.data or []
+
+    # Auto-expire old invitations (30 days)
+    now = datetime.now(timezone.utc)
+    expired_ids = []
+    for row in rows:
+        if row["status"] == "pending":
+            created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+            if (now - created).days > 30:
+                row["status"] = "expired"
+                expired_ids.append(row["id"])
+
+    if expired_ids:
+        try:
+            await (
+                supabase.table("org_invitations")
+                .update({"status": "expired"})
+                .in_("id", expired_ids)
+            ).execute()
+        except Exception as exc:
+            logger.warning("Failed to auto-expire invitations: %s", exc)
+
+    # Resolve invited_by user emails
+    by_ids = list({r["invited_by"] for r in rows if r.get("invited_by")})
+    email_map: dict[str, str] = {}
+    if by_ids:
+        try:
+            profiles = await (
+                supabase.table("user_profiles")
+                .select("id, email")
+                .in_("id", by_ids)
+            ).execute()
+            email_map = {p["id"]: p["email"] for p in (profiles.data or [])}
+        except Exception:
+            pass
+
+    return [
+        OrgInvitationItem(
+            id=r["id"],
+            invited_email=r["invited_email"],
+            invited_by=r.get("invited_by"),
+            invited_by_email=email_map.get(r.get("invited_by", ""), None),
+            status=r["status"],
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
 @router.post("/{org_id}/invite", response_model=InvitationResponse)
 async def invite_member(
     org_id: str,
@@ -1207,7 +1288,7 @@ async def invite_member(
     if not EMAIL_RE.match(email):
         raise HTTPException(400, "Invalid email format.")
 
-    # Check not already a member (efficient 2-query approach)
+    # Check user exists in the system
     profile_result = await (
         supabase.table("user_profiles")
         .select("id")
@@ -1215,17 +1296,21 @@ async def invite_member(
         .limit(1)
     ).execute()
 
-    if profile_result.data:
-        invited_user_id = profile_result.data[0]["id"]
-        member_check = await (
-            supabase.table("org_members")
-            .select("user_id")
-            .eq("organization_id", org_id)
-            .eq("user_id", invited_user_id)
-            .limit(1)
-        ).execute()
-        if member_check.data:
-            raise HTTPException(400, f"{email} is already a member of this organization.")
+    if not profile_result.data:
+        raise HTTPException(400, f"User with email {email} is not registered in the system. They must sign up first.")
+
+    invited_user_id = profile_result.data[0]["id"]
+
+    # Check not already a member
+    member_check = await (
+        supabase.table("org_members")
+        .select("user_id")
+        .eq("organization_id", org_id)
+        .eq("user_id", invited_user_id)
+        .limit(1)
+    ).execute()
+    if member_check.data:
+        raise HTTPException(400, f"{email} is already a member of this organization.")
 
     # Check not already invited (pending)
     existing_inv = await (

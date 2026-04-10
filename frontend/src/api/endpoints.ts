@@ -435,6 +435,10 @@ export const orgApi = {
     declineInvitation: (invitationId: string) =>
         apiClient.post(`/api/orgs/invitations/${invitationId}/decline`),
 
+    /** List invitations for an org (Org Admin). */
+    listOrgInvitations: (orgId: string) =>
+        apiClient.get<OrgInvitation[]>(`/api/orgs/${orgId}/invitations`),
+
     /** Leave an organization. Last Org Admin cannot leave. */
     leave: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/leave`),
