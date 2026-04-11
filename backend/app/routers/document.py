@@ -6,10 +6,11 @@ This is the ingestion pipeline that prepares documents for RAG retrieval.
 
 Flow:
   1. Accept PDF via multipart form upload
-  2. Extract text using PyMuPDF
-  3. Split into Parent-Child chunks (Thai-aware)
-  4. Embed child chunks using BAAI/bge-m3
-  5. Store everything in Supabase with organization_id isolation
+  2. Store original PDF in Supabase Storage (for preview/download)
+  3. Extract text using PyMuPDF
+  4. Split into Parent-Child chunks (Thai-aware)
+  5. Embed child chunks using BAAI/bge-m3
+  6. Store everything in Supabase with organization_id isolation
 
 SECURITY:
     Every database insert MUST include organization_id.
@@ -24,8 +25,7 @@ import uuid
 from typing import Optional
 
 import fitz  # PyMuPDF
-import docx  # python-docx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.core.auth import CurrentUser, require_approved, require_org_admin, verify_organization
@@ -327,46 +327,8 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     return full_text
 
 
-def extract_text_from_docx(docx_bytes: bytes) -> str:
-    """Extract all text from a .docx file using python-docx.
-
-    Paragraphs are joined with newlines.  Page numbers are not available
-    in the OOXML format without rendering, so all text is treated as
-    a single page (page sentinels are omitted — chunking still works
-    correctly, page_start / page_end will be None for these documents).
-
-    Args:
-        docx_bytes: Raw bytes of the .docx file.
-
-    Returns:
-        Plain text extracted from the document.
-
-    Raises:
-        ValueError: If the file cannot be opened or contains no text.
-    """
-    import io
-
-    try:
-        doc = docx.Document(io.BytesIO(docx_bytes))
-    except Exception as exc:
-        raise ValueError(f"Cannot open .docx file — it may be corrupted: {exc}")
-
-    paragraphs = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
-
-    # Also extract text from tables
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                cell_text = cell.text.strip()
-                if cell_text:
-                    paragraphs.append(cell_text)
-
-    full_text = "\n\n".join(paragraphs)
-    if not full_text.strip():
-        raise ValueError(".docx file contains no extractable text.")
-
-    full_text = full_text.replace("\x00", "")
-    return full_text
+# Storage bucket name for original PDF files
+STORAGE_BUCKET = "documents"
 
 
 # ── Endpoint ─────────────────────────────────────────────────────
@@ -400,25 +362,19 @@ async def upload_document(
     # ── Security: verify user belongs to this org ────────────
     await verify_organization(user, organization_id)
 
-    # ── 1. Validate file type ────────────────────────────────────
-    DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    ALLOWED_TYPES = ("application/pdf", DOCX_MIME)
-
-    if file.content_type not in ALLOWED_TYPES:
+    # ── 1. Validate file type (PDF only) ──────────────────────────
+    if file.content_type != "application/pdf":
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {file.content_type}. Only PDF and DOCX files are accepted.",
+            detail=f"Invalid file type: {file.content_type}. Only PDF files are accepted.",
         )
-
-    is_pdf = file.content_type == "application/pdf"
 
     # Normalize empty bot_id to None (DB expects UUID or NULL)
     if not bot_id or bot_id.strip() == "":
         bot_id = None
 
     document_id = str(uuid.uuid4())
-    default_name = "untitled.pdf" if is_pdf else "untitled.docx"
-    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or default_name)
+    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
     supabase = get_supabase()
 
     try:
@@ -427,13 +383,8 @@ async def upload_document(
         doc_bytes = await file.read()
 
         # Validate magic bytes (don't rely solely on client-provided MIME type)
-        if is_pdf:
-            if not doc_bytes[:5] == b"%PDF-":
-                raise HTTPException(status_code=400, detail="Invalid file: not a valid PDF (bad magic bytes).")
-        else:
-            # DOCX is a ZIP archive — magic bytes: PK\x03\x04
-            if not doc_bytes[:4] == b"PK\x03\x04":
-                raise HTTPException(status_code=400, detail="Invalid file: not a valid DOCX (bad magic bytes).")
+        if not doc_bytes[:5] == b"%PDF-":
+            raise HTTPException(status_code=400, detail="Invalid file: not a valid PDF (bad magic bytes).")
 
         if len(doc_bytes) > MAX_FILE_SIZE:
             raise HTTPException(
@@ -441,27 +392,41 @@ async def upload_document(
                 detail=f"File too large ({len(doc_bytes) / 1024 / 1024:.1f} MB). Maximum is 50 MB.",
             )
 
-        # ── 3. Insert document record (status = processing) ──────
+        # ── 3. Upload original PDF to Supabase Storage ───────────
+        storage_path = f"{organization_id}/{document_id}.pdf"
+        try:
+            await supabase.storage.from_(STORAGE_BUCKET).upload(
+                path=storage_path,
+                file=doc_bytes,
+                file_options={"content-type": "application/pdf"},
+            )
+            logger.info("Original PDF uploaded to storage: %s", storage_path)
+        except Exception as storage_exc:
+            logger.error("Failed to upload PDF to storage: %s", storage_exc)
+            # Non-fatal — continue processing even if storage upload fails
+            storage_path = None
+
+        # ── 4. Insert document record (status = processing) ──────
         file_size = len(doc_bytes)
-        mime_type = "application/pdf" if is_pdf else DOCX_MIME
 
         doc_row = {
             "id": document_id,
             "organization_id": organization_id,
             "bot_id": bot_id,
             "name": sanitized_name,
+            "file_path": storage_path,
             "file_size_bytes": file_size,
-            "mime_type": mime_type,
+            "mime_type": "application/pdf",
             "status": "processing",
         }
         await (supabase.table("documents").insert(doc_row)).execute()
         logger.info(
-            "Document record created: %s (org=%s, type=%s)", document_id, organization_id, mime_type
+            "Document record created: %s (org=%s)", document_id, organization_id
         )
 
-        # ── 4. Extract text ──────────────────────────────────────
+        # ── 5. Extract text ──────────────────────────────────────
         try:
-            full_text = extract_text_from_pdf(doc_bytes) if is_pdf else extract_text_from_docx(doc_bytes)
+            full_text = extract_text_from_pdf(doc_bytes)
         except ValueError as exc:
             # Update status to error and return 400
             await (
@@ -604,3 +569,97 @@ async def upload_document(
             status_code=500,
             detail="Document processing failed. Please try again.",
         )
+
+
+# ── Preview / Download Endpoint ──────────────────────────────────
+
+
+@router.get("/{document_id}/preview")
+async def get_document_preview_url(
+    document_id: str,
+    organization_id: str,
+    download: bool = Query(False, description="If true, generate download URL (Org Admin only)"),
+    user: CurrentUser = Depends(require_approved),
+):
+    """Generate a signed URL for previewing or downloading the original PDF.
+
+    - **Preview mode** (default): Any approved user in the org can access.
+    - **Download mode** (download=true): Only Org Admin can download.
+
+    The signed URL expires after 1 hour.
+
+    Args:
+        document_id:      UUID of the document.
+        organization_id:  UUID of the tenant organization.
+        download:         If true, returns a download-oriented signed URL.
+
+    Returns:
+        JSON with ``url`` (signed URL) and ``filename``.
+
+    Raises:
+        HTTPException 403: Download requested by non-admin.
+        HTTPException 404: Document not found or no file stored.
+    """
+    await verify_organization(user, organization_id)
+    supabase = get_supabase()
+
+    # If download is requested, check Org Admin role
+    if download:
+        try:
+            membership = await (
+                supabase.table("org_members")
+                .select("role")
+                .eq("user_id", user["id"])
+                .eq("organization_id", organization_id)
+                .single()
+            ).execute()
+            if not membership.data or membership.data.get("role") != "admin":
+                raise HTTPException(status_code=403, detail="Only Org Admin can download documents.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=403, detail="Cannot verify admin role.")
+
+    # Fetch document record
+    try:
+        result = await (
+            supabase.table("documents")
+            .select("id, name, file_path, mime_type")
+            .eq("id", document_id)
+            .eq("organization_id", organization_id)
+            .single()
+        ).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found.")
+
+        doc = result.data
+        file_path = doc.get("file_path")
+
+        if not file_path:
+            raise HTTPException(
+                status_code=404,
+                detail="Original file not available for preview (uploaded before storage was enabled).",
+            )
+
+        # Generate signed URL (valid for 1 hour = 3600 seconds)
+        signed = await supabase.storage.from_(STORAGE_BUCKET).create_signed_url(
+            path=file_path,
+            expires_in=3600,
+        )
+
+        signed_url = signed.get("signedURL") or signed.get("signed_url") or signed.get("signedUrl")
+        if not signed_url:
+            logger.error("Unexpected signed URL response: %s", signed)
+            raise HTTPException(status_code=500, detail="Failed to generate preview URL.")
+
+        return {
+            "url": signed_url,
+            "filename": doc.get("name", "document.pdf"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to generate preview URL for doc %s: %s", document_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to generate preview URL.")

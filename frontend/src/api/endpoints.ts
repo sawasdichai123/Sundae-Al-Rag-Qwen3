@@ -63,6 +63,12 @@ export const documentsApi = {
         apiClient.patch(`/api/documents/${documentId}/link-bot`, null, {
             params: { organization_id: organizationId, bot_id: botId },
         }),
+
+    /** Get a signed preview/download URL for the original PDF. */
+    getPreviewUrl: (documentId: string, organizationId: string, download = false) =>
+        apiClient.get<{ url: string; filename: string }>(`/api/documents/${documentId}/preview`, {
+            params: { organization_id: organizationId, download },
+        }),
 };
 
 // ── Chat (Omnichannel) ──────────────────────────────────────────

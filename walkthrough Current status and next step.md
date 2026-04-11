@@ -4721,3 +4721,30 @@ Widget-demo เปิดจาก Live Server (`http://127.0.0.1:5500`) ไม�
 2. เปิด `widget-demo/index.html` ด้วย VS Code Live Server (port 5500)
 3. กดปุ่มแชทมุมขวาล่าง → Bot Selector ปรากฏ → เลือกบอท → แชทได้
 4. ดู session ที่เข้ามาใน **Inbox** → กด Takeover เพื่อตอบเอง
+
+
+---
+
+## 67. ระบบดูหน้าตัวอย่าง PDF และอ้างอิงหน้า (PDF Preview & Source Citations)
+
+> **อัปเดต**: 11 เมษายน 2569
+
+### 67.1 สิ่งที่เปลี่ยนแปลง
+
+1. **เปลี่ยนระบบเป็น PDF Only**: ตัดการรองรับ DOCX ทิ้งทั้งหมด ทั้งหน้าบ้านและหลังบ้าน เพื่อให้แสดงหน้าตัวอย่างได้ 100% พร้อมการจำแนกเลขหน้าที่แม่นยำสำหรับระบบ RAG
+2. **Supabase Storage**: Backend จะอัปโหลดไฟล์ PDF ต้นฉบับไปเก็บใน bucket `documents` (Private) และจัดเก็บ `file_path` 
+3. **Preview Endpoint**: สร้าง API `GET /api/documents/{id}/preview` เพื่อสร้าง Signed URL (อายุ 1 ชม.) รองรับ 2 โหมด:
+   - **ดูตัวอย่าง (Preview)**: ผู้ใช้ยืนยันตัวตนทุกคนสามารถใช้งานได้ (ผ่านคลิก Source ในแชท)
+   - **ดาวน์โหลด (Download)**: จำกัดการดาวน์โหลดต้นฉบับเฉพาะ **Org Admin** ผ่านหน้า Knowledge Base
+4. **Frontend Modal**: สร้าง `DocumentViewer` (iframe) ให้สามารถแสดง PDF แบบ Fullscreen พร้อมกระโดดไปยังหน้าที่ AI ชี้เป้าได้โดยอัตโนมัติ (`#page=N`)
+
+### 67.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `backend/app/routers/document.py` | ลบ docx, เพิ่มโค้ดอัปโหลด Storage + `/preview` endpoint |
+| `frontend/src/components/DocumentViewer.tsx` | [NEW] เปิด PDF ด้วย Signed URL |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `documentsApi.getPreviewUrl` |
+| `frontend/src/i18n/*.json` | เอาคำว่า DOCX ออกทั้งหมด + เพิ่มคีย์ที่เกี่ยวกับการเปิด/ดาวน์โหลดไฟล์ |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | ตั้งค่า accept=".pdf", เพิ่มปุ่มดาวน์โหลด (เช็คสิทธิ์ admin), คลิกชื่อเพื่อ preview |
+| `frontend/src/pages/WebChatPage.tsx` | เปลี่ยน Source Pill ให้เป็นปุ่มกดเพื่อเปิด `DocumentViewer` ได้ตรงหน้า |

@@ -388,7 +388,7 @@ export default function BotsPage() {
                             value={formName}
                             onChange={(e) => setFormName(e.target.value)}
                             placeholder={t("bots.botName")}
-                            className="text-xl font-bold text-steel-900 bg-transparent border-none outline-none placeholder:text-steel-300 w-full"
+                            className="text-xl font-bold text-steel-900 bg-white border border-steel-200 rounded-xl px-4 py-2 outline-none placeholder:text-steel-400 w-full focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
                         />
                         <p className="text-xs text-steel-400 mt-0.5">
                             {editingBot ? `${t("bots.botIdPrefix")} ${editingBot.id.slice(0, 8)}...` : t("bots.botIdAuto")}
@@ -415,7 +415,7 @@ export default function BotsPage() {
                     <textarea
                         value={formPrompt}
                         onChange={(e) => setFormPrompt(e.target.value)}
-                        placeholder={t("bots.descriptionPlaceholder")}
+                        placeholder={t("bots.systemPromptPlaceholderHint")}
                         rows={6}
                         className="w-full px-4 py-3 bg-white border border-steel-200 rounded-2xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all resize-none"
                     />
@@ -437,17 +437,22 @@ export default function BotsPage() {
 
                 {/* Knowledge Link */}
                 <div className="mb-6">
+                {viewMode === "create" ? (
+                    <div className="p-4 bg-steel-50 rounded-2xl border border-dashed border-steel-200">
+                        <p className="text-sm font-bold text-steel-500">📄 {t("bots.knowledgeBase")}</p>
+                        <p className="text-xs text-steel-400 mt-1">{t("bots.knowledgeCreateNote")}</p>
+                    </div>
+                ) : (
+                  <>
                     <label className="block text-sm font-bold text-steel-800 mb-1">{t("bots.knowledgeBase")}</label>
                     <p className="text-xs text-steel-400 mb-3">
                         {t("bots.knowledgeBaseDesc")}
                     </p>
                     <button
                         onClick={() => {
-                            if (viewMode === "edit" && editingBot) {
+                            if (editingBot) {
                                 loadDocuments(editingBot.id);
                                 setShowKnowledgeModal(true);
-                            } else {
-                                toast("warning", t("bots.createBotFirst"));
                             }
                         }}
                         className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-4 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
@@ -474,6 +479,8 @@ export default function BotsPage() {
                             ))}
                         </div>
                     )}
+                  </>
+                )}
                 </div>
 
                 {/* Save Button */}

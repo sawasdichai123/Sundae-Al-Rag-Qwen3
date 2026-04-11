@@ -15,6 +15,7 @@ import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
 import type { Document } from "../types";
 import { useT } from "../i18n";
+import DocumentViewer from "../components/DocumentViewer";
 
 // ── Icons ───────────────────────────────────────────────────────
 
@@ -101,11 +102,13 @@ export default function KnowledgeBasePage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [uploading, setUploading] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+    const [previewDocId, setPreviewDocId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const isOrgAdmin = useOrgStore((s) => s.activeOrgRole) === "admin";
     const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load documents ──────────────────────────────────────────
@@ -131,9 +134,8 @@ export default function KnowledgeBasePage() {
         const file = e.target.files?.[0];
         if (!file || !orgId) return;
 
-        const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        if (!file.type.includes("pdf") && file.type !== DOCX_MIME) {
-            toast("error", t("kb.onlyPdfDocx"));
+        if (!file.type.includes("pdf")) {
+            toast("error", t("kb.onlyPdfWarning"));
             return;
         }
 
@@ -171,9 +173,8 @@ export default function KnowledgeBasePage() {
         setDragOver(false);
         const file = e.dataTransfer.files?.[0];
         if (!file || !orgId) return;
-        const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        if (!file.type.includes("pdf") && file.type !== DOCX_MIME) {
-            toast("warning", t("kb.onlyPdfDocxWarning"));
+        if (!file.type.includes("pdf")) {
+            toast("warning", t("kb.onlyPdfWarning"));
             return;
         }
         setUploading(true);
@@ -210,7 +211,7 @@ export default function KnowledgeBasePage() {
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".pdf,.docx"
+                    accept=".pdf"
                     className="hidden"
                     onChange={handleUpload}
                 />
@@ -290,9 +291,13 @@ export default function KnowledgeBasePage() {
                                         <DocumentIcon />
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <h3 className="text-sm font-bold text-steel-900 truncate">
+                                        <button
+                                            onClick={() => doc.file_path ? setPreviewDocId(doc.id) : undefined}
+                                            className={`text-sm font-bold truncate block max-w-full text-left ${doc.file_path ? "text-brand-700 hover:text-brand-800 hover:underline cursor-pointer" : "text-steel-900"}`}
+                                            title={doc.file_path ? t("kb.preview") : undefined}
+                                        >
                                             {doc.name}
-                                        </h3>
+                                        </button>
                                         <p className="text-xs text-steel-400 mt-1 line-clamp-2">
                                             {doc.mime_type || "PDF Document"}
                                             {doc.storage_bytes
@@ -310,8 +315,30 @@ export default function KnowledgeBasePage() {
                                     </div>
                                 </div>
 
-                                {/* Delete Button */}
-                                <div className="shrink-0 ml-3">
+                                {/* Action Buttons */}
+                                <div className="shrink-0 ml-3 flex items-center gap-1">
+                                    {/* Download — Org Admin only */}
+                                    {isOrgAdmin && doc.file_path && (
+                                        <button
+                                            onClick={async () => {
+                                                try {
+                                                    const res = await documentsApi.getPreviewUrl(doc.id, orgId, true);
+                                                    window.open(res.data.url, "_blank");
+                                                } catch {
+                                                    toast("error", t("kb.previewFailed"));
+                                                }
+                                            }}
+                                            className="opacity-0 group-hover:opacity-100 text-steel-300 hover:text-brand-500 transition-all cursor-pointer p-1"
+                                            title={t("kb.download")}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                                <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.614L6.295 8.235a.75.75 0 1 0-1.09 1.03l4.25 4.5a.75.75 0 0 0 1.09 0l4.25-4.5a.75.75 0 0 0-1.09-1.03l-2.955 3.129V2.75Z" />
+                                                <path d="M3.5 12.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 18h10.5A2.75 2.75 0 0 0 18 15.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
+                                            </svg>
+                                        </button>
+                                    )}
+
+                                    {/* Delete */}
                                     {deleteConfirm === doc.id ? (
                                         <div className="flex items-center gap-2">
                                             <button
@@ -362,6 +389,15 @@ export default function KnowledgeBasePage() {
                         <p className="text-xs text-steel-400">{t("kb.uploadProcessingNote")}</p>
                     </div>
                 </div>
+            )}
+
+            {/* Document Preview Modal */}
+            {previewDocId && (
+                <DocumentViewer
+                    documentId={previewDocId}
+                    organizationId={orgId}
+                    onClose={() => setPreviewDocId(null)}
+                />
             )}
         </div>
     );

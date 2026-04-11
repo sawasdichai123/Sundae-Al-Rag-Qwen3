@@ -70,10 +70,20 @@ async function main() {
         if (authError.message.includes("already been registered")) {
             console.log("   ⚠️  User already exists, looking up...");
             const { data: { users } } = await supabaseAdmin.auth.admin.listUsers();
-            const existing = users?.find(u => u.email === ADMIN_EMAIL);
+            const existing = users?.find((u) => u.email === ADMIN_EMAIL);
             if (existing) {
                 userId = existing.id;
-                console.log(`   ✅ Found: ${userId}\n`);
+                console.log(`   ✅ Found: ${userId}`);
+                console.log("   🔄 Updating password...");
+                const { error: updateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+                    password: ADMIN_PASSWORD,
+                    email_confirm: true,
+                });
+                if (updateErr) {
+                    console.error("   ❌ Failed to update password:", updateErr.message);
+                } else {
+                    console.log("   ✅ Password updated!\n");
+                }
             } else {
                 console.error("   ❌ Could not find existing user");
                 process.exit(1);
@@ -94,7 +104,8 @@ async function main() {
         .upsert({
             id: userId,
             email: ADMIN_EMAIL,
-            full_name: "Admin SUNDAE",
+            first_name: "Admin",
+            last_name: "SUNDAE",
             role: "admin",
             is_approved: true,
         }, { onConflict: "id" });

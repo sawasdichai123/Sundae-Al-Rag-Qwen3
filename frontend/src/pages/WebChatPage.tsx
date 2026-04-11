@@ -20,6 +20,7 @@ import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import type { Bot, SessionStatus, SourceReference } from "../types";
 import { useT } from "../i18n";
+import DocumentViewer from "../components/DocumentViewer";
 
 // ── Types ───────────────────────────────────────────────────────
 
@@ -118,6 +119,9 @@ export default function WebChatPage() {
     }
     const [historySessions, setHistorySessions] = useState<HistorySession[]>([]);
     const [sidebarOpen, setSidebarOpen] = useState(true);
+
+    // Document preview
+    const [viewerState, setViewerState] = useState<{ documentId: string; pageStart: number | null } | null>(null);
 
     // Load chat history
     const historyLoadedRef = useRef(false);
@@ -855,9 +859,10 @@ export default function WebChatPage() {
                                                                     : `${t("chat.page")} ${src.page_start}–${src.page_end}`
                                                                 : null;
                                                             return (
-                                                                <span
+                                                                <button
                                                                     key={i}
-                                                                    className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200"
+                                                                    onClick={() => setViewerState({ documentId: src.document_id, pageStart: src.page_start })}
+                                                                    className="inline-flex items-center gap-1 text-[10px] font-medium bg-steel-50 text-steel-500 px-2.5 py-1 rounded-full border border-steel-200 cursor-pointer hover:bg-steel-100 hover:border-steel-300 transition-colors"
                                                                     title={`${docLabel}${pageLabel ? ` — ${pageLabel}` : ""} (${(src.score * 100).toFixed(0)}%)`}
                                                                 >
                                                                     <span className="w-1 h-1 rounded-full bg-brand-400"></span>
@@ -865,7 +870,7 @@ export default function WebChatPage() {
                                                                     {pageLabel && (
                                                                         <span className="text-steel-400 shrink-0">{pageLabel}</span>
                                                                     )}
-                                                                </span>
+                                                                </button>
                                                             );
                                                         })}
                                                     </div>
@@ -1006,6 +1011,16 @@ export default function WebChatPage() {
                     </div>
                 )}
             </div> {/* end Main Chat Area */}
+
+            {/* Document Preview Modal */}
+            {viewerState && (
+                <DocumentViewer
+                    documentId={viewerState.documentId}
+                    organizationId={orgId}
+                    page={viewerState.pageStart}
+                    onClose={() => setViewerState(null)}
+                />
+            )}
         </div>
     );
 }
