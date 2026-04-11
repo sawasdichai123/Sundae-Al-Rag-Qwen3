@@ -12,7 +12,7 @@ import { useState, useEffect, useCallback, useRef, type FormEvent } from "react"
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
-import { orgApi } from "../api/endpoints";
+import { orgApi, botsApi } from "../api/endpoints";
 import { getApiError } from "../utils/apiError";
 import type { OrgMember, OrgInvitation } from "../types";
 import Spinner from "../components/Spinner";
@@ -298,6 +298,8 @@ export default function OrganizationPage() {
     const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null);
     const [orgCreatedAt, setOrgCreatedAt] = useState<string | null>(null);
+    const [memberCount, setMemberCount] = useState<number>(0);
+    const [botCount, setBotCount] = useState<number>(0);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -316,6 +318,15 @@ export default function OrganizationPage() {
             setOrgSlug(data.slug ?? null);
             setOrgLogoUrl((data as any).logo_url ?? null);
             setOrgCreatedAt((data as any).created_at ?? null);
+            // Fetch counts
+            try {
+                const [membersRes, botsRes] = await Promise.all([
+                    orgApi.listMembers(activeOrgId),
+                    botsApi.list(activeOrgId),
+                ]);
+                setMemberCount(membersRes.data?.length ?? 0);
+                setBotCount(botsRes.data?.length ?? 0);
+            } catch { /* non-critical */ }
         } catch (err) {
             console.error("[Org] Load failed:", err);
             toast("error", t("org.loadFailed"));
@@ -512,23 +523,19 @@ export default function OrganizationPage() {
                         </div>
 
                         {/* Info grid */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                            <div className="bg-steel-50 rounded-xl px-4 py-3">
-                                <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">Org ID</p>
-                                <p className="text-xs text-steel-700 font-mono truncate" title={activeOrgId}>{activeOrgId}</p>
+                        <div className="grid grid-cols-3 gap-4">
+                            <div className="bg-steel-50 rounded-xl px-4 py-3 text-center">
+                                <p className="text-2xl font-bold text-steel-800">{memberCount}</p>
+                                <p className="text-[11px] text-steel-500 mt-0.5">{t("org.members")}</p>
                             </div>
-                            {orgSlug && (
-                                <div className="bg-steel-50 rounded-xl px-4 py-3">
-                                    <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">Slug</p>
-                                    <p className="text-xs text-steel-700 font-mono">{orgSlug}</p>
-                                </div>
-                            )}
-                            {orgCreatedAt && (
-                                <div className="bg-steel-50 rounded-xl px-4 py-3">
-                                    <p className="text-[10px] font-semibold text-steel-400 uppercase tracking-wider mb-1">{t("common.created")}</p>
-                                    <p className="text-xs text-steel-700">{new Date(orgCreatedAt).toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric" })}</p>
-                                </div>
-                            )}
+                            <div className="bg-steel-50 rounded-xl px-4 py-3 text-center">
+                                <p className="text-2xl font-bold text-steel-800">{botCount}</p>
+                                <p className="text-[11px] text-steel-500 mt-0.5">{t("nav.bots")}</p>
+                            </div>
+                            <div className="bg-steel-50 rounded-xl px-4 py-3 text-center">
+                                <p className="text-sm font-semibold text-steel-800 mt-1">{orgCreatedAt ? new Date(orgCreatedAt).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" }) : "-"}</p>
+                                <p className="text-[11px] text-steel-500 mt-0.5">{t("common.created")}</p>
+                            </div>
                         </div>
                     </div>
                 </div>
