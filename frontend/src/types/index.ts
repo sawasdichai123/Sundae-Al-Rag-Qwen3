@@ -40,6 +40,7 @@ export interface OrgMembership {
     id: string;
     name: string;
     slug?: string | null;
+    logo_url?: string | null;
     org_role: OrgRole;
     created_at: string;
 }

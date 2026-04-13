@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 10 เมษายน 2569 — **Widget Org-based + CORS Fix ✅ | DOCX Upload ✅ | Web Widget v2 ✅ | Inbox Filter Tabs ✅**
+> **อัพเดทล่าสุด**: 13 เมษายน 2569 — **PDF Viewer Redesign ✅ | Download Fix ✅ | WebChat Scroll Fix ✅ | Avatar/Logo ✅ | LINE Status ✅ | Org Invitation ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -497,6 +497,28 @@ test-results/     # Test output directories
 frontend/test-results/
 ```
 
+### 7.7 UI/UX & Security Refinements (12 เม.ย. 2569)
+
+**1. Document Viewer UI & Security**
+- **ปัญหา:** Modal แสดงเอกสารไม่มี Header ชัดเจน, Popup โดนบังหรือเบี้ยวจากการเรนเดอร์ใน Sidebar, และผู้ใช้ทั่วไปยังแอบดาวน์โหลดเอกสารจาก PDF Viewer ของบราวเซอร์ได้
+- **วิธีแก้:**
+  - เพิ่ม **Premium Header Bar** ให้ `DocumentViewer` พร้อมปุ่ม Close (X) และปรับขนาดให้สวยงาม
+  - ควบคุมการเข้าถึงเอกสาร: ส่ง Parameter `#toolbar=0` ท้าย URL ของ PDF iframe เพื่อซ่อนเครื่องมือพื้นฐานของบราวเซอร์ (ไม่อนุญาตให้เซฟ/พริ้นท์) สำหรับผู้ใช้ที่ไม่ใช่ Org Admin
+  - ปรับการใช้ `createPortal` นำ Modal แสดงผลออกมาที่ระดับ `document.body` เพื่อให้ UI จัดอยู่ตรงกลางจอได้พอดี สวยงามขึ้น
+  - เพิ่ม CSS transition `animate-modal-in` และ `backdrop-fade-in` ใน `index.css` สำหรับการเคลื่อนไหวที่นุ่มนวล
+
+**2. Web Chat Session Initialization**
+- **ปัญหา:** ผู้ใช้เข้าไปหน้าตอบแชทใหม่ ระบบกลับ auto-resume โหลดเซสชันทักทายล่าสุดขึ้นมา ทำให้ผู้ใช้สับสนและต้องกดสร้างแชทใหม่เอง
+- **วิธีแก้:**
+  - นำ Logic ที่ตรวจสอบการมีอยู่ของ `lastSession` ขาออก
+  - บังคับให้ระบบสร้าง Session ใหม่ทันทีด้วย `crypto.randomUUID()` ทุกครั้งที่เปิดหน้าแชทเป็นครั้งแรก
+
+**3. Home Logo & List Orgs Query Fix**
+- **ปัญหา:** ผู้ใช้อัพโหลดโลโก้องค์กรแล้วภาพยังไม่เปลี่ยนใน Sidebar (แสดงเป็นตัวอักษร)
+- **วิธีแก้:**
+  - **Backend:** บั๊กใน `routers/organization.py` ที่ API `/api/orgs` (list) ตกหล่น Field `logo_url` ใน Select query. จึงอัพเดท query ทั้งของ Admin และ User ธรรมดาให้คืนค่า `logo_url` เสียที
+  - **Frontend:** อัพเดท Type `OrgMembership` และแก้ไขการทำงานให้ Brand Logo (มุมซ้ายบน) ดึงค่าจาก "Home Org" (SUNDAE) แทนที่ตัวอักษร S นิ่งๆ
+
 ---
 
 ## 8. ไฟล์ที่แก้ไขในรอบนี้
@@ -775,7 +797,7 @@ LLM_MODEL=qwen3:14b    # ถ้ามี RAM 16 GB
 | Field | Value |
 |-------|-------|
 | 📧 Email | `admin@sundae.local` |
-| 🔑 Password | `Admin@1234` |
+| 🔑 Password | `Sundae@2025` |
 | 👑 Role | `admin` |
 | ✅ Approved | `true` |
 
@@ -4748,3 +4770,75 @@ Widget-demo เปิดจาก Live Server (`http://127.0.0.1:5500`) ไม�
 | `frontend/src/i18n/*.json` | เอาคำว่า DOCX ออกทั้งหมด + เพิ่มคีย์ที่เกี่ยวกับการเปิด/ดาวน์โหลดไฟล์ |
 | `frontend/src/pages/KnowledgeBasePage.tsx` | ตั้งค่า accept=".pdf", เพิ่มปุ่มดาวน์โหลด (เช็คสิทธิ์ admin), คลิกชื่อเพื่อ preview |
 | `frontend/src/pages/WebChatPage.tsx` | เปลี่ยน Source Pill ให้เป็นปุ่มกดเพื่อเปิด `DocumentViewer` ได้ตรงหน้า |
+
+---
+
+## 68. Organization Page — ระบบเชิญ + Redesign หน้าข้อมูลองค์กร (12 เมษายน 2569)
+
+### 68.1 สิ่งที่เปลี่ยนแปลง
+
+1. **Invitation Status Display**: เพิ่มส่วน "ประวัติคำเชิญ" แสดงสถานะคำเชิญทั้งหมด (pending/accepted/declined/expired/revoked) พร้อม badge สี และชื่อผู้เชิญ
+2. **Email Validation**: Backend ตรวจสอบว่า email ที่เชิญต้องมีบัญชีในระบบก่อน — ถ้าไม่มีจะ return 400 "User with email {email} is not registered in the system"
+3. **Organization Info Card Redesign**: ออกแบบใหม่ทั้งหมด — gradient header band, logo 96px ซ้อนทับ, inline editing ชื่อ org ด้วย pencil icon, info grid แสดง member count / bot count / วันที่สร้าง (แทน Org ID / Slug ที่ไม่จำเป็นสำหรับ admin)
+4. **Sidebar Org Logo**: แทนที่ตัว "S" ด้วยรูป logo จริงของ org (ถ้ามี) ใน sidebar
+
+### 68.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `backend/app/routers/organization.py` | เพิ่ม `GET /{org_id}/invitations` endpoint + email validation ต้องมี user ในระบบ |
+| `frontend/src/pages/OrganizationPage.tsx` | Redesign: gradient header, large logo, inline name edit, info grid, invitation history |
+| `frontend/src/layouts/DashboardLayout.tsx` | Sidebar logo ใช้ `activeOrgLogo` แทนตัว "S" |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `orgApi.listOrgInvitations()` |
+| `frontend/src/types/index.ts` | เพิ่ม `invited_by_email` ใน `OrgInvitation` + ขยาย status types |
+| `frontend/src/i18n/th.json`, `en.json` | เพิ่ม keys: invitationHistory, invStatus.*, invitedBy, noInvitations, userNotFound |
+
+---
+
+## 69. PDF Viewer Redesign — Popup Modal + Download Fix (12–13 เมษายน 2569)
+
+### 69.1 สิ่งที่เปลี่ยนแปลง
+
+1. **Popup Modal UI**: DocumentViewer ออกแบบใหม่เป็น popup hover สไตล์ dark theme — backdrop blur, brand accent line, rounded 20px, shadow layers, ขนาด 80vw × 85vh (max 1200px) เหมาะกับจอ 1920×1080
+2. **Download Button Fix (403)**: แก้ backend query จาก `select("role")` → `select("org_role")` + ใช้ `user.id` แทน `user["id"]` (CurrentUser เป็น object ไม่ใช่ dict) + รองรับทั้ง `"admin"` และ `"owner"` role
+3. **Download ข้ามโดเมน**: เปลี่ยนจาก `<a download>` (ใช้ไม่ได้กับ cross-origin Supabase URL) เป็น `fetch` + `blob` + สร้าง temporary download link
+4. **Signed URL Parsing**: ปรับปรุง backend ให้รองรับ response format หลากหลายจาก supabase-py — list, nested `.data`, dict, object attributes
+5. **Non-admin PDF Protection**: ซ่อน toolbar ของ Chrome PDF viewer (`#toolbar=0`) สำหรับ user ที่ไม่ใช่ admin เพื่อป้องกันการ download/print ผ่าน browser
+
+### 69.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `backend/app/routers/document.py` | แก้ org_role query, user.id access, signed URL parsing, เพิ่ม logging |
+| `frontend/src/components/DocumentViewer.tsx` | Redesign: popup modal, backdrop blur, fetch-based download, showActions prop, toolbar hide |
+
+---
+
+## 70. WebChat — Scroll Fix + Avatar/Logo (13 เมษายน 2569)
+
+### 70.1 สิ่งที่เปลี่ยนแปลง
+
+1. **Scroll Fix ระหว่าง Streaming**: แก้ปัญหาที่ระหว่างรอบอทตอบ (streaming) ไม่สามารถเลื่อนขึ้นไปดูข้อความเก่าได้ เพราะทุก token ที่เข้ามา trigger `scrollIntoView` ดึงกลับล่างสุดตลอด — เพิ่ม `userScrolledUpRef` ตรวจจับว่า user เลื่อนขึ้นหรือไม่ ถ้าเลื่อนขึ้นจะไม่ auto-scroll จนกว่า user จะส่งข้อความใหม่
+2. **Bot Avatar ใช้ Org Logo**: แชทบอทแสดงรูป logo ขององค์กรแทนตัว "S" (ถ้ามี logo) ไม่มีจะใช้ตัวอักษรแรกของชื่อ org
+3. **User Avatar ใช้ Profile Photo**: ข้อความของ user แสดง avatar จาก `user_profiles.avatar_url` (ถ้ามี) ไม่มีจะใช้ตัวอักษรแรกของชื่อ/email
+4. **Typing Indicator**: ใช้ org logo เดียวกับ bot avatar
+
+### 70.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `frontend/src/pages/WebChatPage.tsx` | เพิ่ม scroll detection (messagesContainerRef + userScrolledUpRef), เปลี่ยน avatar ทุกจุดให้ใช้รูปจริง |
+
+---
+
+## 71. Dashboard — LINE Webhook Status แสดงสถานะจริง (13 เมษายน 2569)
+
+### 71.1 สิ่งที่เปลี่ยนแปลง
+
+1. **LINE Webhook Status**: เปลี่ยนจาก hardcode `null` (แสดงสีเทากะพริบตลอด) เป็นเช็คสถานะจริงจาก `GET /api/orgs/{org_id}/line-config` — สีเขียวเมื่อ `is_line_enabled=true` + มี credentials ครบ, สีแดงเมื่อปิดหรือยังไม่ตั้งค่า
+
+### 71.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `frontend/src/pages/DashboardPage.tsx` | เพิ่ม `orgApi.getLineConfig()` fetch + state `lineEnabled` + เปลี่ยน LINE Webhook status จาก `null` เป็นค่าจริง |

@@ -87,12 +87,17 @@ export default function WebChatPage() {
     const [loadingSeconds, setLoadingSeconds] = useState(0);
     const [sessionId, setSessionId] = useState<string>("");
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const messagesContainerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+    const userScrolledUpRef = useRef(false);
 
     // Auth store
     const user = useAuthStore((s) => s.user);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
+    const activeOrgName = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.name);
+    const userAvatarUrl = user?.avatar_url;
     const orgId = activeOrgId || user?.organization_id || import.meta.env.VITE_DEFAULT_ORG_ID || "";
     const [platformUserId, setPlatformUserId] = useState(() => user?.id || `web-${crypto.randomUUID()}`);
     useEffect(() => {
@@ -132,26 +137,11 @@ export default function WebChatPage() {
             const sessions: HistorySession[] = res.data || [];
             setHistorySessions(sessions);
 
-            // On first load, auto-select the most recent session for the current bot
-            // so the user sees their last conversation instead of the welcome screen
-            if (!historyLoadedRef.current && sessions.length > 0) {
+            // History loaded — but do NOT auto-select old sessions.
+            // User always starts with a fresh chat. They can click a
+            // history item to resume an old conversation if they want.
+            if (!historyLoadedRef.current) {
                 historyLoadedRef.current = true;
-                setSelectedBotId((currentBotId) => {
-                    const botId = currentBotId || null;
-                    const lastSession = botId
-                        ? (sessions.find((s) => s.bot_id === botId) || sessions[0])
-                        : sessions[0];
-                    if (lastSession) {
-                        if (lastSession.bot_id) {
-                            localStorage.setItem(sessionKey(lastSession.bot_id, orgId, platformUserId), lastSession.id);
-                        }
-                        setSessionId(lastSession.id);
-                        setMessages([]);
-                        setSessionStatus((lastSession.status || "active") as SessionStatus);
-                        lastPollTimestampRef.current = null;
-                    }
-                    return lastSession?.bot_id || currentBotId;
-                });
             }
         } catch (err) {
             console.error("[Chat] Failed to load history:", err);
@@ -190,13 +180,14 @@ export default function WebChatPage() {
     useEffect(() => {
         if (!selectedBotId) return;
         const stored = localStorage.getItem(sessionKey(selectedBotId, orgId, platformUserId));
-        if (stored) {
-            setSessionId(stored);
-        } else {
-            const newId = crypto.randomUUID();
-            localStorage.setItem(sessionKey(selectedBotId, orgId, platformUserId), newId);
-            setSessionId(newId);
+        if (stored && sessionId === stored) {
+            // Session already set (e.g. user clicked a history item) — keep it
+            return;
         }
+        // Always start fresh — create a new session ID
+        const newId = crypto.randomUUID();
+        localStorage.setItem(sessionKey(selectedBotId, orgId, platformUserId), newId);
+        setSessionId(newId);
         // Reset messages — will be loaded from DB by the next useEffect
         setMessages([]);
         setSessionStatus("active");
@@ -261,9 +252,25 @@ export default function WebChatPage() {
         return () => clearInterval(interval);
     }, [isLoading]);
 
+    // Auto-scroll to bottom only if user hasn't scrolled up
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        if (!userScrolledUpRef.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
     }, [messages]);
+
+    // Detect if user scrolled up in the messages container
+    useEffect(() => {
+        const container = messagesContainerRef.current;
+        if (!container) return;
+        const handleScroll = () => {
+            const { scrollTop, scrollHeight, clientHeight } = container;
+            // Consider "at bottom" if within 100px of the bottom
+            userScrolledUpRef.current = scrollHeight - scrollTop - clientHeight > 100;
+        };
+        container.addEventListener("scroll", handleScroll, { passive: true });
+        return () => container.removeEventListener("scroll", handleScroll);
+    }, []);
 
     useEffect(() => {
         inputRef.current?.focus();
@@ -475,6 +482,7 @@ export default function WebChatPage() {
         const query = input.trim();
         if (!query || !selectedBotId || !sessionId) return;
         if (isLoading && sessionStatus !== "human_takeover") return;
+        userScrolledUpRef.current = false;
 
         const userMsg: ChatBubble = {
             id: crypto.randomUUID(),
@@ -754,7 +762,7 @@ export default function WebChatPage() {
                 </div>
 
                 {/* ── Messages ────────────────────────────────────────── */}
-                <div className="flex-1 overflow-y-auto">
+                <div ref={messagesContainerRef} className="flex-1 overflow-y-auto">
                     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
                         {/* Welcome State */}
                         {messages.length === 0 && (
@@ -820,9 +828,13 @@ export default function WebChatPage() {
                                     >
                                         {/* AI / Admin Avatar */}
                                         {msg.role === "assistant" && (
-                                            <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 mt-0.5 shadow-sm">
-                                                S
-                                            </div>
+                                            activeOrgLogo ? (
+                                                <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5 shadow-sm" />
+                                            ) : (
+                                                <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 mt-0.5 shadow-sm">
+                                                    {(activeOrgName || "S")[0].toUpperCase()}
+                                                </div>
+                                            )
                                         )}
                                         {isAdmin && (
                                             <div className="w-8 h-8 rounded-xl bg-blue-500 flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5 shadow-sm">
@@ -884,9 +896,13 @@ export default function WebChatPage() {
 
                                         {/* User Avatar */}
                                         {isUser && (
-                                            <div className="w-8 h-8 rounded-xl bg-steel-700 flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5">
-                                                {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "U"}
-                                            </div>
+                                            userAvatarUrl ? (
+                                                <img src={userAvatarUrl} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5" />
+                                            ) : (
+                                                <div className="w-8 h-8 rounded-xl bg-steel-700 flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5">
+                                                    {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "U"}
+                                                </div>
+                                            )
                                         )}
                                     </div>
                                 );
@@ -895,9 +911,13 @@ export default function WebChatPage() {
                             {/* Typing Indicator — hide once streaming starts */}
                             {isLoading && !isStreaming && (
                                 <div className="flex gap-3 animate-fade-in">
-                                    <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 shadow-sm">
-                                        S
-                                    </div>
+                                    {activeOrgLogo ? (
+                                        <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 shadow-sm" />
+                                    ) : (
+                                        <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 shadow-sm">
+                                            {(activeOrgName || "S")[0].toUpperCase()}
+                                        </div>
+                                    )}
                                     <div className="bg-white rounded-2xl rounded-bl-lg px-5 py-4 border border-steel-200 shadow-sm">
                                         <div className="flex items-center gap-2">
                                             <div className="flex items-center gap-1.5">

@@ -114,3 +114,35 @@ body {
 .animate-pulse-dot-3 {
     animation: pulse-dot 1.4s infinite ease-in-out 0.4s;
 }
+
+/* ── Document Viewer Modal Animations ────────────────────────── */
+
+@keyframes modal-scale-in {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+@keyframes backdrop-fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+.animate-modal-in {
+    animation: modal-scale-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-backdrop-in {
+    animation: backdrop-fade-in 0.25s ease-out both;
+}

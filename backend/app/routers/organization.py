@@ -229,7 +229,7 @@ async def list_orgs(
         # Fetch all active orgs
         all_orgs_result = await (
             supabase.table("organizations")
-            .select("id, name, slug, created_at")
+            .select("id, name, slug, logo_url, created_at")
             .neq("status", "deleted")
             .order("created_at", desc=False)
         ).execute()
@@ -262,7 +262,7 @@ async def list_orgs(
     # Regular users — only their memberships
     result = await (
         supabase.table("org_members")
-        .select("organization_id, org_role, joined_at, organizations(id, name, slug, created_at)")
+        .select("organization_id, org_role, joined_at, organizations(id, name, slug, logo_url, created_at)")
         .eq("user_id", user.id)
     ).execute()
 

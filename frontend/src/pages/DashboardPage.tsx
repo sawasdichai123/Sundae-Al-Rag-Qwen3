@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore, selectIsSupport } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
-import { documentsApi, botsApi, inboxApi } from "../api/endpoints";
+import { documentsApi, botsApi, inboxApi, orgApi } from "../api/endpoints";
 import apiClient from "../api/axios";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { useT } from "../i18n";
@@ -303,6 +303,7 @@ export default function DashboardPage() {
     const [sessionTodayCount, setSessionTodayCount] = useState<number | null>(null);
     const [takeoverCount, setTakeoverCount] = useState<number | null>(null);
     const [services, setServices] = useState<HealthServices | null>(null);
+    const [lineEnabled, setLineEnabled] = useState<boolean | null>(null);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
     const activeOrg = useOrgStore((s) => {
         const id = s.activeOrgId;
@@ -318,6 +319,13 @@ export default function DashboardPage() {
             .catch(() => setServices({ backend: true, ollama: false, supabase: false }));
 
         if (!orgId) return;
+
+        orgApi.getLineConfig(orgId)
+            .then((res) => {
+                const d = res.data as any;
+                setLineEnabled(d.is_line_enabled && d.has_credentials);
+            })
+            .catch(() => setLineEnabled(false));
 
         Promise.allSettled([
             documentsApi.list(orgId),
@@ -442,7 +450,7 @@ export default function DashboardPage() {
                         { name: "Ollama", ok: services?.ollama ?? null },
                         { name: "Embedding", ok: services?.backend ?? null },
                         { name: "Supabase DB", ok: services?.supabase ?? null },
-                        { name: "LINE Webhook", ok: null as boolean | null },
+                        { name: "LINE Webhook", ok: lineEnabled },
                     ].map((svc) => (
                         <div key={svc.name} className="flex items-center gap-2 text-sm">
                             <span className={`w-2 h-2 rounded-full ${svc.ok === null

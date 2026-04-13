@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { documentsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
@@ -391,13 +392,15 @@ export default function KnowledgeBasePage() {
                 </div>
             )}
 
-            {/* Document Preview Modal */}
-            {previewDocId && (
+            {/* Document Preview Modal — portal to body for perfect centering */}
+            {previewDocId && createPortal(
                 <DocumentViewer
                     documentId={previewDocId}
                     organizationId={orgId}
+                    showActions={isOrgAdmin}
                     onClose={() => setPreviewDocId(null)}
-                />
+                />,
+                document.body
             )}
         </div>
     );

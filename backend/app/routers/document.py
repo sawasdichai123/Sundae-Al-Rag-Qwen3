@@ -608,16 +608,19 @@ async def get_document_preview_url(
         try:
             membership = await (
                 supabase.table("org_members")
-                .select("role")
-                .eq("user_id", user["id"])
+                .select("org_role")
+                .eq("user_id", user.id)
                 .eq("organization_id", organization_id)
                 .single()
             ).execute()
-            if not membership.data or membership.data.get("role") != "admin":
+            member_role = membership.data.get("org_role") if membership.data else None
+            logger.info("Download check: user=%s org=%s org_role=%s", user.id, organization_id, member_role)
+            if member_role not in ("admin", "owner"):
                 raise HTTPException(status_code=403, detail="Only Org Admin can download documents.")
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.error("Cannot verify admin role for download: %s", exc)
             raise HTTPException(status_code=403, detail="Cannot verify admin role.")
 
     # Fetch document record
@@ -648,9 +651,38 @@ async def get_document_preview_url(
             expires_in=3600,
         )
 
-        signed_url = signed.get("signedURL") or signed.get("signed_url") or signed.get("signedUrl")
+        # Handle varying response formats across supabase-py versions
+        logger.info("Signed URL response (type=%s): %s", type(signed).__name__, signed)
+        signed_url = None
+
+        def _extract_url(obj):
+            """Try to extract signed URL from various response shapes."""
+            if isinstance(obj, str):
+                return obj
+            if isinstance(obj, dict):
+                return obj.get("signedURL") or obj.get("signed_url") or obj.get("signedUrl")
+            if hasattr(obj, "signed_url") and obj.signed_url:
+                return obj.signed_url
+            if hasattr(obj, "signedURL") and obj.signedURL:
+                return obj.signedURL
+            return None
+
+        # Case 1: response is a list (some versions return [{ signedURL: ... }])
+        if isinstance(signed, list) and len(signed) > 0:
+            signed_url = _extract_url(signed[0])
+        # Case 2: response has .data (v2+ response object)
+        elif hasattr(signed, "data") and signed.data:
+            data = signed.data
+            if isinstance(data, list) and len(data) > 0:
+                signed_url = _extract_url(data[0])
+            else:
+                signed_url = _extract_url(data)
+        # Case 3: response is a dict or has .signed_url directly
         if not signed_url:
-            logger.error("Unexpected signed URL response: %s", signed)
+            signed_url = _extract_url(signed)
+
+        if not signed_url:
+            logger.error("Could not extract signed URL from response (type=%s): %s", type(signed).__name__, signed)
             raise HTTPException(status_code=500, detail="Failed to generate preview URL.")
 
         return {

@@ -178,6 +178,15 @@ export default function DashboardLayout() {
     const orgsFetched = useOrgStore((s) => s.hasFetched);
     const fetchFailed = useOrgStore((s) => s.fetchFailed);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
+
+    // Platform brand logo — uses home org (SUNDAE) logo
+    const homeOrgLogo = useOrgStore((s) => {
+        const homeId = s.orgs.find((o) => o.slug === "sundae")?.id
+            || user?.organization_id
+            || s.orgs.find((o) => o.org_role === "admin")?.id;
+        return homeId ? s.orgs.find((o) => o.id === homeId)?.logo_url : null;
+    });
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
@@ -249,7 +258,12 @@ export default function DashboardLayout() {
             <aside className={`${collapsed ? "w-[72px]" : "w-64"} bg-steel-900 flex flex-col transition-all duration-300 ease-in-out`}>
                 {/* Brand */}
                 <div className="h-16 flex items-center px-5 border-b border-white/[0.08]">
-                    <div className="w-8 h-8 rounded-lg bg-brand-400 flex items-center justify-center text-steel-900 text-sm font-bold shrink-0">S</div>
+                    <div className="w-8 h-8 rounded-lg bg-brand-400 flex items-center justify-center text-steel-900 text-sm font-bold shrink-0 overflow-hidden">
+                        {homeOrgLogo
+                            ? <img src={homeOrgLogo} alt="Logo" className="w-full h-full object-cover" />
+                            : "S"
+                        }
+                    </div>
                     {!collapsed && (
                         <div className="ml-3 animate-fade-in">
                             <p className="text-sm font-semibold text-white tracking-wide">SUNDAE</p>
