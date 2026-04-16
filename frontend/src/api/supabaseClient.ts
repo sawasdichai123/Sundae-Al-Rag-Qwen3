@@ -8,8 +8,8 @@
  * Token Keep-Alive System:
  *   Since we disabled Web Locks (Bug B17), Supabase's built-in
  *   autoRefreshToken does NOT work reliably. We compensate with:
- *     1. Periodic refresh every 30 minutes
- *     2. Refresh on tab focus (user returns after idle/sleep)
+ *     1. Periodic refresh every 10 minutes
+ *     2. Refresh on tab focus (user returns after 5+ min idle/sleep)
  *     3. Timestamp-based staleness check on visibility change
  */
 
@@ -213,18 +213,18 @@ async function refreshIfNeeded() {
     } catch { /* silent */ }
 }
 
-// 1. Periodic refresh — every 30 minutes
-setInterval(refreshIfNeeded, 30 * 60 * 1000);
+// 1. Periodic refresh — every 10 minutes (keeps session alive during active use)
+setInterval(refreshIfNeeded, 10 * 60 * 1000);
 
 // 2. Refresh on tab focus — handles idle/sleep/tab-switch scenarios
-//    Also checks if we've been away for more than 5 minutes (sleep/hibernate)
+//    Checks if we've been away for more than 5 minutes (sleep/hibernate/idle)
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
         const timeSinceLastRefresh = Date.now() - lastRefreshTime;
-        const thirtyFiveMinutes = 35 * 60 * 1000;
+        const fiveMinutes = 5 * 60 * 1000;
 
-        if (timeSinceLastRefresh > thirtyFiveMinutes) {
-            // We've been away for a while — force refresh immediately
+        if (timeSinceLastRefresh > fiveMinutes) {
+            // We've been away — force refresh immediately to prevent stale token
             refreshIfNeeded();
         }
     }

@@ -90,11 +90,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         });
         // Clear org store
         useOrgStore.getState().clearOrgs();
-        // Clear stale Supabase tokens from localStorage
+        // Clear stale Supabase tokens from both storages
+        // (session is in sessionStorage per SEC-F07, but clean localStorage too for safety)
         try {
-            Object.keys(localStorage).forEach((key) => {
-                if (key.startsWith("sb-")) localStorage.removeItem(key);
-            });
+            for (const storage of [sessionStorage, localStorage]) {
+                Object.keys(storage).forEach((key) => {
+                    if (key.startsWith("sb-")) storage.removeItem(key);
+                });
+            }
         } catch { /* ignore storage errors */ }
         // Await server-side token invalidation — prevents token reuse after sign out
         try {

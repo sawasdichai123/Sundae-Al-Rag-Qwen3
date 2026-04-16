@@ -23,11 +23,11 @@ import type {
 // ── Documents ───────────────────────────────────────────────────
 
 export const documentsApi = {
-    /** Upload a PDF document for processing. */
-    upload: (file: File, botId: string | null, organizationId: string) => {
+    /** Upload a PDF document for processing. Optionally pre-link to bots. */
+    upload: (file: File, botIds: string[], organizationId: string) => {
         const formData = new FormData();
         formData.append("file", file);
-        if (botId) formData.append("bot_id", botId);
+        if (botIds.length > 0) formData.append("bot_ids", botIds.join(","));
         formData.append("organization_id", organizationId);
 
         return apiClient.post<DocumentUploadResponse>(
@@ -58,10 +58,10 @@ export const documentsApi = {
             params: { organization_id: organizationId },
         }),
 
-    /** Link or unlink a document to/from a bot. */
-    linkBot: (documentId: string, organizationId: string, botId: string | null) =>
-        apiClient.patch(`/api/documents/${documentId}/link-bot`, null, {
-            params: { organization_id: organizationId, bot_id: botId },
+    /** Replace the full list of bots linked to a document. */
+    linkBots: (documentId: string, organizationId: string, botIds: string[]) =>
+        apiClient.patch(`/api/documents/${documentId}/link-bots`, { bot_ids: botIds }, {
+            params: { organization_id: organizationId },
         }),
 
     /** Get a signed preview/download URL for the original PDF. */

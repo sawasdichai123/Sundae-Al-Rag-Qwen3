@@ -119,7 +119,9 @@ export default function BotsPage() {
             // Pre-select documents already linked to this bot
             if (botId) {
                 const alreadyLinked = new Set(
-                    res.data.filter((d: Document) => d.bot_id === botId).map((d: Document) => d.id)
+                    res.data
+                        .filter((d: Document) => (d.bot_ids ?? []).includes(botId))
+                        .map((d: Document) => d.id)
                 );
                 setLinkedDocIds(alreadyLinked);
             } else {
@@ -138,16 +140,20 @@ export default function BotsPage() {
         setLinkingDocId(docId);
         try {
             const isLinked = linkedDocIds.has(docId);
-            const newBotId = isLinked ? null : editingBot.id;
-            await documentsApi.linkBot(docId, orgId, newBotId);
-            // Update local state
+            const doc = allDocuments.find((d) => d.id === docId);
+            const current = new Set<string>(doc?.bot_ids ?? []);
+            if (isLinked) current.delete(editingBot.id);
+            else current.add(editingBot.id);
+            const nextBotIds = Array.from(current);
+            await documentsApi.linkBots(docId, orgId, nextBotIds);
+            // Update local state — keep allDocuments in sync so subsequent toggles work
+            setAllDocuments((prev) =>
+                prev.map((d) => (d.id === docId ? { ...d, bot_ids: nextBotIds } : d))
+            );
             setLinkedDocIds((prev) => {
                 const next = new Set(prev);
-                if (isLinked) {
-                    next.delete(docId);
-                } else {
-                    next.add(docId);
-                }
+                if (isLinked) next.delete(docId);
+                else next.add(docId);
                 return next;
             });
         } catch (err) {
@@ -278,9 +284,8 @@ export default function BotsPage() {
                             {allDocuments.map((doc) => {
                                 const isLinked = linkedDocIds.has(doc.id);
                                 const isLinking = linkingDocId === doc.id;
-                                const isLinkedToOther = doc.bot_id && doc.bot_id !== editingBot?.id;
                                 const isNotReady = doc.status !== "ready";
-                                const isDisabled = isLinking || !!isLinkedToOther || isNotReady;
+                                const isDisabled = isLinking || isNotReady;
                                 return (
                                     <button
                                         key={doc.id}
@@ -325,10 +330,7 @@ export default function BotsPage() {
                                                             {(doc.file_size_bytes / 1024).toFixed(0)} KB
                                                         </span>
                                                     )}
-                                                    {isLinkedToOther && (
-                                                        <span className="text-[10px] text-steel-400">{t("bots.linkedToOther")}</span>
-                                                    )}
-                                                    {isNotReady && !isLinkedToOther && (
+                                                    {isNotReady && (
                                                         <span className="text-[10px] text-red-400">{t("bots.notAvailable")}</span>
                                                     )}
                                                 </div>

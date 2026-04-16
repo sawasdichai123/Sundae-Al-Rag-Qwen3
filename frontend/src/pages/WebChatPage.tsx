@@ -15,7 +15,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { chatApi, botsApi, inboxApi } from "../api/endpoints";
+import { chatApi, botsApi, inboxApi, documentsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import type { Bot, SessionStatus, SourceReference } from "../types";
@@ -152,18 +152,26 @@ export default function WebChatPage() {
         loadHistory();
     }, [loadHistory]);
 
-    // Load bots
+    // Load bots — only show active, web-enabled bots that have ≥1 document linked
     const loadBots = useCallback(async () => {
         if (!orgId) return;
         try {
-            const res = await botsApi.list(orgId);
-            setBots(res.data);
-            // Auto-select first active web-enabled bot if none selected yet
+            const [botsRes, docsRes] = await Promise.all([
+                botsApi.list(orgId),
+                documentsApi.list(orgId),
+            ]);
+            const botsWithDocs = new Set<string>();
+            for (const d of docsRes.data) {
+                for (const bid of d.bot_ids ?? []) botsWithDocs.add(bid);
+            }
+            const usable = botsRes.data.filter(
+                (b) => b.is_active && b.is_web_enabled && botsWithDocs.has(b.id)
+            );
+            setBots(usable);
+            // Auto-select first usable bot if none selected yet
             setSelectedBotId((prev) => {
-                if (prev) return prev; // already selected — don't overwrite
-                if (res.data.length === 0) return prev;
-                const webBot = res.data.find((b) => b.is_active && b.is_web_enabled);
-                return webBot ? webBot.id : res.data[0].id;
+                if (prev && usable.some((b) => b.id === prev)) return prev;
+                return usable.length > 0 ? usable[0].id : prev;
             });
         } catch (err) {
             console.error("[Chat] Failed to load bots:", err);

@@ -4,7 +4,7 @@
  * Token protection strategy (3 layers):
  *   Layer 1: Request interceptor  — refreshes if token expires within 5 min
  *   Layer 2: Response interceptor — retries once on 401 with fresh token
- *   Layer 3: Periodic refresh     — every 30 min in supabaseClient.ts
+ *   Layer 3: Periodic refresh     — every 10 min in supabaseClient.ts
  *
  * IMPORTANT: All token refresh calls go through a single mutex to prevent
  * concurrent refreshSession() from invalidating the refresh token.
@@ -51,23 +51,28 @@ supabase.auth.onAuthStateChange((_event, session) => {
     }
 });
 
-// ── Helper: Read token directly from localStorage (no lock needed) ──
+// ── Helper: Read token directly from storage (no lock needed) ──
+// Supabase is configured to use sessionStorage (SEC-F07), but we also
+// check localStorage as a secondary fallback for resilience.
 function readTokenFromStorage(): { token: string; expiresAt: number } | null {
-    try {
-        const storageKey = Object.keys(localStorage).find(
-            (k) => k.startsWith("sb-") && k.endsWith("-auth-token")
-        );
-        if (!storageKey) return null;
-        const raw = localStorage.getItem(storageKey);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        const token = parsed?.access_token;
-        const expiresAt = parsed?.expires_at ?? 0;
-        if (!token) return null;
-        return { token, expiresAt };
-    } catch {
-        return null;
+    for (const storage of [sessionStorage, localStorage]) {
+        try {
+            const storageKey = Object.keys(storage).find(
+                (k) => k.startsWith("sb-") && k.endsWith("-auth-token")
+            );
+            if (!storageKey) continue;
+            const raw = storage.getItem(storageKey);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw);
+            const token = parsed?.access_token;
+            const expiresAt = parsed?.expires_at ?? 0;
+            if (!token) continue;
+            return { token, expiresAt };
+        } catch {
+            continue;
+        }
     }
+    return null;
 }
 
 // ── Layer 1: Get a valid (non-expired) access token ─────────────

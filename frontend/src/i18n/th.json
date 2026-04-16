@@ -176,6 +176,12 @@
   "kb.previewFailed": "ไม่สามารถเปิดเอกสารได้",
   "kb.openNewTab": "เปิดในแท็บใหม่",
   "kb.noPreview": "ไม่มีไฟล์ต้นฉบับ (เอกสารนี้อัปโหลดก่อนเปิดใช้ระบบดูเอกสาร)",
+  "kb.linkBots": "เชื่อมกับ Bots",
+  "kb.linkModalTitle": "เชื่อมเอกสารกับ Bots",
+  "kb.linkModalDesc": "เลือก Bot ที่จะให้เข้าถึงเอกสารนี้",
+  "kb.linkSuccess": "บันทึกการเชื่อมต่อสำเร็จ",
+  "kb.linkFailed": "บันทึกการเชื่อมต่อไม่สำเร็จ",
+  "kb.noBots": "ยังไม่มี Bot ให้เชื่อม",
 
   "bots.title": "AI Bots",
   "bots.desc": "สร้างและจัดการ Bot ของคุณ",

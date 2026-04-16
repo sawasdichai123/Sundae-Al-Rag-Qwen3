@@ -176,6 +176,12 @@
   "kb.previewFailed": "Unable to open document",
   "kb.openNewTab": "Open in new tab",
   "kb.noPreview": "Original file not available (uploaded before preview was enabled)",
+  "kb.linkBots": "Link Bots",
+  "kb.linkModalTitle": "Link document to Bots",
+  "kb.linkModalDesc": "Select bots that should have access to this document",
+  "kb.linkSuccess": "Bot links saved",
+  "kb.linkFailed": "Failed to save bot links",
+  "kb.noBots": "No bots available to link",
 
   "bots.title": "AI Bots",
   "bots.desc": "Create and manage your Bots",

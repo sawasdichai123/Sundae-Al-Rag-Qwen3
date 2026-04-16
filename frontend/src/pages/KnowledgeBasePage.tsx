@@ -10,11 +10,11 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { documentsApi } from "../api/endpoints";
+import { documentsApi, botsApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
-import type { Document } from "../types";
+import type { Document, Bot } from "../types";
 import { useT } from "../i18n";
 import DocumentViewer from "../components/DocumentViewer";
 
@@ -60,6 +60,14 @@ function UploadCloudIcon() {
     );
 }
 
+function LinkIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M12.232 4.232a2.5 2.5 0 0 1 3.536 3.536l-1.225 1.224a.75.75 0 0 0 1.061 1.06l1.224-1.224a4 4 0 0 0-5.656-5.656l-3 3a4 4 0 0 0 .225 5.865.75.75 0 0 0 .977-1.138 2.5 2.5 0 0 1-.142-3.667l3-3Zm-6.464 11.535a2.5 2.5 0 0 1-3.536-3.535l1.225-1.224a.75.75 0 0 0-1.06-1.061L1.171 10.17a4 4 0 1 0 5.657 5.657l3-3a4 4 0 0 0-.225-5.865.75.75 0 0 0-.977 1.138 2.5 2.5 0 0 1 .142 3.667l-3 3Z" clipRule="evenodd" />
+        </svg>
+    );
+}
+
 // ── Status Badge ────────────────────────────────────────────────
 
 function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
@@ -99,11 +107,15 @@ function timeAgo(dateStr: string, t: (key: string) => string): string {
 export default function KnowledgeBasePage() {
     const t = useT();
     const [documents, setDocuments] = useState<Document[]>([]);
+    const [bots, setBots] = useState<Bot[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState("");
     const [uploading, setUploading] = useState(false);
     const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
     const [previewDocId, setPreviewDocId] = useState<string | null>(null);
+    const [linkDocId, setLinkDocId] = useState<string | null>(null);
+    const [linkSelection, setLinkSelection] = useState<Set<string>>(new Set());
+    const [linkSaving, setLinkSaving] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const user = useAuthStore((s) => s.user);
@@ -126,8 +138,49 @@ export default function KnowledgeBasePage() {
         }
     }, [orgId]);
 
+    const loadBots = useCallback(async () => {
+        if (!orgId) return;
+        try {
+            const res = await botsApi.list(orgId);
+            setBots(res.data);
+        } catch (err) {
+            console.error("[Knowledge] Failed to load bots:", err);
+        }
+    }, [orgId]);
+
+    const openLinkModal = (doc: Document) => {
+        setLinkDocId(doc.id);
+        setLinkSelection(new Set(doc.bot_ids || []));
+    };
+
+    const toggleBotSelection = (botId: string) => {
+        setLinkSelection((prev) => {
+            const next = new Set(prev);
+            if (next.has(botId)) next.delete(botId);
+            else next.add(botId);
+            return next;
+        });
+    };
+
+    const handleSaveLinks = async () => {
+        if (!linkDocId || !orgId) return;
+        setLinkSaving(true);
+        try {
+            await documentsApi.linkBots(linkDocId, orgId, Array.from(linkSelection));
+            toast("success", t("kb.linkSuccess"));
+            setLinkDocId(null);
+            await loadDocuments();
+        } catch (err) {
+            console.error("[Knowledge] Link bots failed:", err);
+            toast("error", t("kb.linkFailed"));
+        } finally {
+            setLinkSaving(false);
+        }
+    };
+
     useEffect(() => {
         loadDocuments();
+        loadBots();
     }, [loadDocuments]);
 
     // ── Upload handler ──────────────────────────────────────────
@@ -142,7 +195,7 @@ export default function KnowledgeBasePage() {
 
         setUploading(true);
         try {
-            await documentsApi.upload(file, "", orgId);
+            await documentsApi.upload(file, [], orgId);
             await loadDocuments();
         } catch (err) {
             console.error("[Knowledge] Upload failed:", err);
@@ -180,7 +233,7 @@ export default function KnowledgeBasePage() {
         }
         setUploading(true);
         try {
-            await documentsApi.upload(file, "", orgId);
+            await documentsApi.upload(file, [], orgId);
             await loadDocuments();
         } catch (err) {
             console.error("[Knowledge] Drop upload failed:", err);
@@ -307,17 +360,50 @@ export default function KnowledgeBasePage() {
                                                     ? ` · ${(doc.file_size_bytes / 1024).toFixed(0)} KB`
                                                     : ""}
                                         </p>
-                                        <div className="flex items-center gap-3 mt-2">
+                                        <div className="flex items-center gap-3 mt-2 flex-wrap">
                                             <StatusBadge status={doc.status} t={t} />
                                             <span className="text-[11px] text-steel-400">
                                                 {t("kb.lastUpdate")} {timeAgo(doc.created_at, t)}
                                             </span>
+                                            {(doc.bot_ids ?? []).length > 0 && (
+                                                <div className="flex items-center gap-1 flex-wrap">
+                                                    {(doc.bot_ids ?? []).slice(0, 3).map((bid) => {
+                                                        const b = bots.find((x) => x.id === bid);
+                                                        return (
+                                                            <span
+                                                                key={bid}
+                                                                className="inline-flex items-center gap-1 text-[11px] text-brand-700 bg-brand-50 border border-brand-100 px-2 py-0.5 rounded-full"
+                                                                title={b?.name ?? bid}
+                                                            >
+                                                                <span className="w-1.5 h-1.5 bg-brand-400 rounded-full" />
+                                                                {b?.name ?? "—"}
+                                                            </span>
+                                                        );
+                                                    })}
+                                                    {(doc.bot_ids ?? []).length > 3 && (
+                                                        <span className="text-[11px] text-steel-400">
+                                                            +{(doc.bot_ids ?? []).length - 3}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
 
                                 {/* Action Buttons */}
                                 <div className="shrink-0 ml-3 flex items-center gap-1">
+                                    {/* Link Bots — Org Admin only */}
+                                    {isOrgAdmin && (
+                                        <button
+                                            onClick={() => openLinkModal(doc)}
+                                            className="opacity-0 group-hover:opacity-100 text-steel-300 hover:text-brand-500 transition-all cursor-pointer p-1"
+                                            title={t("kb.linkBots")}
+                                        >
+                                            <LinkIcon />
+                                        </button>
+                                    )}
+
                                     {/* Download — Org Admin only */}
                                     {isOrgAdmin && doc.file_path && (
                                         <button
@@ -378,18 +464,90 @@ export default function KnowledgeBasePage() {
                 </div>
             )}
 
-            {/* Upload progress overlay */}
-            {uploading && (
-                <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-white rounded-2xl shadow-xl p-8 flex flex-col items-center gap-4 max-w-sm mx-4">
-                        <svg className="w-8 h-8 animate-spin text-brand-400" viewBox="0 0 24 24" fill="none">
+            {/* Upload progress — floating toast (top-right, non-blocking) */}
+            {uploading && createPortal(
+                <div className="fixed top-20 right-6 z-[60] animate-fade-in pointer-events-none">
+                    <div className="bg-white rounded-xl shadow-lg border-2 border-brand-300 px-4 py-3 flex items-center gap-3 max-w-sm">
+                        <svg className="w-5 h-5 animate-spin text-brand-500 shrink-0" viewBox="0 0 24 24" fill="none">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                         </svg>
-                        <p className="text-sm font-medium text-steel-800">{t("kb.uploadProcessing")}</p>
-                        <p className="text-xs text-steel-400">{t("kb.uploadProcessingNote")}</p>
+                        <div className="min-w-0">
+                            <p className="text-sm font-medium text-steel-800 truncate">{t("kb.uploadProcessing")}</p>
+                            <p className="text-[11px] text-steel-400 truncate">{t("kb.uploadProcessingNote")}</p>
+                        </div>
                     </div>
-                </div>
+                </div>,
+                document.body
+            )}
+
+            {/* Link Bots Modal */}
+            {linkDocId && createPortal(
+                <div
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                    onClick={() => !linkSaving && setLinkDocId(null)}
+                >
+                    <div
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h3 className="text-base font-bold text-steel-900">{t("kb.linkModalTitle")}</h3>
+                            <p className="text-xs text-steel-400 mt-0.5">{t("kb.linkModalDesc")}</p>
+                        </div>
+                        <div className="flex-1 overflow-y-auto px-3 py-2">
+                            {bots.length === 0 ? (
+                                <div className="py-10 text-center text-sm text-steel-400">{t("kb.noBots")}</div>
+                            ) : (
+                                <ul className="divide-y divide-steel-100">
+                                    {bots.map((b) => {
+                                        const checked = linkSelection.has(b.id);
+                                        return (
+                                            <li key={b.id}>
+                                                <label className="flex items-center gap-3 px-3 py-2.5 hover:bg-steel-50 rounded-lg cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={() => toggleBotSelection(b.id)}
+                                                        className="w-4 h-4 accent-brand-500 cursor-pointer"
+                                                    />
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="text-sm font-medium text-steel-800 truncate">{b.name}</p>
+                                                        {b.description && (
+                                                            <p className="text-xs text-steel-400 truncate">{b.description}</p>
+                                                        )}
+                                                    </div>
+                                                    {!b.is_active && (
+                                                        <span className="text-[10px] text-steel-400 bg-steel-100 px-1.5 py-0.5 rounded">
+                                                            {t("bots.inactive")}
+                                                        </span>
+                                                    )}
+                                                </label>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )}
+                        </div>
+                        <div className="px-6 py-3 border-t border-steel-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={() => setLinkDocId(null)}
+                                disabled={linkSaving}
+                                className="px-4 py-2 text-sm text-steel-600 hover:text-steel-900 cursor-pointer disabled:opacity-50"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                onClick={handleSaveLinks}
+                                disabled={linkSaving}
+                                className="px-4 py-2 bg-brand-400 text-steel-900 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {linkSaving ? t("common.saving") : t("common.save")}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
             )}
 
             {/* Document Preview Modal — portal to body for perfect centering */}

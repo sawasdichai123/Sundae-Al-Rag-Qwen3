@@ -107,7 +107,7 @@ export type DocumentStatus = "pending" | "processing" | "ready" | "error";
 export interface Document {
     id: string;
     organization_id: string;
-    bot_id: string | null;
+    bot_ids: string[];
     name: string;                       // renamed from filename
     file_path: string | null;
     file_size_bytes: number | null;

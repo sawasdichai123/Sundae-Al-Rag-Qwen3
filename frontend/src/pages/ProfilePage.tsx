@@ -42,9 +42,25 @@ export default function ProfilePage() {
     const [editLastName, setEditLastName] = useState("");
     const [saving, setSaving] = useState(false);
 
-    // Avatar upload state
+    // Avatar upload state — staged (preview only, uploaded on Save)
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
+    const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null);
+    const [pendingAvatarPreview, setPendingAvatarPreview] = useState<string | null>(null);
+    const [pendingAvatarExt, setPendingAvatarExt] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const clearPendingAvatar = () => {
+        if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
+        setPendingAvatarFile(null);
+        setPendingAvatarPreview(null);
+        setPendingAvatarExt(null);
+    };
+
+    useEffect(() => {
+        return () => {
+            if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
+        };
+    }, [pendingAvatarPreview]);
 
     const isUser = user?.role === "user";
 
@@ -69,6 +85,7 @@ export default function ProfilePage() {
     };
 
     const handleCancelEdit = () => {
+        clearPendingAvatar();
         setEditing(false);
     };
 
@@ -79,16 +96,34 @@ export default function ProfilePage() {
         }
         setSaving(true);
         try {
-            await orgApi.updateProfile(editFirstName.trim(), editLastName.trim());
+            // Upload staged avatar first if present
+            let newAvatarUrl: string | undefined;
+            if (pendingAvatarFile && pendingAvatarExt && user?.id) {
+                setUploadingAvatar(true);
+                const filePath = `${user.id}.${pendingAvatarExt}`;
+                const { error: uploadError } = await supabase.storage
+                    .from("avatars")
+                    .upload(filePath, pendingAvatarFile, { cacheControl: "3600", upsert: true });
+                if (uploadError) throw uploadError;
+                const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
+                newAvatarUrl = urlData.publicUrl + `?t=${Date.now()}`;
+                setUploadingAvatar(false);
+            }
+            await orgApi.updateProfile(
+                editFirstName.trim(),
+                editLastName.trim(),
+                newAvatarUrl,
+            );
             toast("success", t("profile.saveSuccess"));
+            clearPendingAvatar();
             setEditing(false);
-            // Refresh profile in store
             if (user?.id) await fetchProfile(user.id);
         } catch (err: unknown) {
             const msg = getApiError(err, t("profile.saveFailed"));
             toast("error", msg);
         } finally {
             setSaving(false);
+            setUploadingAvatar(false);
         }
     };
 
@@ -99,6 +134,8 @@ export default function ProfilePage() {
 
     const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+        // Reset input so picking the same file again still triggers onChange
+        if (fileInputRef.current) fileInputRef.current.value = "";
         if (!file || !user?.id) return;
 
         // Validate size
@@ -134,42 +171,11 @@ export default function ProfilePage() {
             return;
         }
 
-        setUploadingAvatar(true);
-        try {
-            // File path: avatars/{user_id}.{ext} — ext is validated above
-            const filePath = `${user.id}.${ext}`;
-
-            // Upload to Supabase Storage (upsert = overwrite if exists)
-            const { error: uploadError } = await supabase.storage
-                .from("avatars")
-                .upload(filePath, file, { cacheControl: "3600", upsert: true });
-
-            if (uploadError) throw uploadError;
-
-            // Get public URL
-            const { data: urlData } = supabase.storage
-                .from("avatars")
-                .getPublicUrl(filePath);
-
-            const publicUrl = urlData.publicUrl + `?t=${Date.now()}`; // cache bust
-
-            // Save URL to profile via API
-            await orgApi.updateProfile(
-                user.first_name || "",
-                user.last_name || "",
-                publicUrl,
-            );
-
-            toast("success", t("profile.avatarSuccess"));
-            if (user.id) await fetchProfile(user.id);
-        } catch (err: unknown) {
-            console.error("[Profile] Avatar upload error:", err);
-            toast("error", t("profile.avatarFailed"));
-        } finally {
-            setUploadingAvatar(false);
-            // Reset file input
-            if (fileInputRef.current) fileInputRef.current.value = "";
-        }
+        // Stage only — actual upload happens on Save
+        if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
+        setPendingAvatarFile(file);
+        setPendingAvatarExt(ext);
+        setPendingAvatarPreview(URL.createObjectURL(file));
     };
 
     const handleAccept = async (invitationId: string) => {
@@ -269,14 +275,14 @@ export default function ProfilePage() {
                             <button
                                 type="button"
                                 onClick={handleAvatarClick}
-                                disabled={uploadingAvatar}
+                                disabled={uploadingAvatar || saving}
                                 className="relative group cursor-pointer"
                             >
-                                {user?.avatar_url ? (
+                                {(pendingAvatarPreview || user?.avatar_url) ? (
                                     <img
-                                        src={user.avatar_url}
+                                        src={pendingAvatarPreview || user?.avatar_url || ""}
                                         alt="avatar"
-                                        className="w-20 h-20 rounded-full object-cover border-2 border-steel-200 group-hover:border-brand-400 transition-colors"
+                                        className={`w-20 h-20 rounded-full object-cover border-2 transition-colors ${pendingAvatarPreview ? "border-brand-400 ring-2 ring-brand-100" : "border-steel-200 group-hover:border-brand-400"}`}
                                     />
                                 ) : (
                                     <div className="w-20 h-20 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-2xl border-2 border-steel-200 group-hover:border-brand-400 transition-colors">
@@ -390,8 +396,10 @@ export default function ProfilePage() {
                     <div className="divide-y divide-steel-100">
                         {orgs.map((org) => (
                             <div key={org.id} className="px-6 py-4 flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-700 text-xs font-bold shrink-0">
-                                    {org.name?.[0]?.toUpperCase() || "O"}
+                                <div className="w-8 h-8 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-700 text-xs font-bold shrink-0 overflow-hidden">
+                                    {org.logo_url
+                                        ? <img src={org.logo_url} alt={org.name} className="w-full h-full object-cover" />
+                                        : (org.name?.[0]?.toUpperCase() || "O")}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-steel-800 truncate">{org.name}</p>

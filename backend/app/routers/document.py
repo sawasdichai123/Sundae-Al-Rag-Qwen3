@@ -58,7 +58,7 @@ class DocumentResponse(BaseModel):
 
     id: str
     organization_id: str
-    bot_id: Optional[str] = None
+    bot_ids: list[str] = []
     name: str
     file_path: Optional[str] = None
     file_size_bytes: Optional[int] = None
@@ -226,36 +226,45 @@ async def delete_document(
         raise HTTPException(status_code=500, detail="Failed to delete document.")
 
 
-@router.patch("/{document_id}/link-bot")
-async def link_document_to_bot(
+class LinkBotsRequest(BaseModel):
+    """Replace the full list of bot_ids linked to a document."""
+    bot_ids: list[str] = []
+
+
+@router.patch("/{document_id}/link-bots")
+async def link_document_to_bots(
     document_id: str,
     organization_id: str,
-    bot_id: Optional[str] = None,
+    body: LinkBotsRequest,
     user: CurrentUser = Depends(require_org_admin),
 ):
-    """Link or unlink a document to/from a bot.
+    """Replace the full list of bots linked to a document.
 
-    Pass bot_id to link, or null/omit to unlink.
+    Pass `bot_ids: []` to unlink from all bots.
+    Pass `bot_ids: [uuid1, uuid2, ...]` to set the complete link list.
     """
     await verify_organization(user, organization_id)
     supabase = get_supabase()
 
     try:
-        # Verify bot belongs to the same organization (prevent cross-tenant linking)
-        if bot_id:
+        bot_ids = list({b for b in body.bot_ids if b})  # dedupe + drop empty
+
+        # Verify all bots belong to the same organization (prevent cross-tenant linking)
+        if bot_ids:
             bot_check = await (
                 supabase.table("bots")
                 .select("id")
-                .eq("id", bot_id)
+                .in_("id", bot_ids)
                 .eq("organization_id", organization_id)
-                .limit(1)
             ).execute()
-            if not bot_check.data:
-                raise HTTPException(status_code=404, detail="Bot not found in this organization.")
+            found_ids = {b["id"] for b in (bot_check.data or [])}
+            missing = [b for b in bot_ids if b not in found_ids]
+            if missing:
+                raise HTTPException(status_code=404, detail=f"Bots not found in this organization: {missing}")
 
         result = await (
             supabase.table("documents")
-            .update({"bot_id": bot_id})
+            .update({"bot_ids": bot_ids})
             .eq("id", document_id)
             .eq("organization_id", organization_id)
         ).execute()
@@ -264,10 +273,10 @@ async def link_document_to_bot(
             raise HTTPException(status_code=404, detail="Document not found.")
 
         logger.info(
-            "Document %s linked to bot %s (org=%s)",
-            document_id, bot_id, organization_id,
+            "Document %s linked to bots %s (org=%s)",
+            document_id, bot_ids, organization_id,
         )
-        return {"message": "ok", "document_id": document_id, "bot_id": bot_id}
+        return {"message": "ok", "document_id": document_id, "bot_ids": bot_ids}
 
     except HTTPException:
         raise
@@ -338,28 +347,17 @@ STORAGE_BUCKET = "documents"
 async def upload_document(
     file: UploadFile = File(...),
     organization_id: str = Form(...),
-    bot_id: Optional[str] = Form(None),
+    bot_ids: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_org_admin),
 ) -> UploadResponse:
     """Upload a PDF document and process it through the RAG pipeline.
 
-    Accepts a PDF file via multipart form data, extracts text, splits
-    it into Parent-Child chunks using the Thai-aware splitter, embeds
-    child chunks, and stores everything in Supabase.
-
     Args:
         file:            PDF file to upload.
         organization_id: UUID of the tenant organization.
-        bot_id:          Optional UUID of the bot to associate with.
-
-    Returns:
-        UploadResponse with document ID and chunk counts.
-
-    Raises:
-        HTTPException 400: Invalid file type or empty file.
-        HTTPException 500: Processing or storage failure.
+        bot_ids:         Optional comma-separated UUIDs of bots to link.
+                         Empty/omitted = document is org-wide (not yet linked).
     """
-    # ── Security: verify user belongs to this org ────────────
     await verify_organization(user, organization_id)
 
     # ── 1. Validate file type (PDF only) ──────────────────────────
@@ -369,9 +367,10 @@ async def upload_document(
             detail=f"Invalid file type: {file.content_type}. Only PDF files are accepted.",
         )
 
-    # Normalize empty bot_id to None (DB expects UUID or NULL)
-    if not bot_id or bot_id.strip() == "":
-        bot_id = None
+    # Parse comma-separated bot_ids → list[str]
+    parsed_bot_ids: list[str] = []
+    if bot_ids:
+        parsed_bot_ids = [b.strip() for b in bot_ids.split(",") if b.strip()]
 
     document_id = str(uuid.uuid4())
     sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
@@ -412,7 +411,7 @@ async def upload_document(
         doc_row = {
             "id": document_id,
             "organization_id": organization_id,
-            "bot_id": bot_id,
+            "bot_ids": parsed_bot_ids,
             "name": sanitized_name,
             "file_path": storage_path,
             "file_size_bytes": file_size,

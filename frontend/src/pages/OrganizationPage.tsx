@@ -153,9 +153,18 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                 <div className="divide-y divide-steel-100 mb-5">
                     {members.map((m) => (
                         <div key={m.user_id} className="flex items-center gap-3 py-3">
-                            <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0">
-                                {([m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)?.[0]?.toUpperCase() || "?"}
-                            </div>
+                            {m.avatar_url ? (
+                                <img
+                                    src={m.avatar_url}
+                                    alt="avatar"
+                                    className="w-8 h-8 rounded-full object-cover shrink-0 border border-steel-100"
+                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                                />
+                            ) : (
+                                <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0">
+                                    {([m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)?.[0]?.toUpperCase() || "?"}
+                                </div>
+                            )}
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-steel-800 truncate">
                                     {[m.first_name, m.last_name].filter(Boolean).join(" ") || t("common.noName")}
@@ -449,7 +458,12 @@ export default function OrganizationPage() {
                                 onClick={() => logoInputRef.current?.click()}
                             >
                                 {orgLogoUrl ? (
-                                    <img src={orgLogoUrl} alt="org logo" className="w-full h-full object-cover" />
+                                    <img
+                                        src={orgLogoUrl}
+                                        alt="org logo"
+                                        className="w-full h-full object-cover"
+                                        onError={() => setOrgLogoUrl(null)}
+                                    />
                                 ) : (
                                     <span className="text-3xl font-bold text-steel-300">
                                         {orgName?.[0]?.toUpperCase() || "O"}
