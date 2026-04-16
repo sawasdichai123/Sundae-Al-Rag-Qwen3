@@ -258,11 +258,8 @@ export default function DashboardLayout() {
             <aside className={`${collapsed ? "w-[72px]" : "w-64"} bg-steel-900 flex flex-col transition-all duration-300 ease-in-out`}>
                 {/* Brand */}
                 <div className="h-16 flex items-center px-5 border-b border-white/[0.08]">
-                    <div className="w-8 h-8 rounded-lg bg-brand-400 flex items-center justify-center text-steel-900 text-sm font-bold shrink-0 overflow-hidden">
-                        {homeOrgLogo
-                            ? <img src={homeOrgLogo} alt="Logo" className="w-full h-full object-cover" />
-                            : "S"
-                        }
+                    <div className="w-8 h-8 rounded-lg bg-brand-400 flex items-center justify-center text-steel-900 text-sm font-bold shrink-0 overflow-hidden shadow-sm">
+                        <img src="/sundae-logo.png" alt="Sundae Logo" className="w-full h-full object-contain" />
                     </div>
                     {!collapsed && (
                         <div className="ml-3 animate-fade-in">
