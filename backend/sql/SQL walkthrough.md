@@ -8,18 +8,20 @@
 - **organizations**: องค์กร/เทนเนนท์ (tenant) หลัก
 - **user_profiles**: โปรไฟล์ผู้ใช้ที่ผูกกับ `auth.users` (Supabase Auth) และเก็บ role/สถานะการ approve/การผูก org
 - **bots**: บอทของแต่ละองค์กร
-- **documents**: เอกสารความรู้ (ผูก `organization_id` และ optionally ผูก `bot_id`)
+- **documents**: เอกสารความรู้ (ผูก `organization_id` และ `bot_ids UUID[]` สำหรับเชื่อมหลาย bot)
 - **document_parent_chunks / document_child_chunks**: ชิ้นข้อความสำหรับ RAG
   - parent = chunk ใหญ่สำหรับ context
   - child = chunk เล็ก + vector embedding สำหรับ similarity search
 - **chat_sessions / chat_messages**: บันทึกบทสนทนา (inbox)
-- **org_members**: ความสัมพันธ์ many-to-many ระหว่าง user กับ org (org_role: owner/member)
+- **org_members**: ความสัมพันธ์ many-to-many ระหว่าง user กับ org (org_role: admin/member)
 - **org_invitations**: คำเชิญเข้าร่วมองค์กร (invited_email, status: pending/accepted/revoked)
 
 ### จุดเชื่อมสำคัญ (Functions/Trigger)
 - **`match_child_chunks(...)`** (RPC): ค้นหา chunk ด้วย vector similarity
   - นิยามครั้งแรกใน `001_schema.sql`
   - ถูกอัปเดตให้กรองตาม bot ได้ใน `006_match_chunks_bot_filter.sql`
+  - ถูกอัปเดตอีกครั้งใน `018_match_child_chunks_with_metadata.sql` (เพิ่ม document_name, page_start, page_end)
+  - ถูกอัปเดตล่าสุดใน `019_documents_bot_ids_array.sql` (เปลี่ยน `bot_id =` เป็น `= ANY(bot_ids)`)
 - **`get_my_role()`**: helper สำหรับ RLS policy ของ `user_profiles` (อยู่ใน `003_user_profiles_rls.sql`)
 - **Trigger `on_auth_user_created` บน `auth.users`**
   - function `handle_new_auth_user()` สร้างแถวใน `public.user_profiles` อัตโนมัติเมื่อมีผู้ใช้สมัครใหม่
@@ -133,10 +135,47 @@
 - Migrate ข้อมูล: `full_name` → `split_part` เป็น first/last
 - อัปเดต trigger `handle_new_auth_user()` ให้อ่าน `first_name` + `last_name` จาก signup metadata แทน `full_name`
 
+### 015_add_profile_pictures.sql
+- เพิ่มคอลัมน์ `avatar_url TEXT` ใน `user_profiles`
+- เพิ่มคอลัมน์ `logo_url TEXT` ใน `organizations`
+- สร้าง Supabase Storage Buckets: `avatars` (public), `org_logos` (public)
+- เขียน Storage RLS Policies สำหรับ upload/read
+
+### 015_doc_storage_sizes.sql
+- สร้าง function **`get_doc_storage_sizes(p_org_id)`**
+- คำนวณขนาด storage จริงต่อเอกสาร (parent text + child text + embeddings)
+- ใช้แสดง storage_bytes ใน Knowledge Base UI
+
+### 016_org_single_owner.sql
+- สร้าง partial unique index `idx_org_single_owner` บน `org_members`
+- บังคับ owner ได้ max 1 คนต่อ org (กัน race condition)
+- **ถูก drop ใน 017** เมื่อเปลี่ยนเป็น multi-admin
+
+### 017_multi_admin_and_access_control.sql
+- **เปลี่ยนจาก single-owner เป็น multi-admin**
+- Drop `idx_org_single_owner` (จาก 016)
+- Rename `org_role = 'owner'` → `'admin'` ทุกแถวใน `org_members`
+- เปลี่ยน CHECK constraint: `('owner','member')` → `('admin','member')`
+- สร้าง RPC **`get_org_overview(target_org_id)`** สำหรับ platform support/admin ดูสถิติ org
+
+### 018_match_child_chunks_with_metadata.sql
+- อัปเดต RPC `match_child_chunks` ให้ JOIN กับ `documents` table
+- เพิ่ม `document_name`, `page_start`, `page_end` ใน RETURNS TABLE + SELECT
+- แก้ปัญหา vector_search.py ได้รับค่า None เสมอ
+
+### 019_documents_bot_ids_array.sql
+- **เปลี่ยน `documents.bot_id` (single FK) → `bot_ids` (UUID[] array)**
+- เพิ่ม `bot_ids UUID[] NOT NULL DEFAULT '{}'`
+- Migrate: `bot_ids = ARRAY[bot_id]` สำหรับ rows ที่มี bot_id อยู่
+- สร้าง GIN index `idx_documents_bot_ids` บน `bot_ids`
+- Drop คอลัมน์ `bot_id` เดิม + index เดิม
+- อัปเดต RPC `match_child_chunks`: เปลี่ยน `WHERE d.bot_id = target_bot_id` → `WHERE target_bot_id = ANY(d.bot_ids)`
+- ผลลัพธ์: 1 เอกสาร → หลาย bot, 1 bot → หลายเอกสาร (many-to-many ผ่าน array)
+
 ### seed_accounts.sql
 - สร้าง admin (`admin@sundae.local`) + support (`support@sundae.local`) accounts
 - สร้าง org "SUNDAE" (slug: `sundae`)
-- Assign admin → owner, support → member ใน `org_members`
+- Assign admin → admin (org_role), support → member ใน `org_members`
 - ใช้ `ON CONFLICT DO NOTHING` / `DO UPDATE` กัน duplicate
 
 ## Dependency / ลำดับการรันที่แนะนำ
@@ -155,7 +194,13 @@
 11. `012_simplify_auth_trigger.sql`
 12. `013_add_page_columns.sql`
 13. `014_split_fullname.sql`
-14. `seed_accounts.sql`
+14. `015_add_profile_pictures.sql`
+15. `015_doc_storage_sizes.sql`
+16. `016_org_single_owner.sql`
+17. `017_multi_admin_and_access_control.sql`
+18. `018_match_child_chunks_with_metadata.sql`
+19. `019_documents_bot_ids_array.sql`
+20. `seed_accounts.sql`
 
 ### จุดที่ต้องระวัง
 - `003_user_profiles_rls.sql` มี seed admin UUID ที่ต้องตรงกับ `auth.users` ของโปรเจกต์จริง
@@ -163,5 +208,9 @@
   - ⚠️ **RLS**: มีแค่ policy `"Users read own memberships"` เท่านั้น — policy `members_see_org_peers` ถูกลบออกเพราะทำให้เกิด infinite recursion
 - `012_simplify_auth_trigger.sql` ต้องรันหลัง 011 — trigger ใหม่ไม่อ้างถึง `org_invitations` หรือคอลัมน์เก่าแล้ว
 - `014_split_fullname.sql` ต้องรันหลัง 012 — อัปเดต trigger ให้อ่าน `first_name`/`last_name` แทน `full_name`
+- `015_add_profile_pictures.sql` ต้องทำ Supabase Storage buckets ให้เป็น **public** ด้วยมือถ้า script ไม่ได้สร้างอัตโนมัติ
+- `016_org_single_owner.sql` → `017_multi_admin_and_access_control.sql` ต้องรันตามลำดับ — 017 drop index ที่ 016 สร้าง
+- `019_documents_bot_ids_array.sql` ต้องรันหลัง 018 — อัปเดต `match_child_chunks` RPC ให้ใช้ `bot_ids` array แทน `bot_id`
+  - ⚠️ หลังรัน: คอลัมน์ `bot_id` จะถูก **drop** — backend/frontend ต้องใช้ `bot_ids` (array) แทน
 - `006_match_chunks_bot_filter.sql` เปลี่ยน signature ของ `match_child_chunks` → ฝั่ง backend/frontend ที่เรียก RPC ต้องส่งพารามิเตอร์ให้ตรง (หรือปล่อย `target_bot_id` เป็น `NULL`)
 - หลังรัน 011 คอลัมน์ `org_role`, `desired_org_name`, `invite_org_id` จะถูกลบจาก `user_profiles` — backend code ต้องอ่าน org_role จาก `org_members` แทน

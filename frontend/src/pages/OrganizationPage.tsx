@@ -9,6 +9,9 @@
  */
 
 import { useState, useEffect, useCallback, useRef, type FormEvent } from "react";
+import { createPortal } from "react-dom";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
@@ -17,6 +20,24 @@ import { getApiError } from "../utils/apiError";
 import type { OrgMember, OrgInvitation } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
+
+async function getCroppedBlob(src: string, area: Area): Promise<Blob> {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = src;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = area.width;
+    canvas.height = area.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
+    return new Promise((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas toBlob failed"))), "image/png")
+    );
+}
 
 const LOGO_ALLOWED = ["jpg", "jpeg", "png", "webp"];
 const LOGO_MAGIC: Record<string, { bytes: number[]; length: number }> = {
@@ -315,6 +336,12 @@ export default function OrganizationPage() {
     const logoInputRef = useRef<HTMLInputElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
 
+    // Crop modal state
+    const [cropSrc, setCropSrc] = useState<string | null>(null);
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [croppedArea, setCroppedArea] = useState<Area | null>(null);
+
     const isProtectedOrg = orgSlug === "sundae";
 
     const loadData = useCallback(async () => {
@@ -350,6 +377,7 @@ export default function OrganizationPage() {
 
     const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+        if (logoInputRef.current) logoInputRef.current.value = "";
         if (!file || !activeOrgId) return;
 
         const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
@@ -376,17 +404,34 @@ export default function OrganizationPage() {
             if (!valid) { toast("error", "ไฟล์ไม่ถูกต้อง"); return; }
         }
 
+        // Open crop modal instead of uploading immediately
+        const url = URL.createObjectURL(file);
+        setCropSrc(url);
+        setCrop({ x: 0, y: 0 });
+        setZoom(1);
+        setCroppedArea(null);
+    };
+
+    const handleCropCancel = () => {
+        if (cropSrc) URL.revokeObjectURL(cropSrc);
+        setCropSrc(null);
+    };
+
+    const handleCropSave = async () => {
+        if (!cropSrc || !croppedArea || !activeOrgId) return;
         setUploadingLogo(true);
         try {
-            await orgApi.uploadLogo(activeOrgId, file);
+            const blob = await getCroppedBlob(cropSrc, croppedArea);
+            const croppedFile = new File([blob], "logo.png", { type: "image/png" });
+            await orgApi.uploadLogo(activeOrgId, croppedFile);
             toast("success", "อัพโหลดโลโก้สำเร็จ");
+            handleCropCancel();
             await loadData();
             await fetchOrgs();
         } catch (err: unknown) {
             toast("error", getApiError(err, "อัพโหลดโลโก้ล้มเหลว"));
         } finally {
             setUploadingLogo(false);
-            if (logoInputRef.current) logoInputRef.current.value = "";
         }
     };
 
@@ -558,6 +603,60 @@ export default function OrganizationPage() {
             {/* 2. Member Management — Org Admin OR platform staff (can invite, cannot promote/demote/remove) */}
             {!loading && (isOrgAdmin || userRole === "admin" || userRole === "support") && (
                 <MemberManagement orgId={activeOrgId} isProtectedOrg={isProtectedOrg} />
+            )}
+
+            {/* Image Crop Modal */}
+            {cropSrc && createPortal(
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h3 className="text-base font-bold text-steel-900">{t("org.cropTitle")}</h3>
+                            <p className="text-xs text-steel-400 mt-0.5">{t("org.cropDesc")}</p>
+                        </div>
+                        <div className="relative w-full" style={{ height: 350 }}>
+                            <Cropper
+                                image={cropSrc}
+                                crop={crop}
+                                zoom={zoom}
+                                aspect={1}
+                                cropShape="round"
+                                showGrid={false}
+                                onCropChange={setCrop}
+                                onZoomChange={setZoom}
+                                onCropComplete={(_: Area, pixels: Area) => setCroppedArea(pixels)}
+                            />
+                        </div>
+                        <div className="px-6 py-3 flex items-center gap-3">
+                            <span className="text-xs text-steel-500 shrink-0">{t("org.cropZoom")}</span>
+                            <input
+                                type="range"
+                                min={1}
+                                max={3}
+                                step={0.05}
+                                value={zoom}
+                                onChange={(e) => setZoom(Number(e.target.value))}
+                                className="flex-1 accent-brand-500"
+                            />
+                        </div>
+                        <div className="px-6 py-3 border-t border-steel-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={handleCropCancel}
+                                disabled={uploadingLogo}
+                                className="px-4 py-2 text-sm text-steel-600 hover:text-steel-900 cursor-pointer disabled:opacity-50"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                onClick={handleCropSave}
+                                disabled={uploadingLogo}
+                                className="px-4 py-2 bg-brand-400 text-steel-900 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {uploadingLogo ? t("common.saving") : t("common.save")}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
             )}
 
         </div>

@@ -8,7 +8,10 @@
  */
 
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
+import Cropper from "react-easy-crop";
+import type { Area } from "react-easy-crop";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
@@ -18,6 +21,24 @@ import { supabase } from "../api/supabaseClient";
 import type { MyInvitation } from "../types";
 import Spinner from "../components/Spinner";
 import { useT } from "../i18n";
+
+async function getCroppedBlob(src: string, area: Area): Promise<Blob> {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = reject;
+        img.src = src;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = area.width;
+    canvas.height = area.height;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(img, area.x, area.y, area.width, area.height, 0, 0, area.width, area.height);
+    return new Promise((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas toBlob failed"))), "image/png")
+    );
+}
 
 export default function ProfilePage() {
     const t = useT();
@@ -46,14 +67,18 @@ export default function ProfilePage() {
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const [pendingAvatarFile, setPendingAvatarFile] = useState<File | null>(null);
     const [pendingAvatarPreview, setPendingAvatarPreview] = useState<string | null>(null);
-    const [pendingAvatarExt, setPendingAvatarExt] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Crop modal state
+    const [cropSrc, setCropSrc] = useState<string | null>(null);
+    const [crop, setCrop] = useState({ x: 0, y: 0 });
+    const [zoom, setZoom] = useState(1);
+    const [croppedArea, setCroppedArea] = useState<Area | null>(null);
 
     const clearPendingAvatar = () => {
         if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
         setPendingAvatarFile(null);
         setPendingAvatarPreview(null);
-        setPendingAvatarExt(null);
     };
 
     useEffect(() => {
@@ -98,9 +123,9 @@ export default function ProfilePage() {
         try {
             // Upload staged avatar first if present
             let newAvatarUrl: string | undefined;
-            if (pendingAvatarFile && pendingAvatarExt && user?.id) {
+            if (pendingAvatarFile && user?.id) {
                 setUploadingAvatar(true);
-                const filePath = `${user.id}.${pendingAvatarExt}`;
+                const filePath = `${user.id}.png`;
                 const { error: uploadError } = await supabase.storage
                     .from("avatars")
                     .upload(filePath, pendingAvatarFile, { cacheControl: "3600", upsert: true });
@@ -134,18 +159,15 @@ export default function ProfilePage() {
 
     const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        // Reset input so picking the same file again still triggers onChange
         if (fileInputRef.current) fileInputRef.current.value = "";
         if (!file || !user?.id) return;
 
-        // Validate size
-        const MAX_SIZE = 2 * 1024 * 1024; // 2MB
+        const MAX_SIZE = 2 * 1024 * 1024;
         if (file.size > MAX_SIZE) {
             toast("error", t("profile.avatarTooBig"));
             return;
         }
 
-        // Validate extension — block SVG (XSS risk) and other non-image types
         const ALLOWED_EXTENSIONS = ["jpg", "jpeg", "png", "webp"];
         const ext = (file.name.split(".").pop() || "").toLowerCase();
         if (!ALLOWED_EXTENSIONS.includes(ext)) {
@@ -153,7 +175,6 @@ export default function ProfilePage() {
             return;
         }
 
-        // Validate magic bytes (first 4 bytes) to prevent MIME spoofing
         const magicValid = await new Promise<boolean>((resolve) => {
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -171,11 +192,32 @@ export default function ProfilePage() {
             return;
         }
 
-        // Stage only — actual upload happens on Save
-        if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
-        setPendingAvatarFile(file);
-        setPendingAvatarExt(ext);
-        setPendingAvatarPreview(URL.createObjectURL(file));
+        // Open crop modal
+        const url = URL.createObjectURL(file);
+        setCropSrc(url);
+        setCrop({ x: 0, y: 0 });
+        setZoom(1);
+        setCroppedArea(null);
+    };
+
+    const handleCropCancel = () => {
+        if (cropSrc) URL.revokeObjectURL(cropSrc);
+        setCropSrc(null);
+    };
+
+    const handleCropSave = async () => {
+        if (!cropSrc || !croppedArea) return;
+        try {
+            const blob = await getCroppedBlob(cropSrc, croppedArea);
+            const croppedFile = new File([blob], "avatar.png", { type: "image/png" });
+            if (pendingAvatarPreview) URL.revokeObjectURL(pendingAvatarPreview);
+            setPendingAvatarFile(croppedFile);
+            setPendingAvatarPreview(URL.createObjectURL(croppedFile));
+        } catch {
+            toast("error", t("profile.avatarInvalid"));
+        } finally {
+            handleCropCancel();
+        }
     };
 
     const handleAccept = async (invitationId: string) => {
@@ -500,6 +542,58 @@ export default function ProfilePage() {
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Avatar Crop Modal */}
+            {cropSrc && createPortal(
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h3 className="text-base font-bold text-steel-900">{t("profile.cropTitle")}</h3>
+                            <p className="text-xs text-steel-400 mt-0.5">{t("profile.cropDesc")}</p>
+                        </div>
+                        <div className="relative w-full" style={{ height: 350 }}>
+                            <Cropper
+                                image={cropSrc}
+                                crop={crop}
+                                zoom={zoom}
+                                aspect={1}
+                                cropShape="round"
+                                showGrid={false}
+                                onCropChange={setCrop}
+                                onZoomChange={setZoom}
+                                onCropComplete={(_: Area, pixels: Area) => setCroppedArea(pixels)}
+                            />
+                        </div>
+                        <div className="px-6 py-3 flex items-center gap-3">
+                            <span className="text-xs text-steel-500 shrink-0">{t("profile.cropZoom")}</span>
+                            <input
+                                type="range"
+                                min={1}
+                                max={3}
+                                step={0.05}
+                                value={zoom}
+                                onChange={(e) => setZoom(Number(e.target.value))}
+                                className="flex-1 accent-brand-500"
+                            />
+                        </div>
+                        <div className="px-6 py-3 border-t border-steel-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={handleCropCancel}
+                                className="px-4 py-2 text-sm text-steel-600 hover:text-steel-900 cursor-pointer"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                onClick={handleCropSave}
+                                className="px-4 py-2 bg-brand-400 text-steel-900 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
+                            >
+                                {t("profile.cropConfirm")}
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
             )}
         </div>
     );
