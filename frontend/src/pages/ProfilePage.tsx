@@ -325,6 +325,7 @@ export default function ProfilePage() {
                                         src={pendingAvatarPreview || user?.avatar_url || ""}
                                         alt="avatar"
                                         className={`w-20 h-20 rounded-full object-cover border-2 transition-colors ${pendingAvatarPreview ? "border-brand-400 ring-2 ring-brand-100" : "border-steel-200 group-hover:border-brand-400"}`}
+                                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                                     />
                                 ) : (
                                     <div className="w-20 h-20 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-2xl border-2 border-steel-200 group-hover:border-brand-400 transition-colors">
@@ -405,6 +406,7 @@ export default function ProfilePage() {
                                     src={user.avatar_url}
                                     alt="avatar"
                                     className="w-14 h-14 rounded-full object-cover border-2 border-steel-100"
+                                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                                 />
                             ) : (
                                 <div className="w-14 h-14 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xl shrink-0">
@@ -425,100 +427,131 @@ export default function ProfilePage() {
                 )}
             </div>
 
-            {/* Section B: My Organizations */}
-            <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
-                <div className="px-6 py-4 border-b border-steel-100">
-                    <h2 className="text-sm font-semibold text-steel-800">{t("profile.myOrgs")} ({orgs.length})</h2>
-                </div>
-                {orgs.length === 0 ? (
-                    <div className="px-6 py-8 text-center">
-                        <p className="text-sm text-steel-400">{t("profile.noOrgs")}</p>
-                    </div>
-                ) : (
-                    <div className="divide-y divide-steel-100">
-                        {orgs.map((org) => (
-                            <div key={org.id} className="px-6 py-4 flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-700 text-xs font-bold shrink-0 overflow-hidden">
-                                    {org.logo_url
-                                        ? <img src={org.logo_url} alt={org.name} className="w-full h-full object-cover" />
-                                        : (org.name?.[0]?.toUpperCase() || "O")}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-steel-800 truncate">{org.name}</p>
-                                </div>
-                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                                    user?.role === "admin"
-                                        ? "bg-red-100 text-red-700"
-                                        : user?.role === "support"
-                                            ? "bg-violet-100 text-violet-700"
-                                            : org.org_role === "admin"
-                                                ? "bg-brand-100 text-brand-700"
-                                                : "bg-steel-100 text-steel-500"
-                                }`}>
-                                    {user?.role === "admin" ? "admin" : user?.role === "support" ? "support" : org.org_role === "admin" ? t("role.adminOrg") : org.org_role}
-                                </span>
-                                <button
-                                    onClick={() => handleLeave(org.id, org.name)}
-                                    disabled={leavingOrgId === org.id}
-                                    className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                    {leavingOrgId === org.id ? "..." : t("profile.leaveOrg")}
-                                </button>
+            {/* Section B: Platform (admin/support only) */}
+            {(user?.role === "admin" || user?.role === "support") && (() => {
+                const platformOrg = orgs.find((o) => o.slug === "sundae");
+                if (!platformOrg) return null;
+                return (
+                    <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h2 className="text-sm font-semibold text-steel-800">{t("profile.platform")}</h2>
+                            <p className="text-xs text-steel-400 mt-0.5">{t("profile.platformDesc")}</p>
+                        </div>
+                        <div className="px-6 py-4 flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-700 text-xs font-bold shrink-0 overflow-hidden">
+                                {platformOrg.logo_url
+                                    ? <img src={platformOrg.logo_url} alt={platformOrg.name} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                                    : (platformOrg.name?.[0]?.toUpperCase() || "S")}
                             </div>
-                        ))}
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-steel-800 truncate">{platformOrg.name}</p>
+                            </div>
+                            {roleBadge(user.role)}
+                        </div>
                     </div>
-                )}
-            </div>
+                );
+            })()}
 
-            {/* Section C: Pending Invitations */}
-            <div className="bg-white rounded-2xl border border-steel-100 overflow-hidden">
-                <div className="px-6 py-4 border-b border-steel-100">
-                    <h2 className="text-sm font-semibold text-steel-800">
-                        {t("profile.invitations")} {!loadingInvites && invitations.length > 0 && `(${invitations.length})`}
-                    </h2>
-                </div>
-                {loadingInvites ? (
-                    <div className="flex items-center gap-2 text-steel-400 px-6 py-6">
-                        <Spinner /> <span className="text-sm">{t("common.loading")}</span>
-                    </div>
-                ) : invitations.length === 0 ? (
-                    <div className="px-6 py-8 text-center">
-                        <p className="text-sm text-steel-400">{t("profile.noInvitations")}</p>
-                    </div>
-                ) : (
-                    <div className="divide-y divide-steel-100">
-                        {invitations.map((inv) => (
-                            <div key={inv.id} className="px-6 py-4 flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-sm shrink-0">
-                                    {inv.org_name?.[0]?.toUpperCase() || "O"}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium text-steel-800">{inv.org_name}</p>
-                                    <p className="text-xs text-steel-400">
-                                        {isNaN(new Date(inv.created_at).getTime()) ? "" : new Date(inv.created_at).toLocaleDateString()}
-                                    </p>
-                                </div>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => handleAccept(inv.id)}
-                                        disabled={acceptingId === inv.id || decliningId === inv.id}
-                                        className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
-                                    >
-                                        {acceptingId === inv.id ? t("common.processing") : t("profile.accept")}
-                                    </button>
-                                    <button
-                                        onClick={() => handleDecline(inv.id)}
-                                        disabled={acceptingId === inv.id || decliningId === inv.id}
-                                        className="px-4 py-2 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
-                                    >
-                                        {decliningId === inv.id ? t("common.processing") : t("profile.decline")}
-                                    </button>
-                                </div>
+            {/* Section C: My Organizations */}
+            {(() => {
+                const myOrgs = orgs.filter((o) => o.slug !== "sundae" && o.is_member !== false);
+                const orgIds = new Set(orgs.map((o) => o.id));
+                const filteredInvitations = invitations.filter((inv) => !orgIds.has(inv.organization_id));
+                return (
+                    <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h2 className="text-sm font-semibold text-steel-800">{t("profile.myOrgs")} ({myOrgs.length})</h2>
+                        </div>
+                        {myOrgs.length === 0 && filteredInvitations.length === 0 && !loadingInvites ? (
+                            <div className="px-6 py-8 text-center">
+                                <p className="text-sm text-steel-400">{t("profile.noOrgs")}</p>
                             </div>
-                        ))}
+                        ) : (
+                            <>
+                                {myOrgs.length > 0 && (
+                                    <div className="divide-y divide-steel-100">
+                                        {myOrgs.map((org) => (
+                                            <div key={org.id} className="px-6 py-4 flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-700 text-xs font-bold shrink-0 overflow-hidden">
+                                                    {org.logo_url
+                                                        ? <img src={org.logo_url} alt={org.name} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+                                                        : (org.name?.[0]?.toUpperCase() || "O")}
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-sm font-medium text-steel-800 truncate">{org.name}</p>
+                                                </div>
+                                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                                                    org.org_role === "admin"
+                                                        ? "bg-brand-100 text-brand-700"
+                                                        : "bg-steel-100 text-steel-500"
+                                                }`}>
+                                                    {org.org_role === "admin" ? t("role.adminOrg") : org.org_role}
+                                                </span>
+                                                <button
+                                                    onClick={() => handleLeave(org.id, org.name)}
+                                                    disabled={leavingOrgId === org.id}
+                                                    className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                                                >
+                                                    {leavingOrgId === org.id ? "..." : t("profile.leaveOrg")}
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {/* Invitations within My Organizations */}
+                                {(loadingInvites || filteredInvitations.length > 0) && (
+                                    <>
+                                        <div className="px-6 py-3 border-t border-steel-100 bg-steel-50/50">
+                                            <h3 className="text-xs font-semibold text-steel-500">
+                                                {t("profile.invitations")} {!loadingInvites && filteredInvitations.length > 0 && `(${filteredInvitations.length})`}
+                                            </h3>
+                                        </div>
+                                        {loadingInvites ? (
+                                            <div className="flex items-center gap-2 text-steel-400 px-6 py-6">
+                                                <Spinner /> <span className="text-sm">{t("common.loading")}</span>
+                                            </div>
+                                        ) : (
+                                            <div className="divide-y divide-steel-100">
+                                                {filteredInvitations.map((inv) => (
+                                                    <div key={inv.id} className="px-6 py-4 flex items-center gap-4">
+                                                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-xs shrink-0 overflow-hidden">
+                                                            {inv.org_logo_url
+                                                                ? <img src={inv.org_logo_url} alt={inv.org_name} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; e.currentTarget.parentElement!.textContent = inv.org_name?.[0]?.toUpperCase() || "O"; }} />
+                                                                : (inv.org_name?.[0]?.toUpperCase() || "O")}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <p className="text-sm font-medium text-steel-800">{inv.org_name}</p>
+                                                            <p className="text-xs text-steel-400">
+                                                                {isNaN(new Date(inv.created_at).getTime()) ? "" : new Date(inv.created_at).toLocaleDateString()}
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <button
+                                                                onClick={() => handleAccept(inv.id)}
+                                                                disabled={acceptingId === inv.id || decliningId === inv.id}
+                                                                className="px-4 py-2 bg-brand-400 text-steel-900 text-xs font-bold rounded-xl hover:bg-brand-500 transition-colors cursor-pointer shadow-sm disabled:opacity-50"
+                                                            >
+                                                                {acceptingId === inv.id ? t("common.processing") : t("profile.accept")}
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDecline(inv.id)}
+                                                                disabled={acceptingId === inv.id || decliningId === inv.id}
+                                                                className="px-4 py-2 bg-red-100 text-red-700 text-xs font-bold rounded-xl hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                                                            >
+                                                                {decliningId === inv.id ? t("common.processing") : t("profile.decline")}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </>
+                        )}
                     </div>
-                )}
-            </div>
+                );
+            })()}
 
             {/* Last Admin Modal */}
             {lastAdminOrgId && (

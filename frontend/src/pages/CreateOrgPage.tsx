@@ -137,8 +137,10 @@ export default function CreateOrgPage() {
                     <div className="divide-y divide-steel-100">
                         {invitations.map((inv) => (
                             <div key={inv.id} className="px-6 py-4 flex items-center gap-4">
-                                <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-sm shrink-0">
-                                    {inv.org_name?.[0]?.toUpperCase() || "O"}
+                                <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 font-bold text-sm shrink-0 overflow-hidden">
+                                    {inv.org_logo_url
+                                        ? <img src={inv.org_logo_url} alt={inv.org_name} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; e.currentTarget.parentElement!.textContent = inv.org_name?.[0]?.toUpperCase() || "O"; }} />
+                                        : (inv.org_name?.[0]?.toUpperCase() || "O")}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium text-steel-800">{inv.org_name}</p>

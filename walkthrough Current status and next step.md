@@ -4842,3 +4842,191 @@ Widget-demo เปิดจาก Live Server (`http://127.0.0.1:5500`) ไม�
 | ไฟล์ | การเปลี่ยนแปลง |
 |---|---|
 | `frontend/src/pages/DashboardPage.tsx` | เพิ่ม `orgApi.getLineConfig()` fetch + state `lineEnabled` + เปลี่ยน LINE Webhook status จาก `null` เป็นค่าจริง |
+
+---
+
+## 72. Session Stability + Profile & Org Enhancements (16–17 เมษายน 2569)
+
+### 72.1 ภาพรวม
+
+แก้ไข **3 กลุ่มงานหลัก**: (A) Session ค้างจน user ต้อง F5, (B) รูปโปรไฟล์ org ไม่แสดงในหน้า Profile, (C) ฟีเจอร์ใหม่ + ปรับปรุง UI
+
+**ไฟล์ที่แก้ไข: 12 ไฟล์** (+228 / −117 บรรทัด)
+
+---
+
+### 72.2 (A) Session Stability — แก้เว็บค้าง (3 bugs)
+
+#### Bug A1: `readTokenFromStorage()` อ่านผิด storage ❌→✅
+
+| | ก่อน | หลัง |
+|---|---|---|
+| **อ่านจาก** | `localStorage` เท่านั้น | `sessionStorage` ก่อน → fallback `localStorage` |
+
+**สาเหตุ**: Supabase client ถูก config ให้ใช้ `sessionStorage` (SEC-F07 บรรทัด 81 ใน `supabaseClient.ts`) แต่ `readTokenFromStorage()` ใน `axios.ts` อ่านจาก `localStorage` → ไม่เคยเจอ token → ทุก API call ต้องรอ `getSession()` ซึ่ง อาจ timeout 8 วินาที → **เว็บค้าง**
+
+**ไฟล์**: `frontend/src/api/axios.ts`
+
+```typescript
+// ก่อน — อ่านผิดที่
+const storageKey = Object.keys(localStorage).find(...)
+
+// หลัง — อ่านจาก sessionStorage ก่อน แล้ว fallback localStorage
+for (const storage of [sessionStorage, localStorage]) {
+    const storageKey = Object.keys(storage).find(...)
+}
+```
+
+#### Bug A2: `signOut` ลบ token ไม่หมด ❌→✅
+
+**สาเหตุ**: `authStore.ts` ลบ `sb-*` keys จาก `localStorage` อย่างเดียว แต่ session จริงอยู่ใน `sessionStorage` → token เก่าหลุดรอด
+
+**ไฟล์**: `frontend/src/store/authStore.ts`
+
+```typescript
+// ก่อน
+Object.keys(localStorage).forEach(...)
+
+// หลัง — ลบทั้ง 2 storage
+for (const storage of [sessionStorage, localStorage]) {
+    Object.keys(storage).forEach(...)
+}
+```
+
+#### Bug A3: Tab focus refresh ช้าเกินไป ❌→✅
+
+| | ก่อน | หลัง |
+|---|---|---|
+| **Tab focus threshold** | 35 นาที | 5 นาที |
+| **Periodic refresh** | ทุก 30 นาที | ทุก 10 นาที |
+
+**สาเหตุ**: ถ้า user ไม่ได้ใช้ tab 10-34 นาทีแล้วกลับมา → token ไม่ถูก refresh → API 401 → เว็บค้าง
+
+**ไฟล์**: `frontend/src/api/supabaseClient.ts`
+
+#### Bug A4: `signIn` set `isAuthenticated=true` ก่อน profile โหลด ❌→✅
+
+**สาเหตุ**: `signIn()` set `isAuthenticated: true` ทันทีหลังได้ session โดยไม่รอ `fetchProfile` → ถ้า profile load ล้มเหลว app ค้างใน authenticated state แต่ `user: null`
+
+**ไฟล์**: `frontend/src/store/authStore.ts`
+
+```typescript
+// ก่อน — set auth ก่อน profile
+set({ session: data.session, isAuthenticated: true });
+await get().fetchProfile(data.session.user.id);
+
+// หลัง — set auth หลัง profile สำเร็จ
+set({ session: data.session });
+await get().fetchProfile(data.session.user.id);
+if (get().user) {
+    set({ isAuthenticated: true });
+} else {
+    set({ session: null, isAuthenticated: false });
+}
+```
+
+---
+
+### 72.3 (B) Org Logo แสดงทุกที่
+
+#### B1: Profile Page — org logo ไม่แสดง ❌→✅
+
+**สาเหตุ**: `ProfilePage.tsx` บรรทัด 399-401 แสดงแค่ตัวอักษรตัวแรกของชื่อ org เสมอ ไม่ได้เช็ค `logo_url`
+
+**วิธีแก้**: เพิ่มเงื่อนไขเช็ค `org.logo_url` — ถ้ามีแสดง `<img>` ถ้าไม่มี fallback ตัวอักษร
+
+#### B2: Profile Page Overhaul — รวม Orgs + Invitations เป็น card เดียว
+
+- "องค์กรของฉัน" แสดง logo ของทุก org
+- Pending invitations แสดง `org_logo_url` ใน card เดียวกัน
+- Role badges ใช้ `org.org_role` (ถูกต้องต่อ org) แทน `user.role`
+- เพิ่ม **Platform section** สำหรับ admin/support แสดง platform role + affiliated org
+
+#### B3: CreateOrgPage — invitation logo
+
+Invitation list แสดง `org_logo_url` พร้อม `onError` fallback
+
+#### B4: WebChatPage — image error resilience
+
+เพิ่ม `onError` handlers ที่ทุก avatar/logo `<img>` ใน chat messages — รูปโหลดไม่ได้ → `display: none` → fallback ตัวอักษรอัตโนมัติ
+
+---
+
+### 72.4 (C) ฟีเจอร์ใหม่: Revoke Invitation
+
+#### Backend — endpoint ใหม่
+
+```
+POST /api/orgs/{org_id}/invitations/{inv_id}/revoke
+```
+
+- Org Admin only (via `verify_org_admin`)
+- เปลี่ยน status จาก `"pending"` → `"revoked"`
+- Return 404 ถ้าไม่เจอหรือไม่ใช่ pending
+
+**ไฟล์**: `backend/app/routers/organization.py`
+
+#### Frontend — UI + API
+
+- ปุ่ม "ยกเลิก" ข้างทุก pending invitation (Org Admin เท่านั้น)
+- Confirmation dialog ก่อนยกเลิก
+- Auto-refresh list หลังสำเร็จ
+- เพิ่ม window focus listener ให้ auto-reload members & invitations เมื่อ user กลับมาที่ tab
+
+**ไฟล์**: `frontend/src/pages/OrganizationPage.tsx`, `frontend/src/api/endpoints.ts`
+
+---
+
+### 72.5 Backend API Enhancements
+
+| Change | Detail | ไฟล์ |
+|--------|--------|------|
+| `OrgListItem.is_member` | Boolean ใหม่ — แยก real member vs view-only (support/admin ดู external org) | `organization.py` |
+| `MyInvitationResponse.org_logo_url` | Invitation response มี org logo | `organization.py` |
+| `my_invitations` query | `SELECT organizations(name, logo_url)` แทน `organizations(name)` | `organization.py` |
+
+---
+
+### 72.6 Type Definitions + i18n
+
+**Types** (`frontend/src/types/index.ts`):
+- `OrgMembership.is_member?: boolean`
+- `MyInvitation.org_logo_url?: string | null`
+
+**i18n** (`en.json`, `th.json`):
+
+| Key | EN | TH |
+|-----|----|----|
+| `org.revoke` | Revoke | ยกเลิก |
+| `org.revokeConfirm` | Revoke invitation for {email}? | ยกเลิกคำเชิญสำหรับ {email}? |
+| `org.revokeSuccess` | Invitation revoked | ยกเลิกคำเชิญสำเร็จ |
+| `org.revokeFailed` | Failed to revoke invitation | ยกเลิกคำเชิญไม่สำเร็จ |
+| `profile.platform` | Platform | แพลตฟอร์ม |
+| `profile.platformDesc` | Your platform role and affiliated org | บทบาทแพลตฟอร์มและองค์กรที่สังกัด |
+
+---
+
+### 72.7 ไฟล์ที่แก้ไขทั้งหมด
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| **Backend** | |
+| `backend/app/routers/organization.py` | เพิ่ม `is_member` flag, `org_logo_url` ใน invite response, revoke endpoint ใหม่, ปรับ docstring |
+| **Frontend — Auth/Session** | |
+| `frontend/src/api/axios.ts` | แก้ `readTokenFromStorage()` อ่าน `sessionStorage` ก่อน |
+| `frontend/src/api/supabaseClient.ts` | ลด refresh interval 30→10 นาที, ลด visibility threshold 35→5 นาที |
+| `frontend/src/store/authStore.ts` | แก้ `signOut` ลบทั้ง 2 storage, แก้ `signIn` ไม่ set auth ก่อน profile |
+| **Frontend — Pages** | |
+| `frontend/src/pages/ProfilePage.tsx` | Overhaul: รวม orgs+invitations, แสดง logo, platform section, role badge fix |
+| `frontend/src/pages/OrganizationPage.tsx` | Revoke button + handler, window focus auto-reload |
+| `frontend/src/pages/CreateOrgPage.tsx` | Invitation logo แสดง `org_logo_url` |
+| `frontend/src/pages/WebChatPage.tsx` | `onError` fallback ทุก avatar image |
+| **Frontend — Components** | |
+| `frontend/src/components/OrgSwitcher.tsx` | ปรับ logo rendering |
+| `frontend/src/layouts/DashboardLayout.tsx` | ปรับ sidebar logo |
+| **Frontend — Types/i18n** | |
+| `frontend/src/types/index.ts` | เพิ่ม `is_member`, `org_logo_url` |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `orgApi.revokeInvitation()` |
+| `frontend/src/i18n/en.json` | เพิ่ม revoke + platform strings |
+| `frontend/src/i18n/th.json` | เพิ่ม revoke + platform strings |
+

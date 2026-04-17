@@ -837,7 +837,7 @@ export default function WebChatPage() {
                                         {/* AI / Admin Avatar */}
                                         {msg.role === "assistant" && (
                                             activeOrgLogo ? (
-                                                <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5 shadow-sm" />
+                                                <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5 shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                                             ) : (
                                                 <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 mt-0.5 shadow-sm">
                                                     {(activeOrgName || "S")[0].toUpperCase()}
@@ -905,7 +905,7 @@ export default function WebChatPage() {
                                         {/* User Avatar */}
                                         {isUser && (
                                             userAvatarUrl ? (
-                                                <img src={userAvatarUrl} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5" />
+                                                <img src={userAvatarUrl} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 mt-0.5" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                                             ) : (
                                                 <div className="w-8 h-8 rounded-xl bg-steel-700 flex items-center justify-center text-white text-xs font-semibold shrink-0 mt-0.5">
                                                     {(user?.first_name || user?.email)?.[0]?.toUpperCase() || "U"}
@@ -920,7 +920,7 @@ export default function WebChatPage() {
                             {isLoading && !isStreaming && (
                                 <div className="flex gap-3 animate-fade-in">
                                     {activeOrgLogo ? (
-                                        <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 shadow-sm" />
+                                        <img src={activeOrgLogo} alt="" className="w-8 h-8 rounded-xl object-cover shrink-0 shadow-sm" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                                     ) : (
                                         <div className="w-8 h-8 rounded-xl bg-brand-400 flex items-center justify-center text-steel-900 text-xs font-bold shrink-0 shadow-sm">
                                             {(activeOrgName || "S")[0].toUpperCase()}

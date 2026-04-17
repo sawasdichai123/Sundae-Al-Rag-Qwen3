@@ -42,7 +42,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
             >
                 <div className="w-6 h-6 rounded-md bg-brand-400/20 flex items-center justify-center text-brand-400 text-xs font-bold shrink-0 overflow-hidden">
                     {activeOrg?.logo_url
-                        ? <img src={activeOrg.logo_url} alt="" className="w-full h-full object-cover" />
+                        ? <img src={activeOrg.logo_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                         : activeOrg?.name?.[0]?.toUpperCase() || "O"}
                 </div>
                 {!collapsed && (
@@ -77,7 +77,7 @@ export default function OrgSwitcher({ collapsed }: { collapsed: boolean }) {
                         >
                             <div className="w-5 h-5 rounded bg-white/10 flex items-center justify-center text-[10px] font-bold shrink-0 overflow-hidden">
                                 {org.logo_url
-                                    ? <img src={org.logo_url} alt="" className="w-full h-full object-cover" />
+                                    ? <img src={org.logo_url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
                                     : org.name?.[0]?.toUpperCase() || "O"}
                             </div>
                             <span className="truncate flex-1 text-left">{org.name}</span>

@@ -67,12 +67,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
             }
 
             if (data.session) {
-                set({ session: data.session, isAuthenticated: true });
+                set({ session: data.session });
                 await get().fetchProfile(data.session.user.id);
+                if (get().user) {
+                    set({ isAuthenticated: true });
+                } else {
+                    set({ session: null, isAuthenticated: false });
+                }
             }
         } catch (err) {
             console.error("[Auth] signIn error:", err);
-            set({ authError: getT()("auth.connectionFailed") });
+            set({ session: null, isAuthenticated: false, authError: getT()("auth.connectionFailed") });
         } finally {
             set({ isLoading: false });
         }

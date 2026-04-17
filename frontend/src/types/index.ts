@@ -43,6 +43,7 @@ export interface OrgMembership {
     logo_url?: string | null;
     org_role: OrgRole;
     created_at: string;
+    is_member?: boolean;
 }
 
 export interface OrgMember {
@@ -70,6 +71,7 @@ export interface MyInvitation {
     id: string;
     organization_id: string;
     org_name: string;
+    org_logo_url?: string | null;
     invited_email: string;
     status: "pending" | "accepted" | "revoked";
     created_at: string;

@@ -92,6 +92,7 @@ class OrgListItem(BaseModel):
     logo_url: str | None = None
     org_role: str
     created_at: str
+    is_member: bool = True
 
 
 class OrgMemberResponse(BaseModel):
@@ -118,6 +119,7 @@ class MyInvitationResponse(BaseModel):
     id: str
     organization_id: str
     org_name: str
+    org_logo_url: str | None = None
     invited_email: str
     status: str
     created_at: str
@@ -213,20 +215,15 @@ async def create_org(
 async def list_orgs(
     user: CurrentUser = Depends(require_approved),
 ):
-    """List organizations visible in the OrgSwitcher.
+    """List organizations visible to the current user.
 
-    Platform support/admin see ALL active orgs so they can switch into
-    any org to manage deletion requests. Their org_role is their actual
-    membership role if they are a member, or "member" (non-admin) for
-    orgs they are not a member of — this prevents isOrgAdmin=true on
-    orgs they don't actually belong to.
-
-    Regular users see only orgs they are a member of.
+    Platform admin/support see ALL active orgs (for OrgSwitcher management).
+    The ``is_member`` flag distinguishes real membership from view-only access.
+    Regular users see only orgs they belong to.
     """
     supabase = get_supabase()
 
     if user.role in ("support", "admin"):
-        # Fetch all active orgs
         all_orgs_result = await (
             supabase.table("organizations")
             .select("id, name, slug, logo_url, created_at")
@@ -234,7 +231,6 @@ async def list_orgs(
             .order("created_at", desc=False)
         ).execute()
 
-        # Fetch actual memberships to get real org_role where applicable
         member_result = await (
             supabase.table("org_members")
             .select("organization_id, org_role")
@@ -247,19 +243,19 @@ async def list_orgs(
 
         items: list[OrgListItem] = []
         for org in all_orgs_result.data or []:
-            # Use real org_role if member, "member" otherwise (avoids false isOrgAdmin)
-            org_role = member_roles.get(org["id"], "member")
+            oid = org["id"]
+            actual_role = member_roles.get(oid)
             items.append(OrgListItem(
-                id=org["id"],
+                id=oid,
                 name=org["name"],
                 slug=org.get("slug"),
                 logo_url=org.get("logo_url"),
-                org_role=org_role,
+                org_role=actual_role or "member",
                 created_at=org.get("created_at", ""),
+                is_member=actual_role is not None,
             ))
         return items
 
-    # Regular users — only their memberships
     result = await (
         supabase.table("org_members")
         .select("organization_id, org_role, joined_at, organizations(id, name, slug, logo_url, created_at)")
@@ -333,7 +329,7 @@ async def my_invitations(
 
     result = await (
         supabase.table("org_invitations")
-        .select("id, organization_id, invited_email, status, created_at, organizations(name)")
+        .select("id, organization_id, invited_email, status, created_at, organizations(name, logo_url)")
         .eq("invited_email", user.email)
         .eq("status", "pending")
     ).execute()
@@ -353,6 +349,7 @@ async def my_invitations(
             id=row["id"],
             organization_id=row["organization_id"],
             org_name=org.get("name", ""),
+            org_logo_url=org.get("logo_url"),
             invited_email=row["invited_email"],
             status=row["status"],
             created_at=row.get("created_at", ""),
@@ -1396,6 +1393,32 @@ async def remove_member(
 
     logger.info("Removed user %s from org %s by %s", member_user_id, org_id, user.email)
     return MessageResponse(message="Member removed successfully.")
+
+
+@router.post("/{org_id}/invitations/{inv_id}/revoke", response_model=MessageResponse)
+async def revoke_invitation(
+    org_id: str,
+    inv_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Revoke a pending invitation. Org Admin only."""
+    await verify_organization(user, org_id)
+    await verify_org_admin(user, org_id)
+
+    supabase = get_supabase()
+    result = await (
+        supabase.table("org_invitations")
+        .update({"status": "revoked"})
+        .eq("id", inv_id)
+        .eq("organization_id", org_id)
+        .eq("status", "pending")
+    ).execute()
+
+    if not result.data:
+        raise HTTPException(404, "Pending invitation not found.")
+
+    logger.info("Revoked invitation %s in org %s by %s", inv_id, org_id, user.email)
+    return MessageResponse(message="Invitation revoked.")
 
 
 # ── Update Profile ──────────────────────────────────────────────

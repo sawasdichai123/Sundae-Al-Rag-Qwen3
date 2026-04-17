@@ -66,6 +66,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const [demotingId, setDemotingId] = useState<string | null>(null);
     const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
     const [invLoading, setInvLoading] = useState(true);
+    const [revokingId, setRevokingId] = useState<string | null>(null);
 
     const loadMembers = useCallback(async () => {
         try {
@@ -90,6 +91,12 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     }, [orgId]);
 
     useEffect(() => { loadMembers(); loadInvitations(); }, [loadMembers, loadInvitations]);
+
+    useEffect(() => {
+        const onFocus = () => { loadMembers(); loadInvitations(); };
+        window.addEventListener("focus", onFocus);
+        return () => window.removeEventListener("focus", onFocus);
+    }, [loadMembers, loadInvitations]);
 
     const handleInvite = async (e: FormEvent) => {
         e.preventDefault();
@@ -154,6 +161,20 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             toast("error", msg);
         } finally {
             setRemovingId(null);
+        }
+    };
+
+    const handleRevoke = async (invId: string, email: string) => {
+        if (!confirm(t("org.revokeConfirm").replace("{email}", email))) return;
+        setRevokingId(invId);
+        try {
+            await orgApi.revokeInvitation(orgId, invId);
+            toast("success", t("org.revokeSuccess"));
+            await loadInvitations();
+        } catch (err: unknown) {
+            toast("error", getApiError(err, t("org.revokeFailed")));
+        } finally {
+            setRevokingId(null);
         }
     };
 
@@ -299,6 +320,15 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${statusColors[inv.status] || "bg-steel-100 text-steel-500"}`}>
                                         {t(statusKey)}
                                     </span>
+                                    {canManage && inv.status === "pending" && (
+                                        <button
+                                            onClick={() => handleRevoke(inv.id, inv.invited_email)}
+                                            disabled={revokingId === inv.id}
+                                            className="text-xs text-red-500 hover:text-red-700 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                                        >
+                                            {revokingId === inv.id ? "..." : t("org.revoke")}
+                                        </button>
+                                    )}
                                 </div>
                             );
                         })}

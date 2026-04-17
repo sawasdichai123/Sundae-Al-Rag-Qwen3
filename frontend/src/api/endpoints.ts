@@ -445,6 +445,10 @@ export const orgApi = {
     listOrgInvitations: (orgId: string) =>
         apiClient.get<OrgInvitation[]>(`/api/orgs/${orgId}/invitations`),
 
+    /** Revoke a pending invitation. Org Admin only. */
+    revokeInvitation: (orgId: string, invitationId: string) =>
+        apiClient.post(`/api/orgs/${orgId}/invitations/${invitationId}/revoke`),
+
     /** Leave an organization. Last Org Admin cannot leave. */
     leave: (orgId: string) =>
         apiClient.post(`/api/orgs/${orgId}/leave`),
