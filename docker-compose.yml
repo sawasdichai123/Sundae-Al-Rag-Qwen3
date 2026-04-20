@@ -1,15 +1,18 @@
 # ═══════════════════════════════════════════════════════════════════
-# SUNDAE — Docker Compose (Frontend + Backend + Ollama)
+# SUNDAE — Docker Compose
 #
-# Usage:
-#   docker compose up -d          # Start all services
-#   docker compose logs -f        # Follow logs
-#   docker compose down           # Stop all services
+# ── Local development (no GPU required) ──────────────────────────
+#   docker compose up -d                    # frontend + backend only
+#   → Frontend: http://localhost:5173
+#   → Backend:  http://localhost:8001
+#   (Ollama must run on host: ollama serve)
 #
-# First-time setup (pull the LLM model):
-#   docker compose exec ollama ollama pull qwen3:14b
+# ── Production (with Caddy + Ollama) ─────────────────────────────
+#   export SITE_DOMAIN=sundae.example.com
+#   docker compose --profile production up -d
+#   → auto HTTPS via Let's Encrypt
 #
-# NOTE: Supabase is NOT included here — connect externally via .env
+# NOTE: Supabase is NOT included — connect externally via .env
 # ═══════════════════════════════════════════════════════════════════
 
 services:
@@ -19,14 +22,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Backend URL — points to the Docker backend service (host-mapped port)
-        VITE_API_BASE_URL: http://localhost:8001
-        # Supabase — set these in your shell or .env before building
+        VITE_APP_URL: ${VITE_APP_URL:-http://localhost:5173}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8001}
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     container_name: sundae-frontend
     ports:
-      - "3000:80"
+      - "5173:80"
     depends_on:
       - backend
     restart: unless-stopped
@@ -42,25 +44,47 @@ services:
     ports:
       - "8001:8000"
     env_file:
+      - ./.env
       - ./backend/.env
     environment:
-      # Override Ollama URL to point to the Docker service name
-      - OLLAMA_BASE_URL=http://ollama:11434
-    depends_on:
-      ollama:
-        condition: service_started
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:8001}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - sundae-network
 
-  # ── Ollama AI Engine ─────────────────────────────────────────────
+  # ── Caddy Reverse Proxy (production only) ──────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: sundae-caddy
+    profiles: ["production"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - SITE_DOMAIN=${SITE_DOMAIN:-localhost}
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    networks:
+      - sundae-network
+
+  # ── Ollama AI Engine (production only — GPU required) ───────────
   ollama:
     image: ollama/ollama:latest
     container_name: sundae-ollama
-    ports:
-      - "11434:11434"
+    profiles: ["production"]
+    expose:
+      - "11434"
     volumes:
-      # Persist downloaded models across container restarts
       - ./ollama_data:/root/.ollama
     deploy:
       resources:
@@ -76,3 +100,7 @@ services:
 networks:
   sundae-network:
     driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

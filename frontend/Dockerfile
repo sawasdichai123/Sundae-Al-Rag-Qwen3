@@ -11,6 +11,7 @@ RUN npm ci
 COPY . .
 
 # Build args → env vars for Vite (baked into static JS at build time)
+ARG VITE_APP_URL=http://localhost:5173
 ARG VITE_API_BASE_URL=http://localhost:8001
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY

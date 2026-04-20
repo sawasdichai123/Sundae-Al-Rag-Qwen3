@@ -834,6 +834,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 # Frontend
 cd frontend
 npm run dev
+
+
+# Line develop
+ngrok http http://localhost:8001
+
 ```
 
 ---
@@ -2767,13 +2772,34 @@ Uncomment block ใน `backend/app/routers/organization.py` (บรรทัด
 | `docker-compose.yml` | แก้ env_file paths: backend ใช้ `./.env` (root), frontend ใช้ `./frontend/.env` |
 | `DOCKER-README.md` | **สร้างใหม่** — deployment guide ครอบคลุม 4 scenarios ของ Ollama (GPU/CPU/External/Cloud) |
 
-### 35.3 Services
+### 35.3 Services (เดิม — ก่อน Caddy)
 
 | Service | Container | Port | Image |
 |---------|-----------|------|-------|
-| Frontend | sundae-frontend | 3000:80 | Nginx (build from `./frontend/Dockerfile`) |
+| Frontend | sundae-frontend | 5173:80 | Nginx (build from `./frontend/Dockerfile`) |
 | Backend | sundae-backend | 8001:8000 | FastAPI (build from `./backend/Dockerfile`) |
 | Ollama | sundae-ollama | 11434:11434 | `ollama/ollama:latest` (GPU passthrough) |
+
+### 35.4 ngrok (LINE Webhook tunnel สำหรับ Development)
+
+**รัน Backend โดยตรง (uvicorn + SSL):**
+```bash
+ngrok http https://localhost:8001
+```
+
+**รัน Backend ผ่าน Docker (HTTP):**
+```bash
+ngrok http http://localhost:8001
+```
+
+> **หมายเหตุ:** ถ้าใช้ fixed domain (free plan) ให้เพิ่ม `--domain`:
+> ```bash
+> ngrok http http://localhost:8001 --domain=overjealously-unfoul-shoshana.ngrok-free.dev
+> ```
+> จากนั้นนำ URL ไปใส่ใน LINE Developers Console → Messaging API → Webhook URL:
+> ```
+> https://{ngrok-domain}/api/webhook/line/{org_id}
+> ```
 
 ---
 
@@ -5029,4 +5055,134 @@ POST /api/orgs/{org_id}/invitations/{inv_id}/revoke
 | `frontend/src/api/endpoints.ts` | เพิ่ม `orgApi.revokeInvitation()` |
 | `frontend/src/i18n/en.json` | เพิ่ม revoke + platform strings |
 | `frontend/src/i18n/th.json` | เพิ่ม revoke + platform strings |
+
+---
+
+## 73. Docker Compose + Caddy Reverse Proxy (20 เมษายน 2569)
+
+### 73.1 สิ่งที่ทำ
+
+ปรับ Docker Compose ให้พร้อม deploy บน production server โดยเพิ่ม **Caddy** เป็น reverse proxy ที่จัดการ HTTPS อัตโนมัติผ่าน Let's Encrypt — LINE webhook ทำงานได้ทันทีหลัง deploy
+
+### 73.2 Architecture
+
+```
+Internet (LINE webhook / Browser)
+        │ port 443 (HTTPS)
+        ▼
+┌─── Caddy ──────────────────────┐
+│  Auto SSL (Let's Encrypt)      │
+│                                │
+│  /api/*  → backend:8000        │
+│  /health → backend:8000        │
+│  /*      → frontend:80         │
+└────────────────────────────────┘
+        │            │
+   ┌────┘            └────┐
+   ▼                      ▼
+Backend               Frontend
+(FastAPI)             (Nginx)
+   │
+   ▼
+ Ollama
+```
+
+### 73.3 Services (ปัจจุบัน)
+
+| Service | Container | Expose | Image | หมายเหตุ |
+|---------|-----------|--------|-------|----------|
+| Caddy | sundae-caddy | 80, 443 | `caddy:2-alpine` | Reverse proxy + auto SSL |
+| Frontend | sundae-frontend | 80 (internal) | Nginx (build) | ไม่เปิด port สู่ภายนอก |
+| Backend | sundae-backend | 8000 (internal) | FastAPI (build) | ไม่เปิด port สู่ภายนอก |
+| Ollama | sundae-ollama | 11434 (internal) | `ollama/ollama:latest` | GPU passthrough |
+
+> **เปลี่ยนจากเดิม:** Frontend/Backend/Ollama เปลี่ยนจาก `ports` → `expose` เพื่อไม่เปิด port ตรงสู่ภายนอก ทุก traffic ผ่าน Caddy
+
+### 73.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `docker-compose.yml` | ปรับใหม่ — dev mode (frontend+backend) + production profile (Caddy+Ollama) |
+| `Caddyfile` | **สร้างใหม่** — reverse proxy config, route `/api/*` → backend, `/*` → frontend |
+| `frontend/Dockerfile` | เพิ่ม `VITE_APP_URL` build arg, แก้ default port ให้ตรง dev |
+| `frontend/nginx.conf` | ย้าย CSP จาก index.html มาจัดการที่ nginx เท่านั้น |
+| `frontend/index.html` | ลบ CSP meta tag (Vite ไม่ replace `%VITE_*%` ใน HTML) |
+| `.env` (root) | เพิ่ม `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` สำหรับ Docker build |
+
+### 73.5 Docker Compose Architecture
+
+**Dev mode** (`docker compose up -d`):
+- Frontend (5173:80) + Backend (8001:8000) เท่านั้น
+- Ollama ใช้จาก host machine ผ่าน `host.docker.internal:11434`
+- Port ตรงกับ dev เลย (5173, 8001) ไม่ต้องเปลี่ยน config
+
+**Production mode** (`docker compose --profile production up -d`):
+- เพิ่ม Caddy (80/443 auto SSL) + Ollama container (GPU)
+- ตั้ง `SITE_DOMAIN` สำหรับ domain จริง
+
+### 73.6 Environment Variables
+
+| ตัวแปร | Dev (เครื่องตัวเอง) | Production (Server) |
+|--------|-------------------|-------------------|
+| `SITE_DOMAIN` | ไม่ต้องตั้ง | `sundae.example.com` |
+| `VITE_APP_URL` | `http://localhost:5173` (default) | `https://sundae.example.com` |
+| `VITE_API_BASE_URL` | `http://localhost:8001` (default) | `https://sundae.example.com` |
+| `PUBLIC_API_URL` | `http://localhost:8001` (default) | `https://sundae.example.com` |
+| `OLLAMA_BASE_URL` | `host.docker.internal:11434` (auto) | Ollama container (auto) |
+| `LLM_MODEL` | ไม่ต้องตั้ง (default: `qwen2.5:3b`) | `qwen3:14b` |
+
+> **สำคัญ:** `VITE_*` ถูก bake ตอน build — ถ้าเปลี่ยนค่าต้อง `docker compose build --no-cache frontend`
+
+### 73.7 Deploy Commands
+
+```bash
+# ── Development (เครื่องตัวเอง) ──────────────────────────────
+docker compose up -d
+# Frontend: http://localhost:5173
+# Backend:  http://localhost:8001
+# Ollama ต้องรันบน host: ollama serve
+
+# ── Production (Server) ──────────────────────────────────────
+export SITE_DOMAIN=sundae.example.com
+export VITE_APP_URL=https://sundae.example.com
+export VITE_API_BASE_URL=https://sundae.example.com
+docker compose --profile production up -d
+docker compose exec ollama ollama pull qwen3:14b
+# Caddy ขอ SSL cert จาก Let's Encrypt อัตโนมัติ
+# LINE webhook: https://sundae.example.com/api/webhook/line/{org_id}
+```
+
+### 73.8 LLM Model Config
+
+- Default ใน code: `qwen2.5:3b` (`backend/app/core/config.py:68-69`)
+- `.env` มี `# LLM_MODEL=qwen3:14b` (comment ไว้)
+- **Dev:** ไม่ต้อง uncomment → ใช้ `qwen2.5:3b`
+- **Production:** uncomment `LLM_MODEL=qwen3:14b` ใน `.env`
+
+### 73.9 LINE Webhook — Dev vs Production
+
+| | Development (uvicorn โดยตรง) | Development (Docker) | Production |
+|---|---|---|---|
+| **เข้าถึงจาก internet** | ngrok tunnel | ngrok tunnel | Caddy (auto SSL) |
+| **Webhook URL** | `https://{ngrok}/api/webhook/line/{org_id}` | `https://{ngrok}/api/webhook/line/{org_id}` | `https://{SITE_DOMAIN}/api/webhook/line/{org_id}` |
+| **SSL** | ngrok จัดการ | ngrok จัดการ | Caddy + Let's Encrypt |
+| **คำสั่ง ngrok** | `ngrok http https://localhost:8001` | `ngrok http http://localhost:8001` | ไม่ต้องทำ |
+
+> **สำคัญ:** uvicorn โดยตรงใช้ HTTPS (SSL cert), Docker ใช้ HTTP — ngrok command ต่างกัน!
+
+### 73.10 CSP (Content Security Policy)
+
+- **ก่อนหน้า:** CSP อยู่ใน `index.html` meta tag → Vite ไม่ replace `%VITE_*%` ใน HTML ทำให้ Supabase URL หายไป
+- **แก้ไข:** ลบ CSP meta tag ออก, จัดการ CSP ที่ `nginx.conf` แทน
+- nginx CSP อนุญาต: `https://*.supabase.co`, `wss://*.supabase.co`, `http://localhost:*`, `https://localhost:*`
+
+### 73.11 Troubleshooting
+
+| ปัญหา | สาเหตุ | แก้ไข |
+|--------|--------|-------|
+| หน้าว่างเปล่า | CSP block Supabase / Missing VITE env | เช็ค F12 Console, ดู nginx CSP |
+| `FATAL: Missing VITE_SUPABASE_URL` | Docker build ไม่ได้รับ env var | เพิ่ม `VITE_SUPABASE_URL` ใน root `.env` แล้ว rebuild `--no-cache` |
+| Backend restart loop | ขาด Supabase env vars | เพิ่ม `.env` (root) ใน `env_file` ของ docker-compose |
+| Ollama not reachable | Docker ชี้ไป localhost แทน host | ใช้ `host.docker.internal:11434` + `extra_hosts` |
+| ngrok Invalid HTTP request | ใช้ `https://` กับ Docker backend (HTTP) | เปลี่ยนเป็น `ngrok http http://localhost:8001` |
 

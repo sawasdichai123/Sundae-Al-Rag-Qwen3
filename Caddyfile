@@ -1,0 +1,27 @@
+# ═══════════════════════════════════════════════════════════════════
+# SUNDAE — Caddy Reverse Proxy
+#
+# Caddy auto-provisions HTTPS via Let's Encrypt.
+# Set your domain via SITE_DOMAIN env var in .env (e.g. sundae.example.com)
+#
+# Routes:
+#   /api/*          → backend (FastAPI)
+#   /health         → backend (health check)
+#   /*              → frontend (React SPA via Nginx)
+# ═══════════════════════════════════════════════════════════════════
+
+{$SITE_DOMAIN:localhost} {
+    # ── API & Webhook → Backend ──────────────────────────────────
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+
+    handle /health {
+        reverse_proxy backend:8000
+    }
+
+    # ── Everything else → Frontend ───────────────────────────────
+    handle {
+        reverse_proxy frontend:80
+    }
+}

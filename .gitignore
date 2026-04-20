@@ -60,5 +60,7 @@ test-results/
 frontend/test-results/
 
 # ── Internal Reports (ไม่ push ขึ้น Git) ────────────────────────
-Code Review Report.md
-UI Review and Implementation Plan.md
+code-reviews/
+
+# ── Project Documents (ตัวอย่างเอกสารโปรเจ็ค) ──────────────────
+ตัวอย่างเอกสารโปรเจ็ค/

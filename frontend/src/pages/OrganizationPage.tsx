@@ -54,7 +54,6 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const toast = useToastStore((s) => s.addToast);
     const fetchOrgs = useOrgStore((s) => s.fetchOrgs);
     const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
-    const userRole = useAuthStore((s) => s.user?.role);
     const currentUserId = useAuthStore((s) => s.user?.id);
     const canManage = isOrgAdmin && !isProtectedOrg;
     const [members, setMembers] = useState<OrgMember[]>([]);

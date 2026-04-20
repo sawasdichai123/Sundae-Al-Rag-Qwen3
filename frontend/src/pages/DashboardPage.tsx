@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuthStore, selectIsSupport } from "../store/authStore";
+import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { documentsApi, botsApi, inboxApi, orgApi } from "../api/endpoints";
 import apiClient from "../api/axios";
@@ -295,7 +295,6 @@ function ServerMetrics() {
 export default function DashboardPage() {
     const t = useT();
     const user = useAuthStore((s) => s.user);
-    const isSupport = useAuthStore(selectIsSupport);
     const navigate = useNavigate();
 
     const [docCount, setDocCount] = useState<number | null>(null);

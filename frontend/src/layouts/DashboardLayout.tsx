@@ -178,15 +178,8 @@ export default function DashboardLayout() {
     const orgsFetched = useOrgStore((s) => s.hasFetched);
     const fetchFailed = useOrgStore((s) => s.fetchFailed);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
-    const activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
-
-    // Platform brand logo — uses home org (SUNDAE) logo
-    const homeOrgLogo = useOrgStore((s) => {
-        const homeId = s.orgs.find((o) => o.slug === "sundae")?.id
-            || user?.organization_id
-            || s.orgs.find((o) => o.org_role === "admin")?.id;
-        return homeId ? s.orgs.find((o) => o.id === homeId)?.logo_url : null;
-    });
+    const _activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
+    void _activeOrgLogo;
 
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
