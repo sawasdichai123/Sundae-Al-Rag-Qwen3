@@ -55,6 +55,25 @@ services:
     networks:
       - sundae-network
 
+  # ── ngrok Tunnel (dev LINE webhook) ─────────────────────────────
+  # Requires NGROK_AUTHTOKEN in .env
+  # After start: docker logs sundae-ngrok → copy the Forwarding URL
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: sundae-ngrok
+    command: http host.docker.internal:8001 --log stdout
+    ports:
+      - "4040:4040"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - sundae-network
+
   # ── Caddy Reverse Proxy (production only) ──────────────────────
   caddy:
     image: caddy:2-alpine
