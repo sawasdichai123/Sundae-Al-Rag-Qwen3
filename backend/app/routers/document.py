@@ -7,7 +7,7 @@ This is the ingestion pipeline that prepares documents for RAG retrieval.
 Flow:
   1. Accept PDF via multipart form upload
   2. Store original PDF in Supabase Storage (for preview/download)
-  3. Extract text using PyMuPDF
+  3. Extract text using PyMuPDF (+ EasyOCR fallback for scanned pages)
   4. Split into Parent-Child chunks (Thai-aware)
   5. Embed child chunks using BAAI/bge-m3
   6. Store everything in Supabase with organization_id isolation
@@ -26,6 +26,7 @@ from typing import Optional
 
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from PIL import Image
 from pydantic import BaseModel
 
 from app.core.auth import CurrentUser, require_approved, require_org_admin, verify_organization
@@ -293,21 +294,48 @@ async def link_document_to_bots(
 PAGE_SENTINEL_PATTERN = "<<<PAGE:{page}>>>"
 
 
+_ocr_reader = None
+
+
+def _get_ocr_reader():
+    """Lazy-load EasyOCR reader (heavy init — model download on first use)."""
+    global _ocr_reader
+    if _ocr_reader is None:
+        import easyocr
+        _ocr_reader = easyocr.Reader(["th", "en"], gpu=False)
+        logger.info("EasyOCR reader initialized (th+en)")
+    return _ocr_reader
+
+
+MIN_CHARS_PER_PAGE = 20
+
+
+def _ocr_page(page) -> str:
+    """Run OCR on a single PDF page rendered as an image."""
+    zoom = 2.0
+    mat = fitz.Matrix(zoom, zoom)
+    pix = page.get_pixmap(matrix=mat)
+    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+    reader = _get_ocr_reader()
+    results = reader.readtext(
+        img,
+        paragraph=True,
+        detail=0,
+    )
+    return "\n".join(results)
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-    """Extract all text from a PDF file using PyMuPDF.
+    """Extract text from a PDF — native text first, OCR fallback for scanned pages.
+
+    Strategy:
+      1. Try PyMuPDF text extraction for each page (fast).
+      2. If a page yields fewer than MIN_CHARS_PER_PAGE characters,
+         treat it as a scanned/image page and run EasyOCR on it.
 
     Each page is preceded by a sentinel marker ``<<<PAGE:N>>>`` (1-based)
-    so that downstream chunking can compute page_start / page_end for
-    every chunk.  The sentinel is stripped before storing chunk text.
-
-    Args:
-        pdf_bytes: Raw bytes of the PDF file.
-
-    Returns:
-        Full text with page sentinels interleaved, ready for chunking.
-
-    Raises:
-        ValueError: If the PDF contains no extractable text.
+    so that downstream chunking can compute page_start / page_end.
     """
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -315,22 +343,35 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         raise ValueError(f"Cannot open PDF — file may be corrupted or password-protected: {exc}")
 
     pages: list[str] = []
+    ocr_page_count = 0
 
     try:
         for page in doc:
-            text = page.get_text("text")
-            if text and text.strip():
-                # page.number is 0-based; use +1 to match physical PDF page numbers
+            text = (page.get_text("text") or "").strip()
+
+            if len(text) < MIN_CHARS_PER_PAGE:
+                try:
+                    ocr_text = _ocr_page(page)
+                    if ocr_text and ocr_text.strip():
+                        text = ocr_text.strip()
+                        ocr_page_count += 1
+                except Exception as ocr_exc:
+                    logger.warning("OCR failed on page %d: %s", page.number + 1, ocr_exc)
+
+            if text:
                 sentinel = f"\n{PAGE_SENTINEL_PATTERN.format(page=page.number + 1)}\n"
-                pages.append(sentinel + text.strip())
+                pages.append(sentinel + text)
     finally:
         doc.close()
 
+    if ocr_page_count:
+        logger.info("OCR applied to %d scanned page(s)", ocr_page_count)
+
     full_text = "\n\n".join(pages)
     if not full_text.strip():
-        raise ValueError("PDF contains no extractable text.")
+        raise ValueError("PDF contains no extractable text (native extraction and OCR both returned empty).")
 
-    # Remove null bytes — PostgreSQL text columns reject \u0000
+    # Remove null bytes — PostgreSQL text columns reject 
     full_text = full_text.replace("\x00", "")
 
     return full_text
@@ -373,7 +414,7 @@ async def upload_document(
         parsed_bot_ids = [b.strip() for b in bot_ids.split(",") if b.strip()]
 
     document_id = str(uuid.uuid4())
-    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
+    sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-฀-๿ ]", "_", file.filename or "untitled.pdf")
     supabase = get_supabase()
 
     try:

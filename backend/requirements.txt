@@ -16,6 +16,8 @@ llama-index-core>=0.12.0
 sentence-transformers>=3.4.0
 PyMuPDF>=1.25.0
 python-docx>=1.1.0
+easyocr>=1.7.0
+Pillow>=10.0.0
 
 # ── Thai NLP ─────────────────────────────────────────────────────
 pythainlp>=5.0.0
