@@ -5186,3 +5186,87 @@ docker compose exec ollama ollama pull qwen3:14b
 | Ollama not reachable | Docker ชี้ไป localhost แทน host | ใช้ `host.docker.internal:11434` + `extra_hosts` |
 | ngrok Invalid HTTP request | ใช้ `https://` กับ Docker backend (HTTP) | เปลี่ยนเป็น `ngrok http http://localhost:8001` |
 
+---
+
+## 74. แก้ไขตามคอมเม้น (23 เมษายน 2569)
+
+### 74.1 เปลี่ยนไอคอน Sidebar — เชื่อมต่อ + แชท
+
+**ปัญหา:** ไอคอนเดิมไม่สื่อถึงเนื้อหาของหน้า
+- **เชื่อมต่อ (Integration):** เดิมเป็นไอคอนประแจ (wrench) → เปลี่ยนเป็น **โซ่เชื่อมต่อ (link chain)** สื่อถึงการเชื่อมต่อแพลตฟอร์ม
+- **แชท (Chat):** เดิมเป็นเครื่องหมายคำถามในวงกลม → เปลี่ยนเป็น **กล่องแชทพร้อมเส้นข้อความ (chat bubble)** สื่อถึงการสนทนา
+
+**ไฟล์ที่แก้ไข:** `frontend/src/layouts/DashboardLayout.tsx`
+
+### 74.2 ตรวจสอบ Wording ภาษาไทย — แก้ไข 50+ จุด
+
+**ปัญหา:** หลายหน้ายังมีภาษาอังกฤษปนเมื่อเลือกใช้ภาษาไทย และคำศัพท์ไม่สอดคล้องกัน
+
+**หลักการแก้ไข:** ใช้ชื่อใน Sidebar เป็นมาตรฐาน แล้วแก้ไขทุกหน้าให้ตรงกัน
+
+| คำเดิม (ไม่สอดคล้อง) | แก้ไขเป็น (ตรงกับ Sidebar) | หมายเหตุ |
+|------------------------|---------------------------|----------|
+| Bot / AI Bot / AI Bots | **บอท** | ทุกหน้า: bots, dashboard, integration, chat, kb, layout, createOrg |
+| Knowledge Base | **คลังความรู้** | kb.title, bots.knowledge*, createOrg.desc |
+| เพิ่มคอลเลคชัน | **อัปโหลดเอกสาร** | kb.addCollection — สื่อตรงกว่า |
+| Inbox | **กล่องข้อความ** | inbox.title, dashboard.viewInbox, layout.pendingInbox |
+| Dashboard | **แดชบอร์ด** | dashboard.pending*, createOrg.goToDashboard |
+| Danger Zone | **โซนอันตราย** | profile.lastAdminDesc, profile.goToDangerZone |
+| Web Chat | **แชทเว็บ** | bots.webChat*, integration.noBotEnabled, dashboard.pendingChat |
+| chunks | **ส่วน** | kb.chunks |
+| Server Resources | **ทรัพยากรเซิร์ฟเวอร์** | dashboard.serverResources |
+| Online | **ออนไลน์** | layout.online |
+| Bot ID: | **รหัสบอท:** | bots.botIdPrefix |
+| Customer Support Bot | **บอทบริการลูกค้า** | bots.botNamePlaceholder |
+
+**ไฟล์ที่แก้ไข:** `frontend/src/i18n/th.json` (50+ keys)
+
+### 74.3 แก้ไข Backend — pydantic Settings extra inputs
+
+**ปัญหา:** เมื่อ root `.env` มีตัวแปร `VITE_*` และ `NGROK_AUTHTOKEN` ซึ่งไม่ใช่ field ของ Settings → pydantic ปฏิเสธด้วย `extra_forbidden` ValidationError
+
+**แก้ไข:** เพิ่ม `"extra": "ignore"` ใน `model_config` ของ Settings class
+
+```python
+model_config = {
+    "env_file": ("../.env", ".env"),
+    "env_file_encoding": "utf-8",
+    "extra": "ignore",  # ← เพิ่มบรรทัดนี้
+}
+```
+
+**ไฟล์ที่แก้ไข:** `backend/app/core/config.py`
+
+### 74.4 Docker Compose — เพิ่ม ngrok Service
+
+**ปัญหา:** ต้องรัน ngrok แยกต่างหากเพื่อสร้าง tunnel สำหรับ LINE webhook
+
+**แก้ไข:** เพิ่ม ngrok service ใน `docker-compose.yml` ให้รันพร้อมกับ frontend + backend
+
+```yaml
+ngrok:
+  image: ngrok/ngrok:latest
+  container_name: sundae-ngrok
+  command: http host.docker.internal:8001 --log stdout
+  ports:
+    - "4040:4040"
+  environment:
+    - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+```
+
+- ดู URL ได้ที่: `docker logs sundae-ngrok` หรือ `http://localhost:4040`
+- ต้องมี `NGROK_AUTHTOKEN` ใน root `.env`
+
+**ไฟล์ที่แก้ไข:** `docker-compose.yml`
+
+### 74.5 สรุปไฟล์ที่แก้ไขทั้งหมด
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `frontend/src/layouts/DashboardLayout.tsx` | เปลี่ยนไอคอน Integration + Chat |
+| `frontend/src/i18n/th.json` | แก้ไข wording 50+ จุดให้สอดคล้องกัน |
+| `backend/app/core/config.py` | เพิ่ม `extra: "ignore"` แก้ ValidationError |
+| `docker-compose.yml` | เพิ่ม ngrok service สำหรับ LINE webhook |
+
