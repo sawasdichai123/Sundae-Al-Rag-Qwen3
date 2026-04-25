@@ -1,67 +1,69 @@
 # Implementation Plan — แก้ไขตามคอมเม้น (24 เมษายน 2569)
 
+> **อัพเดทล่าสุด:** 25 เมษายน 2569
+
 ---
 
 ## 1. ระบบการอนุมัติและจัดการผู้ใช้งาน (User Approval & Management)
 
-### 1.1 ปรับเปลี่ยนสิทธิ์การอนุมัติ
+### 1.1 ปรับเปลี่ยนสิทธิ์การอนุมัติ ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- Platform Admin/Support เป็นคนอนุมัติผู้ใช้ทุกคนผ่าน `/api/admin/pending-users`
-- เมื่อ approve → auto-accept org invitation → สร้าง org_members
+> **Implement เมื่อ:** 25 เม.ย. 2569 | **Commit:** `f645f73`
 
-**สิ่งที่ต้องเปลี่ยน:**
-- Platform Admin มีหน้าที่แค่ **สร้าง Org** + **กำหนด Org Admin**
-- **Org Admin** ของแต่ละองค์กรเป็นผู้อนุมัติสมาชิกในองค์กรของตัวเอง
+**สิ่งที่ Implement ไปแล้ว (ปรับจากแผนเดิม → ใช้ระบบ 3 Flow แทน):**
 
-**แผนการ Implement:**
+แทนที่จะให้ Org Admin approve สมาชิกทีละคน ได้เปลี่ยนเป็นระบบอนุมัติอัตโนมัติ 3 Flow:
 
-#### Backend
+| Flow | รายละเอียด | สถานะ |
+|------|-----------|-------|
+| **Flow 1** | Org Admin เชิญอีเมล → ผู้ใช้สมัคร → auto-approve + เข้า org ทันที (รองรับ multi-org) | ✅ |
+| **Flow 2** | ผู้ใช้สมัครก่อน (pending) → Org Admin เชิญอีเมลนั้น → popup ยืนยัน → auto-approve + เข้า org | ✅ |
+| **Flow 3** | สมัครโดยไม่มีคำเชิญ → รอ Platform Admin อนุมัติเท่านั้น | ✅ |
+
+**ไฟล์ที่แก้ไข:**
+
 | ไฟล์ | การเปลี่ยนแปลง |
 |------|----------------|
-| `backend/app/routers/approval.py` | เพิ่ม endpoint ใหม่ `GET /api/orgs/{org_id}/pending-members` — ให้ Org Admin ดูรายชื่อสมาชิกที่รออนุมัติใน org ของตัวเอง |
-| `backend/app/routers/approval.py` | เพิ่ม endpoint `POST /api/orgs/{org_id}/approve/{user_id}` — Org Admin อนุมัติสมาชิก |
-| `backend/app/routers/approval.py` | เพิ่ม endpoint `POST /api/orgs/{org_id}/reject/{user_id}` — Org Admin ปฏิเสธสมาชิก |
-| `backend/app/routers/approval.py` | endpoint เดิม `/api/admin/approve` ยังคงใช้สำหรับ Platform Admin สร้าง Org + กำหนด Admin |
+| `backend/sql/020_comment_feedback_migrations.sql` | SQL trigger `handle_new_auth_user()` — ตรวจ `org_invitations` ตอนสมัคร ถ้ามีคำเชิญ → auto-approve + เข้า org ทันที |
+| `backend/app/routers/organization.py` | `invite_member` endpoint — รองรับ 3 กรณี: ยังไม่สมัคร (409 `USER_NOT_REGISTERED`), pending approval (409 `USER_PENDING_APPROVAL`), ปกติ → มี `confirm_approve` flag สำหรับยืนยัน |
+| `backend/app/routers/approval.py` | auto-accept invitation flow — เมื่อ Platform Admin approve ถ้ามี pending invitation จะ join org ให้อัตโนมัติ |
+| `frontend/src/pages/OrganizationPage.tsx` | ConfirmModal popup สำหรับยืนยันการเชิญ (แทน browser `confirm()`) |
+| `frontend/src/components/ConfirmModal.tsx` | **ไฟล์ใหม่** — Custom modal component รองรับ variant: warning/danger/info, ใช้ theme brand/steel |
+| `frontend/src/api/endpoints.ts` | `invite()` เพิ่ม `confirmApprove` parameter |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม ~14 keys สำหรับ invite confirmation messages |
 
-#### Frontend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/pages/ApprovalsPage.tsx` | แยก UI เป็น 2 มุมมอง: Platform Admin เห็นทุก org / Org Admin เห็นเฉพาะ org ตัวเอง |
-| `frontend/src/pages/OrganizationPage.tsx` | เพิ่ม tab "รออนุมัติ" ให้ Org Admin เห็นสมาชิกที่รอ approve ใน org |
+**การปรับปรุง UI เพิ่มเติมที่ทำพร้อมกัน:**
+
+| รายการ | ไฟล์ที่แก้ |
+|--------|-----------|
+| ลบ backdrop สีดำออกจาก modal ทุกจุด | `BotsPage.tsx`, `KnowledgeBasePage.tsx`, `OrganizationPage.tsx` |
+| Password validation — label + error handling ตรงกับเงื่อนไข (8 ตัวขึ้นไป) | `LoginPage.tsx` |
+| Protected org เปลี่ยนจากเช็ค slug → เช็ค org ID (ป้องกัน bypass) | `DangerZonePage.tsx`, `ProfilePage.tsx`, `OrganizationPage.tsx` |
+| แยก canManage (promote/demote) กับ canRemove (ลบสมาชิก) | `OrganizationPage.tsx` |
 
 ---
 
-### 1.2 แสดงสถานะผู้ใช้ + ประวัติการอนุมัติ
+### 1.2 แสดงสถานะผู้ใช้ + ประวัติการอนุมัติ ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- ไม่มีข้อมูลว่าใครเป็นคน approve / เมื่อไหร่ — แค่ log ใน console
-- `user_profiles` มี `is_approved` + `created_at` อยู่แล้ว แต่ไม่มี field บอกผู้อนุมัติ
+> **Implement เมื่อ:** 25 เม.ย. 2569 | **Commit:** `f645f73`
 
-**แนวทาง: เพิ่ม column ใน `user_profiles` ที่มีอยู่แล้ว (ไม่ต้องสร้างตารางใหม่)**
-
-> เหตุผล: ข้อมูล "ใครอนุมัติ เมื่อไหร่" ผูกกับ user โดยตรง — เก็บไว้ใน `user_profiles` ได้เลย
-> ไม่ต้องสร้างตาราง `approval_logs` แยก เพราะแต่ละ user ถูก approve ได้แค่ครั้งเดียว
+**สิ่งที่ Implement ไปแล้ว:**
 
 #### Database (SQL Migration)
 ```sql
--- เพิ่ม 2 columns ใน user_profiles (ไม่ต้องสร้างตารางใหม่)
-ALTER TABLE user_profiles ADD COLUMN approved_by UUID REFERENCES user_profiles(id);
-ALTER TABLE user_profiles ADD COLUMN approved_at TIMESTAMPTZ;
+-- เพิ่ม 2 columns ใน user_profiles (อยู่ใน 020_comment_feedback_migrations.sql)
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_by UUID REFERENCES user_profiles(id);
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 ```
 
 #### Backend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `backend/app/routers/approval.py` | ตอน approve → UPDATE `user_profiles` SET `approved_by = admin.id`, `approved_at = now()` พร้อมกับ `is_approved = true` |
-| `backend/app/routers/approval.py` | endpoint `GET /api/admin/pending-users` — JOIN กับ `user_profiles` เพื่อดึงชื่อผู้อนุมัติ |
-| `backend/app/routers/organization.py` | หน้า org members → แสดง `approved_by` + `approved_at` ได้จาก user_profiles โดยตรง |
-
-#### Frontend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/pages/OrganizationPage.tsx` | หน้ารายชื่อสมาชิก — แสดงคอลัมน์ "อนุมัติโดย" + "วันที่อนุมัติ" |
-| `frontend/src/pages/ApprovalsPage.tsx` | แสดง badge สถานะ (pending/approved/rejected) ข้างชื่อผู้ใช้ |
+| ไฟล์ | การเปลี่ยนแปลง | สถานะ |
+|------|----------------|-------|
+| `backend/app/routers/approval.py` | ตอน approve → UPDATE `approved_by = admin.id`, `approved_at = now()` | ✅ |
+| `backend/app/routers/approval.py` | endpoint `GET /api/admin/approved-users` — JOIN approver email, เรียงล่าสุดก่อน | ✅ |
+| `frontend/src/pages/ApprovalsPage.tsx` | แสดงประวัติ: ผู้อนุมัติ + วันเวลา, auto-approved badge, stats cards (pending/approved) | ✅ |
+| `frontend/src/types/index.ts` | เพิ่ม `ApprovedUser` interface | ✅ |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `listApproved()` API call | ✅ |
 
 ---
 
@@ -207,14 +209,14 @@ ALTER TABLE bots ADD COLUMN visible_to UUID[] NOT NULL DEFAULT '{}';
 
 ## สรุปลำดับความสำคัญ (Priority)
 
-| ลำดับ | งาน | ความซับซ้อน | ผลกระทบ |
-|-------|-----|-------------|---------|
-| 1 | แจ้งเตือน PDF only + แสดงรายละเอียดไฟล์ (2.1, 2.2) | ต่ำ-กลาง | แก้ปัญหาผู้ใช้สับสน |
-| 2 | ปรับระบบอนุมัติ + ประวัติ (1.1, 1.2) | สูง | เปลี่ยน flow หลัก |
-| 3 | Notification Badge (4.1) | กลาง | UX ดีขึ้นมาก |
-| 4 | Bot Visibility (3.1) | กลาง | ต้องการเมื่อ org มีหลายแผนก |
-| 5 | ระบบแท็ก (2.3) | กลาง | ต้องการเมื่อเอกสารเยอะ |
-| 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement |
+| ลำดับ | งาน | ความซับซ้อน | ผลกระทบ | สถานะ |
+|-------|-----|-------------|---------|-------|
+| ~~2~~ | ~~ปรับระบบอนุมัติ + ประวัติ (1.1, 1.2)~~ | ~~สูง~~ | ~~เปลี่ยน flow หลัก~~ | ✅ เสร็จแล้ว |
+| 1 | แจ้งเตือน PDF only + แสดงรายละเอียดไฟล์ (2.1, 2.2) | ต่ำ-กลาง | แก้ปัญหาผู้ใช้สับสน | ⏳ ยังไม่ได้ทำ |
+| 3 | Notification Badge (4.1) | กลาง | UX ดีขึ้นมาก | ⏳ ยังไม่ได้ทำ |
+| 4 | Bot Visibility (3.1) | กลาง | ต้องการเมื่อ org มีหลายแผนก | ⏳ ยังไม่ได้ทำ |
+| 5 | ระบบแท็ก (2.3) | กลาง | ต้องการเมื่อเอกสารเยอะ | ⏳ ยังไม่ได้ทำ |
+| 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement | ⏳ ยังไม่ได้ทำ |
 
 ---
 
