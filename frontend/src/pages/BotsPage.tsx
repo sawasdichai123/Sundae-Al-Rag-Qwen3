@@ -251,7 +251,7 @@ export default function BotsPage() {
 
     // ── Knowledge Selection Modal ───────────────────────────────
     const knowledgeModal = showKnowledgeModal && createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 animate-fade-in" onClick={() => setShowKnowledgeModal(false)}>
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setShowKnowledgeModal(false)}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-steel-100 flex items-center justify-between">

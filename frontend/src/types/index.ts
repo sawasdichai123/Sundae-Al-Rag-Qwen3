@@ -88,6 +88,20 @@ export interface PendingUser {
     created_at: string;
 }
 
+export interface ApprovedUser {
+    id: string;
+    email: string;
+    first_name: string | null;
+    last_name: string | null;
+    avatar_url: string | null;
+    role: string;
+    is_approved: boolean;
+    approved_by: string | null;
+    approved_by_email: string | null;
+    approved_at: string | null;
+    created_at: string;
+}
+
 // ── Bot Management ──────────────────────────────────────────────
 
 export interface Bot {

@@ -74,6 +74,7 @@ class UpdateOrgRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     email: str
+    confirm_approve: bool = False
 
 
 class OrgResponse(BaseModel):
@@ -1285,29 +1286,43 @@ async def invite_member(
     if not EMAIL_RE.match(email):
         raise HTTPException(400, "Invalid email format.")
 
-    # Check user exists in the system
+    # Check if user exists in the system
     profile_result = await (
         supabase.table("user_profiles")
-        .select("id")
+        .select("id, is_approved")
         .eq("email", email)
         .limit(1)
     ).execute()
 
-    if not profile_result.data:
-        raise HTTPException(400, f"User with email {email} is not registered in the system. They must sign up first.")
+    user_exists = bool(profile_result.data)
+    invited_user_id = profile_result.data[0]["id"] if user_exists else None
+    user_is_approved = profile_result.data[0].get("is_approved", False) if user_exists else False
 
-    invited_user_id = profile_result.data[0]["id"]
+    # Case 1: Email not registered yet — ask to confirm pre-invite
+    if not user_exists and not body.confirm_approve:
+        raise HTTPException(
+            status_code=409,
+            detail="USER_NOT_REGISTERED",
+        )
 
-    # Check not already a member
-    member_check = await (
-        supabase.table("org_members")
-        .select("user_id")
-        .eq("organization_id", org_id)
-        .eq("user_id", invited_user_id)
-        .limit(1)
-    ).execute()
-    if member_check.data:
-        raise HTTPException(400, f"{email} is already a member of this organization.")
+    # Case 2: Registered but pending approval — ask to confirm + approve
+    if user_exists and not user_is_approved and not body.confirm_approve:
+        raise HTTPException(
+            status_code=409,
+            detail="USER_PENDING_APPROVAL",
+        )
+
+    # Check not already a member (only if user exists)
+    if invited_user_id:
+        member_check = await (
+            supabase.table("org_members")
+            .select("user_id")
+            .eq("organization_id", org_id)
+            .eq("user_id", invited_user_id)
+            .limit(1)
+        ).execute()
+        if member_check.data:
+            raise HTTPException(400, f"{email} is already a member of this organization.")
 
     # Check not already invited (pending)
     existing_inv = await (
@@ -1321,8 +1336,88 @@ async def invite_member(
     if existing_inv.data:
         raise HTTPException(400, f"A pending invitation already exists for {email}.")
 
-    # Create invitation
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Case 2 confirmed: auto-approve + add to org immediately
+    if user_exists and not user_is_approved and body.confirm_approve:
+        await (
+            supabase.table("user_profiles")
+            .update({
+                "is_approved": True,
+                "approved_by": user.id,
+                "approved_at": now_iso,
+            })
+            .eq("id", invited_user_id)
+        ).execute()
+
+        admin_check = await (
+            supabase.table("org_members")
+            .select("user_id")
+            .eq("organization_id", org_id)
+            .eq("org_role", "admin")
+            .limit(1)
+        ).execute()
+        assigned_role = "admin" if not admin_check.data else "member"
+
+        await (
+            supabase.table("org_members").upsert(
+                {
+                    "user_id": invited_user_id,
+                    "organization_id": org_id,
+                    "org_role": assigned_role,
+                    "joined_at": now_iso,
+                },
+                on_conflict="user_id,organization_id",
+                ignore_duplicates=True,
+            )
+        ).execute()
+
+        inv_result = await (
+            supabase.table("org_invitations").insert({
+                "organization_id": org_id,
+                "invited_email": email,
+                "invited_by": user.id,
+                "status": "accepted",
+                "created_at": now_iso,
+            })
+        ).execute()
+
+        profile_org = await (
+            supabase.table("user_profiles")
+            .select("organization_id")
+            .eq("id", invited_user_id)
+            .single()
+        ).execute()
+        if profile_org.data and not profile_org.data.get("organization_id"):
+            await (
+                supabase.table("user_profiles")
+                .update({"organization_id": org_id})
+                .eq("id", invited_user_id)
+            ).execute()
+
+        try:
+            from app.core.auth import get_profile_cache
+            cache = await get_profile_cache()
+            await cache.invalidate(invited_user_id)
+        except Exception:
+            pass
+
+        logger.info(
+            "User %s auto-approved via invitation by %s (org %s)",
+            invited_user_id, user.email, org_id,
+        )
+
+        inv = inv_result.data[0] if inv_result.data else {}
+        return InvitationResponse(
+            id=inv.get("id", ""),
+            organization_id=org_id,
+            invited_email=email,
+            invited_by=user.id,
+            status="accepted",
+            created_at=now_iso,
+        )
+
+    # Normal flow: create pending invitation (approved user OR pre-invite for unregistered)
     inv_result = await (
         supabase.table("org_invitations").insert({
             "organization_id": org_id,
@@ -1338,7 +1433,7 @@ async def invite_member(
 
     inv = inv_result.data[0]
 
-    # Send invitation email (non-blocking — failure does not affect API response)
+    # Send invitation email (non-blocking)
     org_result = await (
         supabase.table("organizations")
         .select("name")

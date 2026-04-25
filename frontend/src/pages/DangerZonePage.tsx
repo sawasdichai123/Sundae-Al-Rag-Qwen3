@@ -132,7 +132,7 @@ export default function DangerZonePage() {
                 </div>
             )}
 
-            {!loading && orgSlug === "sundae" && (
+            {!loading && activeOrgId === "ef9d44af-d9ad-4a24-8336-7f99d5737d33" && (
                 <div className="bg-white rounded-2xl border border-steel-100 p-6">
                     <h2 className="text-sm font-semibold text-steel-800 mb-1">{t("dangerZone.deleteOrg")} "{orgName}"</h2>
                     <p className="text-xs text-steel-400">{t("dangerZone.mainOrgNotice")}</p>

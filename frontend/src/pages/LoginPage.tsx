@@ -62,6 +62,11 @@ export default function LoginPage() {
     const handleRegister = async (e: FormEvent) => {
         e.preventDefault();
         if (!email.trim() || !password.trim()) return;
+        if (password.trim().length < 8) {
+            setRegisterMsg(t("login.passwordTooShort"));
+            setRegisterSuccess(false);
+            return;
+        }
         setRegisterLoading(true);
         setRegisterMsg("");
         clearError();
@@ -73,9 +78,14 @@ export default function LoginPage() {
         });
 
         if (error) {
-            const msg = error.message.includes("already registered") || error.message.includes("User already registered")
-                ? t("login.emailTaken")
-                : t("login.passwordTooShort");
+            let msg: string;
+            if (error.message.includes("already registered") || error.message.includes("User already registered")) {
+                msg = t("login.emailTaken");
+            } else if (error.message.includes("password") && (error.message.includes("short") || error.message.includes("length") || error.message.includes("least"))) {
+                msg = t("login.passwordTooShort");
+            } else {
+                msg = error.message;
+            }
             setRegisterMsg(msg);
             setRegisterSuccess(false);
             setRegisterLoading(false);

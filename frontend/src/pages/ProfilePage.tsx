@@ -429,7 +429,7 @@ export default function ProfilePage() {
 
             {/* Section B: Platform (admin/support only) */}
             {(user?.role === "admin" || user?.role === "support") && (() => {
-                const platformOrg = orgs.find((o) => o.slug === "sundae");
+                const platformOrg = orgs.find((o) => o.id === "ef9d44af-d9ad-4a24-8336-7f99d5737d33");
                 if (!platformOrg) return null;
                 return (
                     <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
@@ -454,7 +454,7 @@ export default function ProfilePage() {
 
             {/* Section C: My Organizations */}
             {(() => {
-                const myOrgs = orgs.filter((o) => o.slug !== "sundae" && o.is_member !== false);
+                const myOrgs = orgs.filter((o) => o.id !== "ef9d44af-d9ad-4a24-8336-7f99d5737d33" && o.is_member !== false);
                 const orgIds = new Set(orgs.map((o) => o.id));
                 const filteredInvitations = invitations.filter((inv) => !orgIds.has(inv.organization_id));
                 return (
@@ -555,7 +555,7 @@ export default function ProfilePage() {
 
             {/* Last Admin Modal */}
             {lastAdminOrgId && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                <div className="fixed inset-0 z-50 flex items-center justify-center">
                     <div className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full mx-4">
                         <h3 className="text-base font-bold text-steel-900 mb-2">{t("profile.lastAdminTitle")}</h3>
                         <p className="text-sm text-steel-500 mb-5">{t("profile.lastAdminDesc")}</p>
@@ -579,7 +579,7 @@ export default function ProfilePage() {
 
             {/* Avatar Crop Modal */}
             {cropSrc && createPortal(
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
                         <div className="px-6 py-4 border-b border-steel-100">
                             <h3 className="text-base font-bold text-steel-900">{t("profile.cropTitle")}</h3>

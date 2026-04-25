@@ -5270,3 +5270,81 @@ ngrok:
 | `backend/app/core/config.py` | เพิ่ม `extra: "ignore"` แก้ ValidationError |
 | `docker-compose.yml` | เพิ่ม ngrok service สำหรับ LINE webhook |
 
+---
+
+## 75. ระบบการอนุมัติผู้ใช้ + Auto-Approve (25 เมษายน 2569)
+
+### 75.1 สรุปสิ่งที่ทำ
+
+ปรับปรุงระบบ approval จาก Platform Admin-only เป็น 3 flows:
+
+| Flow | รายละเอียด |
+|------|-----------|
+| **Flow 1: เชิญก่อน → สมัครทีหลัง** | Org Admin เชิญ email → user สมัคร → auto-approve + เข้า Org ทันที (รวมหลาย Org) |
+| **Flow 2: สมัครก่อน → เชิญทีหลัง** | User สมัครเอง → รอ approve → Org Admin เชิญ email นี้ → popup ถามยืนยัน → approve + เข้า Org ทันที |
+| **Flow 3: สมัครเองไม่มีใครเชิญ** | User สมัครเอง → รอ Platform Admin อนุมัติอย่างเดียว |
+
+เพิ่มเคส: เชิญ email ที่ยังไม่ได้สมัคร → popup ถาม → สร้าง pre-invite → เมื่อสมัครจะ auto-approve
+
+### 75.2 SQL Migration (รวมใน 020)
+
+แก้ trigger `handle_new_auth_user()`:
+- เดิม: `is_approved = false` เสมอ
+- ใหม่: เช็ค `org_invitations` → ถ้ามี pending → `is_approved = true` + accept invitation + เข้า Org ทันที
+- แก้จาก `full_name` → `first_name` + `last_name` (column เดิมถูกลบไปแล้ว)
+- Wrap invitation logic ใน `BEGIN...EXCEPTION` เพื่อไม่ให้ signup พังทั้งหมด
+
+### 75.3 Backend Changes
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `backend/app/routers/organization.py` | `invite_member` — เพิ่ม `confirm_approve` ใน request body, handle 3 กรณี: ยังไม่สมัคร (409 `USER_NOT_REGISTERED`), สมัครแล้วรอ approve (409 `USER_PENDING_APPROVAL`), สมัครแล้ว approved (เชิญปกติ) |
+| `backend/app/routers/approval.py` | เพิ่ม `ApprovedUserResponse` model + endpoint `GET /api/admin/approved-users` แสดงประวัติการอนุมัติ (approved_by_email + approved_at) |
+
+### 75.4 Frontend Changes
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|---------------|
+| `frontend/src/components/ConfirmModal.tsx` | **สร้างใหม่** — modal component ใช้ theme brand/steel ไม่มี backdrop ดำ |
+| `frontend/src/pages/OrganizationPage.tsx` | `handleInvite` ใช้ ConfirmModal แทน `confirm()`, handle 409 responses, แยก `canManage` (promote/demote) กับ `canRemove` (ลบสมาชิก) |
+| `frontend/src/pages/ApprovalsPage.tsx` | เพิ่มส่วน "ประวัติการอนุมัติ" แสดง approved users + อนุมัติโดยใคร + เมื่อไหร่ + stats card 2 ช่อง |
+| `frontend/src/api/endpoints.ts` | `invite()` เพิ่ม `confirmApprove` param, เพิ่ม `listApproved()` |
+| `frontend/src/types/index.ts` | เพิ่ม `ApprovedUser` interface |
+| `frontend/src/pages/LoginPage.tsx` | แก้ password validation เป็น 8 ตัว + แก้ error handling ให้แสดง error จริงจาก Supabase |
+
+### 75.5 UI/UX Improvements
+
+| การเปลี่ยนแปลง | รายละเอียด |
+|----------------|-----------|
+| **ลบ backdrop ดำ** | ลบ `bg-black/*` ออกจากทุก modal (BotsPage, KnowledgeBasePage, ProfilePage, OrganizationPage) |
+| **Password label** | แก้จาก "อย่างน้อย 6 ตัว" → "อย่างน้อย 8 ตัว" ให้ตรงกับ `minLength={8}` |
+| **Protected Org** | เปลี่ยนเงื่อนไขจาก `slug === "sundae"` → เช็คจาก org ID (`ef9d44af-...`) ทุกไฟล์ |
+
+### 75.6 i18n Keys เพิ่มใหม่
+
+**Thai (th.json):**
+- `org.invitePendingTitle`, `org.invitePendingConfirm` — popup สำหรับ user ที่รอ approve
+- `org.inviteNotRegisteredTitle`, `org.inviteNotRegisteredConfirm`, `org.inviteNotRegisteredNote` — popup สำหรับ email ที่ยังไม่สมัคร
+- `org.inviteApprovedSuccess`, `org.invitePreSuccess`, `org.inviteConfirmBtn`
+- `approvals.approved`, `approvals.approvedHistory`, `approvals.approvedBy`, `approvals.autoApproved`, `approvals.statusApproved`
+
+### 75.7 ไฟล์ที่แก้ไขทั้งหมด
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/sql/020_comment_feedback_migrations.sql` | รวม trigger auto-approve เข้ามา (ส่วนที่ 4) |
+| `backend/app/routers/organization.py` | invite_member 3 กรณี + confirm_approve |
+| `backend/app/routers/approval.py` | เพิ่ม approved-users endpoint |
+| `frontend/src/components/ConfirmModal.tsx` | สร้างใหม่ |
+| `frontend/src/pages/OrganizationPage.tsx` | ConfirmModal + canManage/canRemove + protected org by ID |
+| `frontend/src/pages/ApprovalsPage.tsx` | ประวัติการอนุมัติ |
+| `frontend/src/pages/DangerZonePage.tsx` | protected org by ID |
+| `frontend/src/pages/ProfilePage.tsx` | protected org by ID |
+| `frontend/src/pages/LoginPage.tsx` | password validation 8 ตัว + error handling |
+| `frontend/src/pages/BotsPage.tsx` | ลบ backdrop ดำ |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | ลบ backdrop ดำ |
+| `frontend/src/api/endpoints.ts` | invite confirmApprove + listApproved |
+| `frontend/src/types/index.ts` | ApprovedUser interface |
+| `frontend/src/i18n/th.json` | เพิ่ม 14 keys |
+| `frontend/src/i18n/en.json` | เพิ่ม 14 keys |
+

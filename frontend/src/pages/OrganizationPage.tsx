@@ -15,10 +15,11 @@ import type { Area } from "react-easy-crop";
 import { useToastStore } from "../store/toastStore";
 import { useOrgStore, selectIsOrgAdmin } from "../store/orgStore";
 import { useAuthStore } from "../store/authStore";
-import { orgApi, botsApi } from "../api/endpoints";
+import { orgApi, botsApi, adminApi } from "../api/endpoints";
 import { getApiError } from "../utils/apiError";
-import type { OrgMember, OrgInvitation } from "../types";
+import type { OrgMember, OrgInvitation, PendingUser } from "../types";
 import Spinner from "../components/Spinner";
+import ConfirmModal from "../components/ConfirmModal";
 import { useT } from "../i18n";
 
 async function getCroppedBlob(src: string, area: Area): Promise<Blob> {
@@ -56,6 +57,7 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const isOrgAdmin = useOrgStore(selectIsOrgAdmin);
     const currentUserId = useAuthStore((s) => s.user?.id);
     const canManage = isOrgAdmin && !isProtectedOrg;
+    const canRemove = isOrgAdmin;
     const [members, setMembers] = useState<OrgMember[]>([]);
     const [loading, setLoading] = useState(true);
     const [inviteEmail, setInviteEmail] = useState("");
@@ -66,6 +68,11 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
     const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
     const [invLoading, setInvLoading] = useState(true);
     const [revokingId, setRevokingId] = useState<string | null>(null);
+    const [pendingMembers, setPendingMembers] = useState<PendingUser[]>([]);
+    const [pendingLoading, setPendingLoading] = useState(true);
+    const [pendingApprovingId, setPendingApprovingId] = useState<string | null>(null);
+    const [pendingRejectingId, setPendingRejectingId] = useState<string | null>(null);
+    const [inviteConfirm, setInviteConfirm] = useState<{ type: "not_registered" | "pending_approval"; email: string } | null>(null);
 
     const loadMembers = useCallback(async () => {
         try {
@@ -89,13 +96,25 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
         }
     }, [orgId]);
 
-    useEffect(() => { loadMembers(); loadInvitations(); }, [loadMembers, loadInvitations]);
+    const loadPendingMembers = useCallback(async () => {
+        if (!isOrgAdmin) { setPendingLoading(false); return; }
+        try {
+            const { data } = await adminApi.listOrgPending(orgId);
+            setPendingMembers(data || []);
+        } catch (err) {
+            console.error("[Org] Failed to load pending members:", err);
+        } finally {
+            setPendingLoading(false);
+        }
+    }, [orgId, isOrgAdmin]);
+
+    useEffect(() => { loadMembers(); loadInvitations(); loadPendingMembers(); }, [loadMembers, loadInvitations, loadPendingMembers]);
 
     useEffect(() => {
-        const onFocus = () => { loadMembers(); loadInvitations(); };
+        const onFocus = () => { loadMembers(); loadInvitations(); loadPendingMembers(); };
         window.addEventListener("focus", onFocus);
         return () => window.removeEventListener("focus", onFocus);
-    }, [loadMembers, loadInvitations]);
+    }, [loadMembers, loadInvitations, loadPendingMembers]);
 
     const handleInvite = async (e: FormEvent) => {
         e.preventDefault();
@@ -105,15 +124,45 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             await orgApi.invite(orgId, inviteEmail.trim());
             toast("success", t("org.inviteSuccess").replace("{email}", inviteEmail.trim()));
             setInviteEmail("");
+            loadPendingMembers().catch(() => {});
         } catch (err: unknown) {
-            const raw = getApiError(err, t("org.inviteFailed"));
-            const msg = raw.includes("not registered") ? t("org.userNotFound") : raw;
-            toast("error", msg);
+            const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } };
+            const detail = axiosErr.response?.data?.detail;
+
+            if (axiosErr.response?.status === 409 && detail === "USER_NOT_REGISTERED") {
+                setInviteConfirm({ type: "not_registered", email: inviteEmail.trim() });
+            } else if (axiosErr.response?.status === 409 && detail === "USER_PENDING_APPROVAL") {
+                setInviteConfirm({ type: "pending_approval", email: inviteEmail.trim() });
+            } else {
+                toast("error", getApiError(err, t("org.inviteFailed")));
+            }
         } finally {
             setInviting(false);
         }
         loadMembers().catch(() => {});
         loadInvitations().catch(() => {});
+    };
+
+    const handleInviteConfirm = async () => {
+        if (!inviteConfirm) return;
+        const { type, email } = inviteConfirm;
+        setInviteConfirm(null);
+        setInviting(true);
+        try {
+            await orgApi.invite(orgId, email, true);
+            const successMsg = type === "not_registered"
+                ? t("org.invitePreSuccess").replace("{email}", email)
+                : t("org.inviteApprovedSuccess").replace("{email}", email);
+            toast("success", successMsg);
+            setInviteEmail("");
+            loadPendingMembers().catch(() => {});
+            loadMembers().catch(() => {});
+            loadInvitations().catch(() => {});
+        } catch (retryErr: unknown) {
+            toast("error", getApiError(retryErr, t("org.inviteFailed")));
+        } finally {
+            setInviting(false);
+        }
     };
 
     const handlePromote = async (userId: string, name: string) => {
@@ -160,6 +209,35 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
             toast("error", msg);
         } finally {
             setRemovingId(null);
+        }
+    };
+
+    const handlePendingApprove = async (userId: string) => {
+        setPendingApprovingId(userId);
+        try {
+            await adminApi.orgApprove(orgId, userId);
+            toast("success", t("approvals.approveSuccess"));
+            await loadPendingMembers();
+            await loadMembers();
+        } catch (err: unknown) {
+            toast("error", getApiError(err, t("approvals.approveFailed")));
+        } finally {
+            setPendingApprovingId(null);
+        }
+    };
+
+    const handlePendingReject = async (userId: string) => {
+        if (!confirm(t("approvals.rejectConfirm"))) return;
+        setPendingRejectingId(userId);
+        try {
+            await adminApi.orgReject(orgId, userId);
+            toast("success", t("approvals.rejectSuccess"));
+            await loadPendingMembers();
+            await loadInvitations();
+        } catch (err: unknown) {
+            toast("error", getApiError(err, t("approvals.rejectFailed")));
+        } finally {
+            setPendingRejectingId(null);
         }
     };
 
@@ -223,10 +301,10 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                             }`}>
                                 {m.role === "admin" ? "admin" : m.role === "support" ? "support" : m.org_role === "admin" ? t("role.adminOrg") : m.org_role}
                             </span>
-                            {canManage && m.role !== "admin" && m.role !== "support" && (
+                            {m.role !== "admin" && m.role !== "support" && (canManage || canRemove) && (
                                 <div className="flex items-center gap-2">
-                                    {/* Promote member → Org Admin */}
-                                    {m.org_role === "member" && (
+                                    {/* Promote member → Org Admin (not in protected org) */}
+                                    {canManage && m.org_role === "member" && (
                                         <button
                                             onClick={() => handlePromote(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                             disabled={promotingId === m.user_id}
@@ -236,8 +314,8 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                                             {promotingId === m.user_id ? "..." : t("org.promote")}
                                         </button>
                                     )}
-                                    {/* Demote Org Admin → member (only if >1 admins and not self) */}
-                                    {m.org_role === "admin" && members.filter(x => x.org_role === "admin").length > 1 && m.user_id !== currentUserId && (
+                                    {/* Demote Org Admin → member (not in protected org) */}
+                                    {canManage && m.org_role === "admin" && members.filter(x => x.org_role === "admin").length > 1 && m.user_id !== currentUserId && (
                                         <button
                                             onClick={() => handleDemote(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                             disabled={demotingId === m.user_id}
@@ -247,8 +325,8 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                                             {demotingId === m.user_id ? "..." : t("org.demote")}
                                         </button>
                                     )}
-                                    {/* Remove — only for members, not admins */}
-                                    {m.org_role === "member" && (
+                                    {/* Remove member */}
+                                    {canRemove && m.org_role === "member" && (
                                         <button
                                             onClick={() => handleRemove(m.user_id, [m.first_name, m.last_name].filter(Boolean).join(" ") || m.email)}
                                             disabled={removingId === m.user_id}
@@ -261,6 +339,52 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                             )}
                         </div>
                     ))}
+                </div>
+            )}
+
+            {/* Pending Members (Org Admin only) */}
+            {canManage && !pendingLoading && pendingMembers.length > 0 && (
+                <div className="border-t border-steel-100 pt-4 mb-4">
+                    <div className="flex items-center gap-2 mb-3">
+                        <p className="text-xs font-medium text-amber-700">{t("org.pendingMembers")}</p>
+                        <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                            {pendingMembers.length}
+                        </span>
+                    </div>
+                    <div className="space-y-2">
+                        {pendingMembers.map((pu) => (
+                            <div key={pu.id} className="flex items-center gap-3 py-2 px-3 bg-amber-50 border border-amber-200 rounded-xl">
+                                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-700 font-bold text-xs shrink-0">
+                                    {([pu.first_name, pu.last_name].filter(Boolean).join(" ") || pu.email)?.[0]?.toUpperCase() || "?"}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-steel-800 truncate">
+                                        {[pu.first_name, pu.last_name].filter(Boolean).join(" ") || t("common.noName")}
+                                    </p>
+                                    <p className="text-xs text-steel-400 truncate">{pu.email}</p>
+                                </div>
+                                <span className="text-[10px] text-steel-400 hidden sm:block">
+                                    {isNaN(new Date(pu.created_at).getTime()) ? "—" : new Date(pu.created_at).toLocaleDateString("th-TH")}
+                                </span>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => handlePendingApprove(pu.id)}
+                                        disabled={pendingApprovingId === pu.id || pendingRejectingId === pu.id}
+                                        className="px-3 py-1.5 bg-brand-400 text-steel-900 text-xs font-bold rounded-lg hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50"
+                                    >
+                                        {pendingApprovingId === pu.id ? "..." : t("approvals.approve")}
+                                    </button>
+                                    <button
+                                        onClick={() => handlePendingReject(pu.id)}
+                                        disabled={pendingApprovingId === pu.id || pendingRejectingId === pu.id}
+                                        className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-lg hover:bg-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                                    >
+                                        {pendingRejectingId === pu.id ? "..." : t("approvals.reject")}
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -334,6 +458,25 @@ function MemberManagement({ orgId, isProtectedOrg }: { orgId: string; isProtecte
                     </div>
                 )}
             </div>
+
+            {/* Invite Confirm Modal */}
+            <ConfirmModal
+                open={!!inviteConfirm}
+                title={inviteConfirm?.type === "not_registered"
+                    ? t("org.inviteNotRegisteredTitle")
+                    : t("org.invitePendingTitle")}
+                message={inviteConfirm?.type === "not_registered"
+                    ? t("org.inviteNotRegisteredConfirm").replace("{email}", inviteConfirm?.email ?? "")
+                    : t("org.invitePendingConfirm").replace("{email}", inviteConfirm?.email ?? "")}
+                note={inviteConfirm?.type === "not_registered"
+                    ? t("org.inviteNotRegisteredNote").replace("{email}", inviteConfirm?.email ?? "")
+                    : undefined}
+                confirmLabel={t("org.inviteConfirmBtn")}
+                cancelLabel={t("common.cancel")}
+                onConfirm={handleInviteConfirm}
+                onCancel={() => setInviteConfirm(null)}
+                variant={inviteConfirm?.type === "not_registered" ? "info" : "warning"}
+            />
         </div>
     );
 }
@@ -371,7 +514,7 @@ export default function OrganizationPage() {
     const [zoom, setZoom] = useState(1);
     const [croppedArea, setCroppedArea] = useState<Area | null>(null);
 
-    const isProtectedOrg = orgSlug === "sundae";
+    const isProtectedOrg = activeOrgId === "ef9d44af-d9ad-4a24-8336-7f99d5737d33";
 
     const loadData = useCallback(async () => {
         if (!activeOrgId) return;
@@ -636,7 +779,7 @@ export default function OrganizationPage() {
 
             {/* Image Crop Modal */}
             {cropSrc && createPortal(
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden">
                         <div className="px-6 py-4 border-b border-steel-100">
                             <h3 className="text-base font-bold text-steel-900">{t("org.cropTitle")}</h3>

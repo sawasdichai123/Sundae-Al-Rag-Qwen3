@@ -17,6 +17,7 @@ import type {
     OrgMembership,
     MyInvitation,
     PendingUser,
+    ApprovedUser,
     PlatformSource,
 } from "../types";
 
@@ -362,21 +363,45 @@ export const inboxApi = {
 // ── Admin (User Approval) ────────────────────────────────────────
 
 export const adminApi = {
-    /** List pending (unapproved) users. */
+    /** List pending (unapproved) users (Platform Admin). */
     listPending: () =>
         apiClient.get<PendingUser[]>("/api/admin/pending-users"),
 
-    /** Approve a user — just sets is_approved=true. */
+    /** List approved users with approval history (Platform Admin). */
+    listApproved: () =>
+        apiClient.get<ApprovedUser[]>("/api/admin/approved-users"),
+
+    /** Approve a user (Platform Admin). */
     approve: (userId: string) =>
         apiClient.post<{ message: string; user_id: string }>(
             `/api/admin/approve/${userId}`
         ),
 
-    /** Reject a pending user. */
+    /** Reject a pending user (Platform Admin). */
     reject: (userId: string) =>
         apiClient.post<{ message: string; user_id: string }>(
             `/api/admin/reject/${userId}`
         ),
+
+    /** List pending members in an org (Org Admin). */
+    listOrgPending: (orgId: string) =>
+        apiClient.get<PendingUser[]>(`/api/orgs/${orgId}/pending-members`),
+
+    /** Approve a member in an org (Org Admin). */
+    orgApprove: (orgId: string, userId: string) =>
+        apiClient.post<{ message: string; user_id: string }>(
+            `/api/orgs/${orgId}/approve/${userId}`
+        ),
+
+    /** Reject a member's invitation in an org (Org Admin). */
+    orgReject: (orgId: string, userId: string) =>
+        apiClient.post<{ message: string; user_id: string }>(
+            `/api/orgs/${orgId}/reject/${userId}`
+        ),
+
+    /** Get count of pending members in an org (for badge). */
+    orgPendingCount: (orgId: string) =>
+        apiClient.get<{ count: number }>(`/api/orgs/${orgId}/pending-count`),
 };
 
 // ── Organizations (Multi-tenant) ────────────────────────────────
@@ -422,8 +447,8 @@ export const orgApi = {
         apiClient.get<OrgMember[]>(`/api/orgs/${orgId}/members`),
 
     /** Invite a user by email. */
-    invite: (orgId: string, email: string) =>
-        apiClient.post<OrgInvitation>(`/api/orgs/${orgId}/invite`, { email }),
+    invite: (orgId: string, email: string, confirmApprove = false) =>
+        apiClient.post<OrgInvitation>(`/api/orgs/${orgId}/invite`, { email, confirm_approve: confirmApprove }),
 
     /** Remove a member from an organization. */
     removeMember: (orgId: string, userId: string) =>
