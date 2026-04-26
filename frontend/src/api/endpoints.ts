@@ -302,6 +302,9 @@ export const botsApi = {
         description?: string;
         system_prompt?: string;
         is_web_enabled?: boolean;
+        visibility?: string;
+        visible_to?: string[];
+        visibility_label?: string | null;
     }) => apiClient.post<Bot>("/api/bots", data),
 
     /** List all bots for an organization. */

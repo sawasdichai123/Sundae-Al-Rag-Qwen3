@@ -51,6 +51,9 @@ class BotCreateRequest(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None
     is_web_enabled: bool = True
+    visibility: str = "all"
+    visible_to: list[str] = []
+    visibility_label: Optional[str] = None
 
 
 class BotUpdateRequest(BaseModel):
@@ -61,6 +64,9 @@ class BotUpdateRequest(BaseModel):
     system_prompt: Optional[str] = None
     is_active: Optional[bool] = None
     is_web_enabled: Optional[bool] = None
+    visibility: Optional[str] = None
+    visible_to: Optional[list[str]] = None
+    visibility_label: Optional[str] = None
 
 
 class BotResponse(BaseModel):
@@ -73,6 +79,9 @@ class BotResponse(BaseModel):
     system_prompt: Optional[str] = None
     is_active: bool = True
     is_web_enabled: bool = True
+    visibility: str = "all"
+    visible_to: list[str] = []
+    visibility_label: Optional[str] = None
     created_at: str
     updated_at: str
 
@@ -108,6 +117,26 @@ async def create_bot(
 
     supabase = get_supabase()
 
+    if body.visibility not in ("all", "restricted"):
+        raise HTTPException(status_code=400, detail="visibility must be 'all' or 'restricted'.")
+
+    # Check duplicate name within org
+    try:
+        dup_check = await (
+            supabase.table("bots")
+            .select("id")
+            .eq("organization_id", body.organization_id)
+            .ilike("name", name)
+            .eq("is_active", True)
+            .execute()
+        )
+        if dup_check.data:
+            raise HTTPException(status_code=409, detail="Bot name already exists in this organization.")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     row = {
         "organization_id": body.organization_id,
         "name": name,
@@ -115,6 +144,9 @@ async def create_bot(
         "system_prompt": body.system_prompt or DEFAULT_SYSTEM_PROMPT,
         "is_active": True,
         "is_web_enabled": body.is_web_enabled,
+        "visibility": body.visibility,
+        "visible_to": body.visible_to,
+        "visibility_label": body.visibility_label,
     }
 
     try:
@@ -142,7 +174,8 @@ async def list_bots(
     organization_id: str,
     user: CurrentUser = Depends(require_approved),
 ) -> list[BotResponse]:
-    """List all bots for an organization, ordered by creation date."""
+    """List bots for an organization. Org Admin sees all; members only see
+    bots with visibility='all' or their user_id in visible_to."""
     await verify_organization(user, organization_id)
     supabase = get_supabase()
 
@@ -155,7 +188,31 @@ async def list_bots(
             .order("created_at", desc=True)
         ).execute()
 
-        return [BotResponse(**bot) for bot in (result.data or [])]
+        all_bots = result.data or []
+
+        # Check if user is Org Admin
+        try:
+            membership = await (
+                supabase.table("org_members")
+                .select("org_role")
+                .eq("user_id", user.id)
+                .eq("organization_id", organization_id)
+                .single()
+            ).execute()
+            is_admin = membership.data and membership.data.get("org_role") == "admin"
+        except Exception:
+            is_admin = False
+
+        if is_admin:
+            return [BotResponse(**bot) for bot in all_bots]
+
+        # Member: filter by visibility
+        visible_bots = [
+            bot for bot in all_bots
+            if bot.get("visibility", "all") == "all"
+            or user.id in (bot.get("visible_to") or [])
+        ]
+        return [BotResponse(**bot) for bot in visible_bots]
 
     except Exception as exc:
         logger.error("Failed to list bots (org=%s): %s", organization_id, exc)
@@ -216,6 +273,14 @@ async def update_bot(
         updates["is_active"] = body.is_active
     if body.is_web_enabled is not None:
         updates["is_web_enabled"] = body.is_web_enabled
+    if body.visibility is not None:
+        if body.visibility not in ("all", "restricted"):
+            raise HTTPException(status_code=400, detail="visibility must be 'all' or 'restricted'.")
+        updates["visibility"] = body.visibility
+    if body.visible_to is not None:
+        updates["visible_to"] = body.visible_to
+    if body.visibility_label is not None:
+        updates["visibility_label"] = body.visibility_label
 
     # Validate fields if present
     if "name" in updates:
@@ -224,6 +289,23 @@ async def update_bot(
             raise HTTPException(status_code=400, detail="Bot name cannot be empty.")
         if len(updates["name"]) > 100:
             raise HTTPException(status_code=400, detail="Bot name too long (max 100 characters).")
+        # Check duplicate name within org (exclude self)
+        try:
+            dup_check = await (
+                supabase.table("bots")
+                .select("id")
+                .eq("organization_id", organization_id)
+                .ilike("name", updates["name"])
+                .eq("is_active", True)
+                .neq("id", bot_id)
+                .execute()
+            )
+            if dup_check.data:
+                raise HTTPException(status_code=409, detail="Bot name already exists in this organization.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     if "system_prompt" in updates and updates["system_prompt"] is not None:
         if len(updates["system_prompt"]) > 10_000:
             raise HTTPException(status_code=400, detail="System prompt too long (max 10000 characters).")

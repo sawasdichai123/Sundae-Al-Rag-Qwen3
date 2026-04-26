@@ -1,6 +1,6 @@
 # Implementation Plan — แก้ไขตามคอมเม้น (24 เมษายน 2569)
 
-> **อัพเดทล่าสุด:** 25 เมษายน 2569
+> **อัพเดทล่าสุด:** 26 เมษายน 2569
 
 ---
 
@@ -150,39 +150,39 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 
 ## 3. สิทธิ์การเข้าถึงบอท (Bot Visibility)
 
-### 3.1 แบ่งกลุ่มการมองเห็นบอท
+### 3.1 แบ่งกลุ่มการมองเห็นบอท ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- บอทเป็นของ org → ทุกคนใน org เห็นบอททุกตัว
-- ไม่มีระบบ group/department
+> **Implement เมื่อ:** 26 เม.ย. 2569
 
-**สิ่งที่ต้องเพิ่ม:**
+**สิ่งที่ Implement ไปแล้ว:**
 
-#### Database (SQL Migration)
-```sql
--- เพิ่ม visibility mode + allowed members
-ALTER TABLE bots ADD COLUMN visibility TEXT NOT NULL DEFAULT 'all'
-    CHECK (visibility IN ('all', 'restricted'));
-ALTER TABLE bots ADD COLUMN visible_to UUID[] NOT NULL DEFAULT '{}';
-```
+| รายการ | รายละเอียด |
+|--------|-----------|
+| **DB: visibility + visible_to** | `visibility TEXT` (all/restricted) + `visible_to UUID[]` + GIN index (migration 020) |
+| **DB: visibility_label** | `visibility_label TEXT` — ชื่อกลุ่ม เช่น "HR", "ฝ่ายขาย" |
+| **DB: ป้องกันชื่อซ้ำ** | Unique index `idx_bots_unique_name_per_org` — case-insensitive ต่อ org เฉพาะ active bots |
+| **Backend: list_bots()** | Org Admin เห็นทุกตัว / Member เห็นเฉพาะ `visibility='all'` หรือ user_id ∈ `visible_to` |
+| **Backend: create/update** | รับ `visibility` + `visible_to` + `visibility_label` / เช็คชื่อซ้ำ → 409 |
+| **Backend: chat.py** | `_validate_bot()` เช็ค visibility ตอนแชท — ป้องกัน API bypass |
+| **Frontend: Visibility toggle** | Toggle 2 ช่อง (ทุกคนใน Org / เฉพาะกลุ่ม) ในฟอร์ม create/edit |
+| **Frontend: ชื่อกลุ่ม** | Input "ชื่อกลุ่ม" + existing group suggestion chips (กดแล้ว auto-fill สมาชิกจากบอทตัวอื่น) |
+| **Frontend: Member selector** | Modal เลือกสมาชิก (ไม่รวม admin — เข้าถึงได้เสมอ) + chips แสดงคนที่เลือก |
+| **Frontend: Badge** | การ์ดบอทแสดง badge สีฟ้า "ส่วนกลาง" / สีส้ม "เฉพาะกลุ่ม: ชื่อ" |
+| **Frontend: Filter chips** | ปุ่มกรอง "ทั้งหมด" / "ส่วนกลาง" / ชื่อกลุ่มแต่ละกลุ่ม ใต้ช่องค้นหา |
+| **Frontend: จำนวนบอท** | แสดง "บอททั้งหมด N ตัว" ใต้หัวข้อหน้า |
+| **Frontend: 409 handling** | Toast แจ้ง "ชื่อบอทนี้มีอยู่แล้วในองค์กร" เมื่อชื่อซ้ำ |
 
-> **วิธีทำงาน:**
-> - `visibility = 'all'` → บอทส่วนกลาง ทุกคนเห็น (default — พฤติกรรมเดิม)
-> - `visibility = 'restricted'` → เฉพาะ user_id ที่อยู่ใน `visible_to[]` + Org Admin เห็นเสมอ
+**ไฟล์ที่แก้ไข:**
 
-#### Backend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `backend/app/routers/bot.py` | `list_bots()` — filter: แสดงเฉพาะบอทที่ `visibility = 'all'` หรือ user_id อยู่ใน `visible_to` หรือ user เป็น Org Admin |
-| `backend/app/routers/bot.py` | `create_bot()` / `update_bot()` — รับ `visibility` + `visible_to` parameters |
-| `backend/app/routers/bot.py` | เพิ่ม endpoint `GET /api/bots/count?organization_id=xxx` — return จำนวนบอททั้งหมด (สำหรับแสดง Total) |
-
-#### Frontend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/pages/BotsPage.tsx` | สร้าง/แก้ไขบอท — เพิ่ม setting "การมองเห็น": ทุกคน / เฉพาะกลุ่ม → เลือกสมาชิก |
-| `frontend/src/pages/BotsPage.tsx` | แสดง badge "ส่วนกลาง" หรือ "เฉพาะกลุ่ม" บน bot card |
-| `frontend/src/pages/BotsPage.tsx` | แสดงจำนวนบอททั้งหมด (Total) ที่ header ของหน้า |
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/sql/020_comment_feedback_migrations.sql` | เพิ่ม `visibility`, `visible_to`, `visibility_label`, unique index ชื่อบอท |
+| `backend/app/routers/bot.py` | Create/Update/Response models + visibility filter + duplicate name check |
+| `backend/app/routers/chat.py` | `_validate_bot()` เช็ค visibility |
+| `frontend/src/types/index.ts` | `Bot` เพิ่ม `visibility`, `visible_to`, `visibility_label` |
+| `frontend/src/api/endpoints.ts` | `botsApi.create()` เพิ่ม visibility params |
+| `frontend/src/pages/BotsPage.tsx` | Visibility toggle, member modal, group auto-fill, badges, filter chips, duplicate handling |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม ~20 keys (visibility, badge, groupName, filter, existingGroups, duplicateName) |
 
 ---
 
@@ -236,8 +236,8 @@ ALTER TABLE bots ADD COLUMN visible_to UUID[] NOT NULL DEFAULT '{}';
 | ~~2~~ | ~~ปรับระบบอนุมัติ + ประวัติ (1.1, 1.2)~~ | ~~สูง~~ | ~~เปลี่ยน flow หลัก~~ | ✅ เสร็จแล้ว |
 | ~~1~~ | ~~แจ้งเตือน PDF + รายละเอียดไฟล์ + Block Scan (2.1, 2.2)~~ | ~~ต่ำ-กลาง~~ | ~~แก้ปัญหาผู้ใช้สับสน~~ | ✅ เสร็จแล้ว |
 | ~~5~~ | ~~ระบบแท็ก (2.3)~~ | ~~กลาง~~ | ~~ต้องการเมื่อเอกสารเยอะ~~ | ✅ เสร็จแล้ว |
+| ~~4~~ | ~~Bot Visibility (3.1)~~ | ~~กลาง~~ | ~~ต้องการเมื่อ org มีหลายแผนก~~ | ✅ เสร็จแล้ว |
 | 3 | Notification Badge (4.1) | กลาง | UX ดีขึ้นมาก | ⏳ ยังไม่ได้ทำ |
-| 4 | Bot Visibility (3.1) | กลาง | ต้องการเมื่อ org มีหลายแผนก | ⏳ ยังไม่ได้ทำ |
 | 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement | ⏳ ยังไม่ได้ทำ |
 
 ---
@@ -253,7 +253,8 @@ backend/sql/020_comment_feedback_migrations.sql
 ประกอบด้วย:
 1. **User Approval Tracking** — `approved_by` + `approved_at` ใน user_profiles
 2. **Documents uploaded_by + tags** — `uploaded_by` + `tags TEXT[]` + GIN index ใน documents
-3. **Bot Visibility** — `visibility` + `visible_to UUID[]` + GIN index ใน bots
+3. **Bot Visibility** — `visibility` + `visible_to UUID[]` + `visibility_label TEXT` + GIN index + unique name index ใน bots
+4. **Auto-approve invited users** — trigger `handle_new_auth_user()` เช็ค invitation ตอนสมัคร
 
 ---
 

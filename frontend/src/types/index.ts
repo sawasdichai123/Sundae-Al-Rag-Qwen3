@@ -112,6 +112,9 @@ export interface Bot {
     system_prompt: string | null;
     is_active: boolean;
     is_web_enabled: boolean;
+    visibility: "all" | "restricted";
+    visible_to: string[];
+    visibility_label: string | null;
     created_at: string;
     updated_at: string;
 }

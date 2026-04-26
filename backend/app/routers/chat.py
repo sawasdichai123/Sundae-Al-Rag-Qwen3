@@ -87,21 +87,22 @@ class ChatResponse(BaseModel):
 
 
 async def _validate_bot(
-    bot_id: str, organization_id: str, platform_source: str
+    bot_id: str, organization_id: str, platform_source: str,
+    user_id: str | None = None,
 ) -> dict:
-    """Validate bot ownership and platform enablement.
+    """Validate bot ownership, platform enablement, and visibility.
 
     Returns:
         The bot record dict (includes system_prompt, etc.).
 
     Raises:
         HTTPException 404: Bot not found or doesn't belong to the org.
-        HTTPException 403: Web chat is disabled for this bot.
+        HTTPException 403: Web chat disabled, or user lacks visibility.
     """
     supabase = get_supabase()
     query = (
         supabase.table("bots")
-        .select("id, organization_id, is_web_enabled, is_active, system_prompt")
+        .select("id, organization_id, is_web_enabled, is_active, system_prompt, visibility, visible_to")
         .eq("id", bot_id)
         .eq("organization_id", organization_id)
         .limit(1)
@@ -127,6 +128,26 @@ async def _validate_bot(
             status_code=403,
             detail="Web chat is disabled for this bot.",
         )
+
+    # Visibility check for web users
+    if user_id and bot.get("visibility") == "restricted":
+        visible_to = bot.get("visible_to") or []
+        if user_id not in visible_to:
+            # Check if user is Org Admin (they can always access)
+            try:
+                mem = await (
+                    supabase.table("org_members")
+                    .select("org_role")
+                    .eq("user_id", user_id)
+                    .eq("organization_id", organization_id)
+                    .single()
+                ).execute()
+                if not mem.data or mem.data.get("org_role") != "admin":
+                    raise HTTPException(status_code=403, detail="You don't have access to this bot.")
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=403, detail="You don't have access to this bot.")
 
     return bot
 
@@ -180,7 +201,7 @@ async def ask_question(
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
 
     # ── Step 0: Validate Bot ────────────────────────────────────
-    bot = await _validate_bot(bot_id, organization_id, platform_source)
+    bot = await _validate_bot(bot_id, organization_id, platform_source, user_id=user.id)
     bot_system_prompt = bot.get("system_prompt") or None
 
     try:
@@ -383,7 +404,7 @@ async def ask_question_stream(
     if not user_query:
         raise HTTPException(status_code=400, detail="user_query must not be empty.")
 
-    bot = await _validate_bot(bot_id, organization_id, platform_source)
+    bot = await _validate_bot(bot_id, organization_id, platform_source, user_id=user.id)
     bot_system_prompt = bot.get("system_prompt") or None
 
     # Steps 1-3 run before streaming starts

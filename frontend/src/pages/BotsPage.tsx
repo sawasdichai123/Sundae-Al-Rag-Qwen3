@@ -10,11 +10,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { botsApi, documentsApi } from "../api/endpoints";
+import { botsApi, documentsApi, orgApi } from "../api/endpoints";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore } from "../store/orgStore";
 import { useToastStore } from "../store/toastStore";
-import type { Bot, Document } from "../types";
+import type { Bot, Document, OrgMember } from "../types";
 import { useT } from "../i18n";
 
 // ── Icons ───────────────────────────────────────────────────────
@@ -79,6 +79,14 @@ export default function BotsPage() {
     const [formPrompt, setFormPrompt] = useState("");
     const [formWebEnabled, setFormWebEnabled] = useState(true);
 
+    // Visibility state
+    const [formVisibility, setFormVisibility] = useState<"all" | "restricted">("all");
+    const [formVisibleTo, setFormVisibleTo] = useState<string[]>([]);
+    const [formVisibilityLabel, setFormVisibilityLabel] = useState("");
+    const [showMemberModal, setShowMemberModal] = useState(false);
+    const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+    const [membersLoading, setMembersLoading] = useState(false);
+
     // Knowledge selection state
     const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
     const [allDocuments, setAllDocuments] = useState<Document[]>([]);
@@ -134,6 +142,20 @@ export default function BotsPage() {
         }
     }, [orgId]);
 
+    // ── Load org members for visibility modal ────────────────────
+    const loadMembers = useCallback(async () => {
+        if (!orgId) return;
+        setMembersLoading(true);
+        try {
+            const res = await orgApi.listMembers(orgId);
+            setOrgMembers(res.data);
+        } catch (err) {
+            console.error("[Bots] Failed to load members:", err);
+        } finally {
+            setMembersLoading(false);
+        }
+    }, [orgId]);
+
     // ── Toggle document link ────────────────────────────────────
     const toggleDocLink = async (docId: string) => {
         if (!editingBot || linkingDocId) return;
@@ -170,6 +192,9 @@ export default function BotsPage() {
         setFormDescription("");
         setFormPrompt("");
         setFormWebEnabled(true);
+        setFormVisibility("all");
+        setFormVisibleTo([]);
+        setFormVisibilityLabel("");
         setEditingBot(null);
         setAllDocuments([]);
         setLinkedDocIds(new Set());
@@ -186,9 +211,12 @@ export default function BotsPage() {
         setFormDescription(bot.description || "");
         setFormPrompt(bot.system_prompt || "");
         setFormWebEnabled(bot.is_web_enabled);
+        setFormVisibility(bot.visibility || "all");
+        setFormVisibleTo(bot.visible_to || []);
+        setFormVisibilityLabel(bot.visibility_label || "");
         setViewMode("edit");
-        // Load documents to show linked ones
         loadDocuments(bot.id);
+        if (bot.visibility === "restricted") loadMembers();
     };
 
     const goBack = () => {
@@ -209,6 +237,9 @@ export default function BotsPage() {
                     description: formDescription.trim() || undefined,
                     system_prompt: formPrompt.trim() || undefined,
                     is_web_enabled: formWebEnabled,
+                    visibility: formVisibility,
+                    visible_to: formVisibility === "restricted" ? formVisibleTo : [],
+                    visibility_label: formVisibility === "restricted" ? (formVisibilityLabel.trim() || null) : null,
                 });
             } else if (viewMode === "edit" && editingBot) {
                 await botsApi.update(editingBot.id, orgId, {
@@ -216,13 +247,21 @@ export default function BotsPage() {
                     description: formDescription.trim(),
                     system_prompt: formPrompt.trim(),
                     is_web_enabled: formWebEnabled,
+                    visibility: formVisibility,
+                    visible_to: formVisibility === "restricted" ? formVisibleTo : [],
+                    visibility_label: formVisibility === "restricted" ? (formVisibilityLabel.trim() || null) : null,
                 } as Partial<Bot>);
             }
             await loadBots();
             goBack();
-        } catch (err) {
+        } catch (err: unknown) {
             console.error("[Bots] Save failed:", err);
-            toast("error", t("bots.saveFailed"));
+            const axErr = err as { response?: { status?: number } };
+            if (axErr?.response?.status === 409) {
+                toast("error", t("bots.duplicateName"));
+            } else {
+                toast("error", t("bots.saveFailed"));
+            }
         } finally {
             setSaving(false);
         }
@@ -241,10 +280,20 @@ export default function BotsPage() {
         }
     };
 
+    // ── Visibility filter ───────────────────────────────────────
+    const [visibilityFilter, setVisibilityFilter] = useState<string | null>(null);
+
+    const visibilityGroups = Array.from(
+        new Set(bots.map((b) => b.visibility === "restricted" ? (b.visibility_label || t("bots.badgeRestricted")) : null).filter(Boolean))
+    ) as string[];
+
     // ── Filtered list ───────────────────────────────────────────
-    const filtered = bots.filter((b) =>
-        (b.name ?? "").toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filtered = bots.filter((b) => {
+        const matchesSearch = (b.name ?? "").toLowerCase().includes(searchQuery.toLowerCase());
+        if (!visibilityFilter) return matchesSearch;
+        if (visibilityFilter === "__all__") return matchesSearch && b.visibility === "all";
+        return matchesSearch && b.visibility === "restricted" && (b.visibility_label || t("bots.badgeRestricted")) === visibilityFilter;
+    });
 
     // ── Linked documents for display ────────────────────────────
     const linkedDocs = allDocuments.filter((d) => linkedDocIds.has(d.id));
@@ -366,11 +415,80 @@ export default function BotsPage() {
         document.body
     );
 
+    // ── Member Selection Modal ──────────────────────────────────
+    const memberModal = showMemberModal && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center animate-fade-in" onClick={() => setShowMemberModal(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="px-6 py-4 border-b border-steel-100 flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-steel-900">{t("bots.selectMembers")}</h3>
+                    <button onClick={() => setShowMemberModal(false)} className="text-steel-400 hover:text-steel-800 transition-colors cursor-pointer text-lg">✕</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4">
+                    {membersLoading ? (
+                        <div className="flex items-center justify-center py-12 text-steel-400">
+                            <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                        </div>
+                    ) : orgMembers.length === 0 ? (
+                        <div className="text-center py-12">
+                            <p className="text-sm text-steel-500">{t("bots.noMembers")}</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {orgMembers.filter((m) => m.org_role !== "admin").map((member) => {
+                                const isSelected = formVisibleTo.includes(member.user_id);
+                                return (
+                                    <button
+                                        key={member.user_id}
+                                        onClick={() => {
+                                            setFormVisibleTo((prev) =>
+                                                isSelected ? prev.filter((id) => id !== member.user_id) : [...prev, member.user_id]
+                                            );
+                                        }}
+                                        className={`w-full text-left px-4 py-3 rounded-xl border transition-all cursor-pointer ${isSelected ? "border-brand-400 bg-brand-50" : "border-steel-200 hover:border-brand-300 hover:bg-brand-50/30"}`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors ${isSelected ? "border-brand-400 bg-brand-400" : "border-steel-300"}`}>
+                                                {isSelected && (
+                                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                    </svg>
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium text-steel-800 truncate">
+                                                    {[member.first_name, member.last_name].filter(Boolean).join(" ") || member.email}
+                                                </p>
+                                                <p className="text-[11px] text-steel-400 truncate">{member.email}</p>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+                <div className="px-6 py-3 border-t border-steel-100 flex justify-between items-center">
+                    <p className="text-xs text-steel-400">
+                        {t("bots.selectedMembers").replace("{n}", String(formVisibleTo.length))}
+                    </p>
+                    <button onClick={() => setShowMemberModal(false)} className="bg-brand-400 text-steel-900 px-5 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer">
+                        {t("bots.memberSelectDone")}
+                    </button>
+                </div>
+            </div>
+        </div>,
+        document.body
+    );
+
     // ── Create / Edit View ──────────────────────────────────────
     if (viewMode === "create" || viewMode === "edit") {
         return (
             <div className="animate-fade-in max-w-2xl">
                 {knowledgeModal}
+                {memberModal}
 
                 {/* Back button */}
                 <button
@@ -435,6 +553,109 @@ export default function BotsPage() {
                     >
                         <span className={`absolute top-[2px] left-0 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${formWebEnabled ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
                     </button>
+                </div>
+
+                {/* Visibility Toggle */}
+                <div className="mb-6 p-4 bg-white rounded-2xl border border-steel-200">
+                    <p className="text-sm font-bold text-steel-800 mb-3">{t("bots.visibility")}</p>
+                    <div className="flex gap-3">
+                        <button
+                            type="button"
+                            onClick={() => setFormVisibility("all")}
+                            className={`flex-1 p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${formVisibility === "all" ? "border-brand-400 bg-brand-50" : "border-steel-200 hover:border-steel-300"}`}
+                        >
+                            <p className="text-sm font-bold text-steel-800">{t("bots.visibilityAll")}</p>
+                            <p className="text-[11px] text-steel-400 mt-0.5">{t("bots.visibilityAllDesc")}</p>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setFormVisibility("restricted");
+                                if (orgMembers.length === 0) loadMembers();
+                            }}
+                            className={`flex-1 p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${formVisibility === "restricted" ? "border-brand-400 bg-brand-50" : "border-steel-200 hover:border-steel-300"}`}
+                        >
+                            <p className="text-sm font-bold text-steel-800">{t("bots.visibilityRestricted")}</p>
+                            <p className="text-[11px] text-steel-400 mt-0.5">{t("bots.visibilityRestrictedDesc")}</p>
+                        </button>
+                    </div>
+
+                    {formVisibility === "restricted" && (
+                        <div className="mt-3">
+                            <div className="mb-3">
+                                <label className="block text-xs font-medium text-steel-600 mb-1">{t("bots.groupName")}</label>
+                                <input
+                                    type="text"
+                                    value={formVisibilityLabel}
+                                    onChange={(e) => setFormVisibilityLabel(e.target.value)}
+                                    placeholder={t("bots.groupNamePlaceholder")}
+                                    className="w-full max-w-xs px-3 py-2 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+                                />
+                                {/* Existing group suggestions */}
+                                {(() => {
+                                    const existingGroups = Array.from(
+                                        new Map(
+                                            bots
+                                                .filter((b) => b.visibility === "restricted" && b.visibility_label && b.id !== editingBot?.id)
+                                                .map((b) => [b.visibility_label!, b.visible_to] as [string, string[]])
+                                        )
+                                    );
+                                    const suggestions = existingGroups.filter(([label]) => label !== formVisibilityLabel);
+                                    if (suggestions.length === 0) return null;
+                                    return (
+                                        <div className="mt-2">
+                                            <p className="text-[11px] text-steel-400 mb-1">{t("bots.existingGroups")}</p>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {suggestions.map(([label, members]) => (
+                                                    <button
+                                                        key={label}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setFormVisibilityLabel(label);
+                                                            setFormVisibleTo(members);
+                                                            if (orgMembers.length === 0) loadMembers();
+                                                        }}
+                                                        className="inline-flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full hover:bg-amber-100 transition-colors cursor-pointer"
+                                                    >
+                                                        <span>+</span> {label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (orgMembers.length === 0) loadMembers();
+                                    setShowMemberModal(true);
+                                }}
+                                className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-4 py-2 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
+                            >
+                                {t("bots.selectMembers")}
+                            </button>
+                            {formVisibleTo.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                    {formVisibleTo.map((uid) => {
+                                        const member = orgMembers.find((m) => m.user_id === uid);
+                                        return (
+                                            <span key={uid} className="inline-flex items-center gap-1.5 text-xs font-medium bg-brand-50 text-brand-700 pl-3 pr-1.5 py-1.5 rounded-full border border-brand-200">
+                                                {member ? (member.first_name || member.email) : uid.slice(0, 8) + "…"}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFormVisibleTo((prev) => prev.filter((id) => id !== uid))}
+                                                    className="w-4 h-4 rounded-full bg-brand-200 text-brand-700 flex items-center justify-center hover:bg-brand-300 transition-colors cursor-pointer text-[10px]"
+                                                >
+                                                    ✕
+                                                </button>
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Knowledge Link */}
@@ -510,7 +731,12 @@ export default function BotsPage() {
         <div className="animate-fade-in">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
-                <h1 className="text-2xl font-bold text-steel-900">{t("bots.title")}</h1>
+                <div>
+                    <h1 className="text-2xl font-bold text-steel-900">{t("bots.title")}</h1>
+                    {bots.length > 0 && (
+                        <p className="text-xs text-steel-400 mt-0.5">{t("bots.totalBots").replace("{n}", String(bots.length))}</p>
+                    )}
+                </div>
                 <button
                     onClick={openCreate}
                     className="inline-flex items-center gap-1.5 bg-brand-400 text-steel-900 px-5 py-2.5 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer shadow-sm"
@@ -520,18 +746,57 @@ export default function BotsPage() {
                 </button>
             </div>
 
-            {/* Search */}
-            <div className="relative mb-6">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-steel-400">
-                    <SearchIcon />
-                </span>
-                <input
-                    type="text"
-                    placeholder={t("bots.searchPlaceholder")}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full max-w-md pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
-                />
+            {/* Search + Filter */}
+            <div className="flex flex-col gap-3 mb-6">
+                <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-steel-400">
+                        <SearchIcon />
+                    </span>
+                    <input
+                        type="text"
+                        placeholder={t("bots.searchPlaceholder")}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full max-w-md pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+                    />
+                </div>
+                {visibilityGroups.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                            onClick={() => setVisibilityFilter(null)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                !visibilityFilter
+                                    ? "bg-brand-400 text-steel-900"
+                                    : "bg-steel-100 text-steel-600 hover:bg-steel-200"
+                            }`}
+                        >
+                            {t("bots.filterAll")}
+                        </button>
+                        <button
+                            onClick={() => setVisibilityFilter(visibilityFilter === "__all__" ? null : "__all__")}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                visibilityFilter === "__all__"
+                                    ? "bg-blue-500 text-white"
+                                    : "bg-blue-50 text-blue-600 hover:bg-blue-100"
+                            }`}
+                        >
+                            {t("bots.badgeAll")}
+                        </button>
+                        {visibilityGroups.map((group) => (
+                            <button
+                                key={group}
+                                onClick={() => setVisibilityFilter(visibilityFilter === group ? null : group)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                    visibilityFilter === group
+                                        ? "bg-amber-500 text-white"
+                                        : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                                }`}
+                            >
+                                {group}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Loading */}
@@ -591,6 +856,11 @@ export default function BotsPage() {
                                                 Web
                                             </span>
                                         )}
+                                        <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${bot.visibility === "restricted" ? "bg-amber-50 text-amber-600" : "bg-blue-50 text-blue-600"}`}>
+                                            {bot.visibility === "restricted"
+                                                ? (bot.visibility_label ? `${t("bots.badgeRestricted")}: ${bot.visibility_label}` : t("bots.badgeRestricted"))
+                                                : t("bots.badgeAll")}
+                                        </span>
                                     </div>
                                     <p className="text-xs text-steel-500 line-clamp-2">
                                         {bot.system_prompt || bot.description || t("bots.noDescription")}

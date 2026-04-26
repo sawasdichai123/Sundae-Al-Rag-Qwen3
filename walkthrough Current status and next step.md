@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 13 เมษายน 2569 — **PDF Viewer Redesign ✅ | Download Fix ✅ | WebChat Scroll Fix ✅ | Avatar/Logo ✅ | LINE Status ✅ | Org Invitation ✅**
+> **อัพเดทล่าสุด**: 26 เมษายน 2569 — **Bot Visibility ✅ | ชื่อซ้ำ Prevention ✅ | Group Auto-fill ✅ | PDF Block Scan ✅ | Tags ✅ | User Approval 3 Flow ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -5429,7 +5429,78 @@ Upload → Extract text → สำเร็จ → Insert record → ดำเ�
 | 2.1 | PDF Notice + Block Scan | ✅ เสร็จ |
 | 2.2 | รายละเอียดไฟล์ (uploaded_by) | ✅ เสร็จ |
 | 2.3 | ระบบแท็ก | ✅ เสร็จ |
-| 3.1 | Bot Visibility | ⏳ ยังไม่ได้ทำ |
+| 3.1 | Bot Visibility | ✅ เสร็จ |
+| 4.1 | Notification Badge | ⏳ ยังไม่ได้ทำ |
+| 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
+
+---
+
+## Section 77: Bot Visibility + ชื่อซ้ำ + กลุ่ม Auto-fill (26 เม.ย. 2569)
+
+### 77.1 สรุปสิ่งที่ทำ
+
+Implement Section 3.1 — ระบบ Bot Visibility ครบทั้ง Backend + Frontend + ปรับปรุงเพิ่มเติม 3 จุด:
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| **Bot Visibility** | Backend: `list_bots()` filter ตาม visibility + visible_to, `create/update` รับ visibility params, `chat.py` บังคับ visibility check ตอนแชท |
+| **Frontend Visibility UI** | Toggle (ทุกคนใน Org / เฉพาะกลุ่ม), Member selector modal, Badge บนการ์ด (สีฟ้า "ส่วนกลาง" / สีส้ม "เฉพาะกลุ่ม"), จำนวนบอทรวม |
+| **ป้องกันชื่อบอทซ้ำ** | Unique index (case-insensitive) ต่อ org + Backend validate ก่อน create/update → return 409 |
+| **ชื่อกลุ่ม (visibility_label)** | Column ใหม่ `visibility_label TEXT` — ตั้งชื่อกลุ่มได้ เช่น "HR", "ฝ่ายขาย" แสดงบน badge "เฉพาะกลุ่ม: HR" |
+| **Filter ตามกลุ่ม** | Filter chips ใต้ช่องค้นหา — "ทั้งหมด" / "ส่วนกลาง" / ชื่อกลุ่มแต่ละกลุ่ม |
+| **Group Auto-fill** | ตอนตั้ง visibility = restricted ถ้าพิมพ์ชื่อกลุ่มที่มีอยู่แล้ว → แสดง chip กลุ่มเดิมให้กดเลือก → auto-fill สมาชิกจากบอทตัวอื่นที่ใช้กลุ่มเดียวกัน |
+| **Member chip fix** | โหลด orgMembers ตอน openEdit ถ้าเป็น restricted → ไม่โชว์ ID แทนชื่ออีก |
+
+### 77.2 SQL Migration (เพิ่มใน 020)
+
+```sql
+-- visibility + visible_to (มีอยู่แล้วจาก Section 76)
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'all';
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS visible_to UUID[] NOT NULL DEFAULT '{}';
+
+-- เพิ่มใหม่ใน Section 77:
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS visibility_label TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_unique_name_per_org
+    ON bots (organization_id, lower(name))
+    WHERE is_active = true;
+```
+
+### 77.3 Backend
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `backend/app/routers/bot.py` | `BotCreateRequest` / `BotUpdateRequest` / `BotResponse` — เพิ่ม `visibility`, `visible_to`, `visibility_label` |
+| `backend/app/routers/bot.py` | `create_bot()` — validate visibility, เช็คชื่อซ้ำ (ilike + is_active) → 409, บันทึก visibility_label |
+| `backend/app/routers/bot.py` | `update_bot()` — เช็คชื่อซ้ำ (exclude self) → 409, อัพเดท visibility_label |
+| `backend/app/routers/bot.py` | `list_bots()` — Org Admin เห็นทุกตัว, Member เห็นเฉพาะ `visibility='all'` หรือ user_id ∈ `visible_to` |
+| `backend/app/routers/chat.py` | `_validate_bot()` — เช็ค visibility ตอนแชท ป้องกัน API bypass |
+
+### 77.4 Frontend
+
+| ไฟล์ | การเปลี่ยนแปลง |
+|------|----------------|
+| `frontend/src/types/index.ts` | `Bot` เพิ่ม `visibility`, `visible_to`, `visibility_label` |
+| `frontend/src/api/endpoints.ts` | `botsApi.create()` เพิ่ม `visibility`, `visible_to`, `visibility_label` params |
+| `frontend/src/pages/BotsPage.tsx` | Visibility toggle (all/restricted) ในฟอร์ม create/edit |
+| `frontend/src/pages/BotsPage.tsx` | ช่อง "ชื่อกลุ่ม" + existing group suggestion chips (auto-fill สมาชิก) |
+| `frontend/src/pages/BotsPage.tsx` | Member selector modal — แสดง non-admin members ให้เลือก |
+| `frontend/src/pages/BotsPage.tsx` | Visibility badge บนการ์ด (สีฟ้า/สีส้ม + ชื่อกลุ่ม) |
+| `frontend/src/pages/BotsPage.tsx` | Filter chips ใต้ search bar — กรองตามกลุ่ม |
+| `frontend/src/pages/BotsPage.tsx` | จำนวนบอทรวมใต้หัวข้อ |
+| `frontend/src/pages/BotsPage.tsx` | Handle 409 duplicate name → toast แจ้งเตือน |
+| `frontend/src/i18n/th.json` | เพิ่ม ~20 keys (visibility, badge, groupName, duplicateName, filter, existingGroups) |
+| `frontend/src/i18n/en.json` | เพิ่ม ~20 keys (English equivalents) |
+
+### 77.5 สิ่งที่ยังเหลือ (Implement_comment.md)
+
+| Section | หัวข้อ | สถานะ |
+|---------|--------|-------|
+| 1.1 | ระบบอนุมัติ 3 Flow | ✅ เสร็จ |
+| 1.2 | ประวัติการอนุมัติ | ✅ เสร็จ |
+| 2.1 | PDF Notice + Block Scan | ✅ เสร็จ |
+| 2.2 | รายละเอียดไฟล์ (uploaded_by) | ✅ เสร็จ |
+| 2.3 | ระบบแท็ก | ✅ เสร็จ |
+| 3.1 | Bot Visibility | ✅ เสร็จ |
 | 4.1 | Notification Badge | ⏳ ยังไม่ได้ทำ |
 | 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
 

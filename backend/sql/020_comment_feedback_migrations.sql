@@ -57,6 +57,14 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_bots_visible_to ON bots USING GIN (visible_to)
     WHERE visibility = 'restricted';
 
+-- 3b. visibility_label — ชื่อกลุ่มที่แสดงบน badge เช่น "HR", "ฝ่ายขาย"
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS visibility_label TEXT;
+
+-- 3c. Unique bot name per organization — ป้องกันชื่อซ้ำ
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_unique_name_per_org
+    ON bots (organization_id, lower(name))
+    WHERE is_active = true;
+
 
 -- ═══════════════════════════════════════════════════════════════════
 -- 4. Auto-approve invited users
