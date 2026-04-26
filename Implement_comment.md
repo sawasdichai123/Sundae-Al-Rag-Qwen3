@@ -69,60 +69,82 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 
 ## 2. การจัดการคลังความรู้และไฟล์ (Knowledge Base & Files)
 
-### 2.1 แจ้งเตือนรองรับเฉพาะ PDF
+### 2.1 แจ้งเตือนรองรับเฉพาะ PDF + Block Scanned PDF ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- Upload UI จำกัดเฉพาะ `.pdf` อยู่แล้ว + มี toast แจ้งเตือนถ้าลากไฟล์ผิดประเภท
-- แต่ยังไม่มีข้อความแจ้งเตือนถาวรบนหน้า upload ก่อนกดอัปโหลด
+> **Implement เมื่อ:** 26 เม.ย. 2569
 
-**สิ่งที่ต้องเพิ่ม:**
+**สิ่งที่ Implement ไปแล้ว:**
 
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/pages/KnowledgeBasePage.tsx` | เพิ่มข้อความแจ้งเตือนถาวร (info banner) ใน upload zone: "รองรับเฉพาะไฟล์ PDF เท่านั้น" |
-| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม key `kb.pdfOnlyNotice` |
+| รายการ | รายละเอียด |
+|--------|-----------|
+| Info banner | แสดง "รองรับเฉพาะไฟล์ PDF แบบมีข้อความ (ขนาดสูงสุด 50 MB) — ไฟล์ PDF สแกนไม่รองรับ" |
+| Block scanned PDF | ตรวจสอบ text layer **ก่อน** สร้าง record — ถ้าดึงข้อความไม่ได้ → reject ทันที ไม่สร้าง record ค้างในระบบ |
+| Error message | Toast แจ้ง "ไฟล์นี้เป็น PDF สแกน (ภาพ) ไม่สามารถดึงข้อความได้ กรุณาอัปโหลด PDF ที่มีข้อความ" |
 
----
+**ไฟล์ที่แก้ไข:**
+- `backend/app/routers/document.py` — ย้าย `extract_text_from_pdf()` ขึ้นมาก่อน insert record
+- `frontend/src/pages/KnowledgeBasePage.tsx` — เพิ่ม banner + error handling สำหรับ scanned PDF
+- `frontend/src/i18n/th.json` + `en.json` — เพิ่ม keys: `kb.pdfOnlyNotice`, `kb.scannedPdfError`
 
-### 2.2 แสดงรายละเอียดไฟล์ให้ครบถ้วน
+**แนวทาง OCR ในอนาคต (ถ้าต้องการรองรับ PDF สแกน):**
 
-**สถานะปัจจุบัน:**
-- แสดง: ชื่อไฟล์, ขนาด, สถานะ (processing/ready/error), วันที่แบบ relative ("5 นาทีที่แล้ว"), บอทที่ link
-- **ไม่แสดง:** ชื่อผู้อัปโหลด (ไม่มี field `uploaded_by` ใน DB)
+| แนวทาง | Library | ข้อดี | ข้อเสีย |
+|--------|---------|-------|---------|
+| **Tesseract OCR** | `pytesseract` + `pdf2image` | ฟรี, รองรับภาษาไทย | ต้องติดตั้ง system dependency (`tesseract-ocr`, `poppler`), ช้า |
+| **EasyOCR** | `easyocr` | รองรับไทย built-in, ง่าย | โมเดลใหญ่ (~1GB), ใช้ GPU ดีกว่า |
+| **Google Cloud Vision** | `google-cloud-vision` | แม่นมาก, เร็ว | มีค่าใช้จ่าย API, ต้อง setup credentials |
+| **Azure AI Document Intelligence** | `azure-ai-formrecognizer` | แม่น, รองรับ table extraction | มีค่าใช้จ่าย, ซับซ้อนกว่า |
 
-**สิ่งที่ต้องเปลี่ยน:**
-
-#### Database (SQL Migration)
-```sql
--- เพิ่ม column uploaded_by
-ALTER TABLE documents ADD COLUMN uploaded_by UUID REFERENCES user_profiles(id);
-```
-
-#### Backend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `backend/app/routers/document.py` | `upload_document()` — เพิ่ม `uploaded_by: user.id` ตอน INSERT |
-| `backend/app/routers/document.py` | `DocumentResponse` — เพิ่ม field `uploaded_by`, `uploader_name` |
-| `backend/app/routers/document.py` | `list_documents()` — JOIN กับ `user_profiles` เพื่อดึงชื่อผู้อัปโหลด |
-
-#### Frontend
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/pages/KnowledgeBasePage.tsx` | แสดงชื่อผู้อัปโหลดในแต่ละ document card |
-| `frontend/src/pages/KnowledgeBasePage.tsx` | เปลี่ยนจาก "อัปเดตเมื่อ X วันที่แล้ว" → "อัปโหลดเมื่อ DD/MM/YYYY" (วันที่แบบชัดเจน) |
-| `frontend/src/pages/KnowledgeBasePage.tsx` | แสดง badge สถานะไฟล์ชัดเจน: "พร้อมใช้งาน" (เขียว) / "กำลังประมวลผล" (เหลือง) / "ข้อผิดพลาด" (แดง) พร้อมข้อความ |
+> **แผนการ implement OCR:**
+> 1. ตรวจจับ scanned PDF → ถ้าดึง text ไม่ได้ → ถาม user ว่าต้องการใช้ OCR หรือไม่
+> 2. แปลง PDF page → image (ใช้ `pdf2image` + `poppler`)
+> 3. OCR แต่ละ page → text (ใช้ Tesseract/EasyOCR)
+> 4. ต่อ text เข้ากับ pipeline เดิม (chunking → embedding → store)
+> 5. เพิ่ม flag `is_ocr: true` ใน documents เพื่อแยกแยะ
 
 ---
 
-### 2.3 ระบบแท็กจัดกลุ่มไฟล์
+### 2.2 แสดงรายละเอียดไฟล์ให้ครบถ้วน ✅ เสร็จแล้ว
 
-> **รายละเอียดทั้งหมดอยู่ใน:** [`implementation_plan (1).md`](implementation_plan%20(1).md)
-> ครอบคลุม: DB schema, Backend endpoints (5 จุด), Frontend UI (Tag filter bar, chips, upload dialog, edit modal), i18n keys, Verification Plan
+> **Implement เมื่อ:** 26 เม.ย. 2569
 
-**สรุปสั้น:**
-- DB: เพิ่ม `tags TEXT[]` + GIN index ในตาราง documents
-- Backend: upload รับ tags, list filter by tag, PATCH tags, GET /tags (auto-suggest)
-- Frontend: Tag filter bar + tag chips บน document card + tag input ตอน upload + edit modal
+**สิ่งที่ Implement ไปแล้ว:**
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| `uploaded_by` column | บันทึก user ID ตอน upload (เอกสารเก่า = NULL) |
+| Uploader name | JOIN `user_profiles` แสดง "อัปโหลดโดย ชื่อ-นามสกุล" |
+| วันที่ absolute | เปลี่ยนจาก "5 นาทีที่แล้ว" → "อัปโหลดเมื่อ DD/MM/YYYY" |
+| Status badge | เขียว (พร้อมใช้งาน) / เหลือง (กำลังประมวลผล) / แดง (ผิดพลาด) — มีอยู่แล้ว |
+
+**ไฟล์ที่แก้ไข:**
+- `backend/app/routers/document.py` — `DocumentResponse` เพิ่ม `uploaded_by`, `uploader_name`, `tags` / `list_documents()` JOIN uploader / `upload_document()` บันทึก `uploaded_by`
+- `frontend/src/pages/KnowledgeBasePage.tsx` — แสดง uploader name + วันที่ absolute
+- `frontend/src/types/index.ts` — `Document` interface เพิ่ม `tags`, `uploaded_by`, `uploader_name`
+
+---
+
+### 2.3 ระบบแท็กจัดกลุ่มไฟล์ ✅ เสร็จแล้ว
+
+> **Implement เมื่อ:** 26 เม.ย. 2569
+
+**สิ่งที่ Implement ไปแล้ว:**
+
+| รายการ | รายละเอียด |
+|--------|-----------|
+| DB | `tags TEXT[]` + GIN index ใน documents (อยู่ใน migration 020) |
+| Upload รับ tags | `upload_document()` รับ `tags` parameter (comma-separated) |
+| `PATCH /documents/{id}/tags` | อัพเดทแท็กของเอกสาร (Org Admin) |
+| `GET /documents/tags/all` | ดึงแท็กทั้งหมดใน org (auto-suggest) |
+| Tag filter bar | ปุ่มกรอง "ทั้งหมด" + ชื่อแท็ก ด้านบนรายการเอกสาร |
+| Tag chips | แสดงแท็กเป็น chip บน document card |
+| Edit tags modal | พิมพ์แท็กใหม่ + แสดง chip ของแท็กที่เคยใช้ให้กดเลือกได้ทันที |
+
+**ไฟล์ที่แก้ไข:**
+- `backend/app/routers/document.py` — endpoints: `update_document_tags`, `list_all_tags` / upload รับ tags
+- `frontend/src/pages/KnowledgeBasePage.tsx` — tag filter bar + tag chips + edit tags modal
+- `frontend/src/api/endpoints.ts` — `updateTags()`, `listTags()`, `upload()` เพิ่ม tags param
+- `frontend/src/i18n/th.json` + `en.json` — ~10 keys สำหรับ tags UI
 
 ---
 
@@ -212,10 +234,10 @@ ALTER TABLE bots ADD COLUMN visible_to UUID[] NOT NULL DEFAULT '{}';
 | ลำดับ | งาน | ความซับซ้อน | ผลกระทบ | สถานะ |
 |-------|-----|-------------|---------|-------|
 | ~~2~~ | ~~ปรับระบบอนุมัติ + ประวัติ (1.1, 1.2)~~ | ~~สูง~~ | ~~เปลี่ยน flow หลัก~~ | ✅ เสร็จแล้ว |
-| 1 | แจ้งเตือน PDF only + แสดงรายละเอียดไฟล์ (2.1, 2.2) | ต่ำ-กลาง | แก้ปัญหาผู้ใช้สับสน | ⏳ ยังไม่ได้ทำ |
+| ~~1~~ | ~~แจ้งเตือน PDF + รายละเอียดไฟล์ + Block Scan (2.1, 2.2)~~ | ~~ต่ำ-กลาง~~ | ~~แก้ปัญหาผู้ใช้สับสน~~ | ✅ เสร็จแล้ว |
+| ~~5~~ | ~~ระบบแท็ก (2.3)~~ | ~~กลาง~~ | ~~ต้องการเมื่อเอกสารเยอะ~~ | ✅ เสร็จแล้ว |
 | 3 | Notification Badge (4.1) | กลาง | UX ดีขึ้นมาก | ⏳ ยังไม่ได้ทำ |
 | 4 | Bot Visibility (3.1) | กลาง | ต้องการเมื่อ org มีหลายแผนก | ⏳ ยังไม่ได้ทำ |
-| 5 | ระบบแท็ก (2.3) | กลาง | ต้องการเมื่อเอกสารเยอะ | ⏳ ยังไม่ได้ทำ |
 | 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement | ⏳ ยังไม่ได้ทำ |
 
 ---

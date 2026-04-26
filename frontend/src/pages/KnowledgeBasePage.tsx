@@ -3,6 +3,7 @@
  *
  * Displays knowledge collections (documents) as cards.
  * Allows uploading PDFs, viewing status, and deleting documents.
+ * Supports tags for categorization and filtering.
  *
  * Figma ref: Knowledge Page.png, Knowledge Page2.png
  * API: documentsApi (endpoints.ts)
@@ -68,6 +69,14 @@ function LinkIcon() {
     );
 }
 
+function TagIcon() {
+    return (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path fillRule="evenodd" d="M5.5 3A2.5 2.5 0 0 0 3 5.5v2.879a2.5 2.5 0 0 0 .732 1.767l6.5 6.5a2.5 2.5 0 0 0 3.536 0l2.878-2.878a2.5 2.5 0 0 0 0-3.536l-6.5-6.5A2.5 2.5 0 0 0 8.38 3H5.5ZM6 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clipRule="evenodd" />
+        </svg>
+    );
+}
+
 // ── Status Badge ────────────────────────────────────────────────
 
 function StatusBadge({ status, t }: { status: string; t: (key: string) => string }) {
@@ -87,19 +96,16 @@ function StatusBadge({ status, t }: { status: string; t: (key: string) => string
     );
 }
 
-// ── Time Format ─────────────────────────────────────────────────
+// ── Date Format ────────────────────────────────────────────────
 
-function timeAgo(dateStr: string, t: (key: string) => string): string {
-    const parsed = new Date(dateStr).getTime();
-    if (isNaN(parsed)) return t("kb.unknownTime");
-    const diff = Date.now() - parsed;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return t("kb.justNow");
-    if (mins < 60) return t("kb.minutesAgo").replace("{n}", String(mins));
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return t("kb.hoursAgo").replace("{n}", String(hours));
-    const days = Math.floor(hours / 24);
-    return t("kb.daysAgo").replace("{n}", String(days));
+function formatDate(dateStr: string): string {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "-";
+    return d.toLocaleDateString("th-TH", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+    });
 }
 
 // ── Component ───────────────────────────────────────────────────
@@ -117,6 +123,14 @@ export default function KnowledgeBasePage() {
     const [linkSelection, setLinkSelection] = useState<Set<string>>(new Set());
     const [linkSaving, setLinkSaving] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Tag state
+    const [allTags, setAllTags] = useState<string[]>([]);
+    const [selectedTag, setSelectedTag] = useState<string | null>(null);
+    const [editTagDocId, setEditTagDocId] = useState<string | null>(null);
+    const [editTagInput, setEditTagInput] = useState("");
+    const [editTags, setEditTags] = useState<string[]>([]);
+    const [tagSaving, setTagSaving] = useState(false);
 
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
@@ -145,6 +159,16 @@ export default function KnowledgeBasePage() {
             setBots(res.data);
         } catch (err) {
             console.error("[Knowledge] Failed to load bots:", err);
+        }
+    }, [orgId]);
+
+    const loadTags = useCallback(async () => {
+        if (!orgId) return;
+        try {
+            const res = await documentsApi.listTags(orgId);
+            setAllTags(res.data.tags);
+        } catch (err) {
+            console.error("[Knowledge] Failed to load tags:", err);
         }
     }, [orgId]);
 
@@ -178,9 +202,46 @@ export default function KnowledgeBasePage() {
         }
     };
 
+    // ── Tag edit handlers ───────────────────────────────────────
+    const openTagModal = (doc: Document) => {
+        setEditTagDocId(doc.id);
+        setEditTags(doc.tags || []);
+        setEditTagInput("");
+    };
+
+    const handleAddTag = () => {
+        const tag = editTagInput.trim();
+        if (tag && !editTags.includes(tag)) {
+            setEditTags((prev) => [...prev, tag]);
+        }
+        setEditTagInput("");
+    };
+
+    const handleRemoveTag = (tag: string) => {
+        setEditTags((prev) => prev.filter((t) => t !== tag));
+    };
+
+    const handleSaveTags = async () => {
+        if (!editTagDocId || !orgId) return;
+        setTagSaving(true);
+        try {
+            await documentsApi.updateTags(editTagDocId, orgId, editTags);
+            toast("success", t("kb.tagsSaved"));
+            setEditTagDocId(null);
+            await loadDocuments();
+            await loadTags();
+        } catch (err) {
+            console.error("[Knowledge] Save tags failed:", err);
+            toast("error", t("kb.tagsFailed"));
+        } finally {
+            setTagSaving(false);
+        }
+    };
+
     useEffect(() => {
         loadDocuments();
         loadBots();
+        loadTags();
     }, [loadDocuments]);
 
     // ── Upload handler ──────────────────────────────────────────
@@ -197,9 +258,14 @@ export default function KnowledgeBasePage() {
         try {
             await documentsApi.upload(file, [], orgId);
             await loadDocuments();
-        } catch (err) {
+        } catch (err: unknown) {
             console.error("[Knowledge] Upload failed:", err);
-            toast("error", t("kb.uploadFailed"));
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "";
+            if (detail.includes("no extractable text")) {
+                toast("error", t("kb.scannedPdfError"));
+            } else {
+                toast("error", t("kb.uploadFailed"));
+            }
         } finally {
             setUploading(false);
             if (fileInputRef.current) fileInputRef.current.value = "";
@@ -235,18 +301,25 @@ export default function KnowledgeBasePage() {
         try {
             await documentsApi.upload(file, [], orgId);
             await loadDocuments();
-        } catch (err) {
+        } catch (err: unknown) {
             console.error("[Knowledge] Drop upload failed:", err);
-            toast("error", t("kb.uploadFailedShort"));
+            const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "";
+            if (detail.includes("no extractable text")) {
+                toast("error", t("kb.scannedPdfError"));
+            } else {
+                toast("error", t("kb.uploadFailedShort"));
+            }
         } finally {
             setUploading(false);
         }
     };
 
     // ── Filtered list ───────────────────────────────────────────
-    const filtered = documents.filter((d) =>
-        (d.name ?? "").toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filtered = documents.filter((d) => {
+        const matchesSearch = (d.name ?? "").toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesTag = !selectedTag || (d.tags ?? []).includes(selectedTag);
+        return matchesSearch && matchesTag;
+    });
 
     // ── Render ───────────────────────────────────────────────────
     return (
@@ -271,18 +344,55 @@ export default function KnowledgeBasePage() {
                 />
             </div>
 
-            {/* Search */}
-            <div className="relative mb-6">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-steel-400">
-                    <SearchIcon />
-                </span>
-                <input
-                    type="text"
-                    placeholder={t("kb.searchPlaceholder")}
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full max-w-md pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
-                />
+            {/* PDF Only Notice */}
+            <div className="flex items-center gap-2 mb-4 px-4 py-2.5 bg-brand-50 border border-brand-100 rounded-xl">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-brand-500 shrink-0">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+                </svg>
+                <span className="text-xs text-brand-700 font-medium">{t("kb.pdfOnlyNotice")}</span>
+            </div>
+
+            {/* Search + Tag Filter */}
+            <div className="flex items-center gap-3 mb-6 flex-wrap">
+                <div className="relative flex-1 min-w-[200px] max-w-md">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-steel-400">
+                        <SearchIcon />
+                    </span>
+                    <input
+                        type="text"
+                        placeholder={t("kb.searchPlaceholder")}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2.5 bg-white border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100 transition-all"
+                    />
+                </div>
+                {allTags.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                            onClick={() => setSelectedTag(null)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                !selectedTag
+                                    ? "bg-brand-400 text-steel-900"
+                                    : "bg-steel-100 text-steel-600 hover:bg-steel-200"
+                            }`}
+                        >
+                            {t("kb.allTags")}
+                        </button>
+                        {allTags.map((tag) => (
+                            <button
+                                key={tag}
+                                onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                    selectedTag === tag
+                                        ? "bg-brand-400 text-steel-900"
+                                        : "bg-steel-100 text-steel-600 hover:bg-steel-200"
+                                }`}
+                            >
+                                {tag}
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Loading */}
@@ -359,12 +469,30 @@ export default function KnowledgeBasePage() {
                                                 : doc.file_size_bytes
                                                     ? ` · ${(doc.file_size_bytes / 1024).toFixed(0)} KB`
                                                     : ""}
+                                            {doc.uploader_name && (
+                                                <> · {t("kb.uploadedBy")} {doc.uploader_name}</>
+                                            )}
                                         </p>
                                         <div className="flex items-center gap-3 mt-2 flex-wrap">
                                             <StatusBadge status={doc.status} t={t} />
                                             <span className="text-[11px] text-steel-400">
-                                                {t("kb.lastUpdate")} {timeAgo(doc.created_at, t)}
+                                                {t("kb.uploadedAt")} {formatDate(doc.created_at)}
                                             </span>
+                                            {/* Tags */}
+                                            {(doc.tags ?? []).length > 0 && (
+                                                <div className="flex items-center gap-1 flex-wrap">
+                                                    {(doc.tags ?? []).map((tag) => (
+                                                        <span
+                                                            key={tag}
+                                                            className="inline-flex items-center gap-1 text-[11px] text-steel-600 bg-steel-50 border border-steel-200 px-2 py-0.5 rounded-full"
+                                                        >
+                                                            <TagIcon />
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {/* Linked bots */}
                                             {(doc.bot_ids ?? []).length > 0 && (
                                                 <div className="flex items-center gap-1 flex-wrap">
                                                     {(doc.bot_ids ?? []).slice(0, 3).map((bid) => {
@@ -393,6 +521,17 @@ export default function KnowledgeBasePage() {
 
                                 {/* Action Buttons */}
                                 <div className="shrink-0 ml-3 flex items-center gap-1">
+                                    {/* Edit Tags — Org Admin only */}
+                                    {isOrgAdmin && (
+                                        <button
+                                            onClick={() => openTagModal(doc)}
+                                            className="opacity-0 group-hover:opacity-100 text-steel-300 hover:text-brand-500 transition-all cursor-pointer p-1"
+                                            title={t("kb.editTags")}
+                                        >
+                                            <TagIcon />
+                                        </button>
+                                    )}
+
                                     {/* Link Bots — Org Admin only */}
                                     {isOrgAdmin && (
                                         <button
@@ -475,6 +614,105 @@ export default function KnowledgeBasePage() {
                         <div className="min-w-0">
                             <p className="text-sm font-medium text-steel-800 truncate">{t("kb.uploadProcessing")}</p>
                             <p className="text-[11px] text-steel-400 truncate">{t("kb.uploadProcessingNote")}</p>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {/* Edit Tags Modal */}
+            {editTagDocId && createPortal(
+                <div
+                    className="fixed inset-0 flex items-center justify-center z-50 p-4"
+                    onClick={() => !tagSaving && setEditTagDocId(null)}
+                >
+                    <div
+                        className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-6 py-4 border-b border-steel-100">
+                            <h3 className="text-base font-bold text-steel-900">{t("kb.editTags")}</h3>
+                            <p className="text-xs text-steel-400 mt-0.5">{t("kb.tagPlaceholder")}</p>
+                        </div>
+                        <div className="px-6 py-4">
+                            {/* Tag input */}
+                            <div className="flex items-center gap-2 mb-3">
+                                <input
+                                    type="text"
+                                    value={editTagInput}
+                                    onChange={(e) => setEditTagInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") { e.preventDefault(); handleAddTag(); }
+                                    }}
+                                    placeholder={t("kb.addTag")}
+                                    className="flex-1 px-3 py-2 border border-steel-200 rounded-xl text-sm text-steel-800 placeholder:text-steel-400 focus:outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                                />
+                                <button
+                                    onClick={handleAddTag}
+                                    className="px-3 py-2 bg-brand-400 text-steel-900 rounded-xl text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer"
+                                >
+                                    {t("kb.addTag")}
+                                </button>
+                            </div>
+                            {/* Existing tag suggestions */}
+                            {allTags.filter((t) => !editTags.includes(t)).length > 0 && (
+                                <div className="mb-3">
+                                    <p className="text-[11px] text-steel-400 mb-1.5">{t("kb.existingTags")}</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {allTags.filter((t) => !editTags.includes(t)).map((tag) => (
+                                            <button
+                                                key={tag}
+                                                onClick={() => setEditTags((prev) => [...prev, tag])}
+                                                className="inline-flex items-center gap-1 text-xs text-brand-700 bg-brand-50 border border-brand-200 px-2.5 py-1 rounded-full hover:bg-brand-100 transition-colors cursor-pointer"
+                                            >
+                                                <PlusIcon />
+                                                {tag}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {/* Current tags on this document */}
+                            <div>
+                                <p className="text-[11px] text-steel-400 mb-1.5">{t("kb.currentTags")}</p>
+                                <div className="flex flex-wrap gap-2 min-h-[32px]">
+                                    {editTags.length === 0 && (
+                                        <span className="text-xs text-steel-400 italic">{t("kb.noTags")}</span>
+                                    )}
+                                    {editTags.map((tag) => (
+                                        <span
+                                            key={tag}
+                                            className="inline-flex items-center gap-1 text-xs text-steel-700 bg-steel-100 border border-steel-200 px-2.5 py-1 rounded-full"
+                                        >
+                                            {tag}
+                                            <button
+                                                onClick={() => handleRemoveTag(tag)}
+                                                className="text-steel-400 hover:text-red-500 cursor-pointer ml-0.5"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                                                    <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z" />
+                                                </svg>
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="px-6 py-3 border-t border-steel-100 flex items-center justify-end gap-2">
+                            <button
+                                onClick={() => setEditTagDocId(null)}
+                                disabled={tagSaving}
+                                className="px-4 py-2 text-sm text-steel-600 hover:text-steel-900 cursor-pointer disabled:opacity-50"
+                            >
+                                {t("common.cancel")}
+                            </button>
+                            <button
+                                onClick={handleSaveTags}
+                                disabled={tagSaving}
+                                className="px-4 py-2 bg-brand-400 text-steel-900 rounded-full text-sm font-bold hover:bg-brand-500 transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                                {tagSaving ? t("common.saving") : t("common.save")}
+                            </button>
                         </div>
                     </div>
                 </div>,

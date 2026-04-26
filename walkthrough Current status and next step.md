@@ -5348,3 +5348,88 @@ ngrok:
 | `frontend/src/i18n/th.json` | เพิ่ม 14 keys |
 | `frontend/src/i18n/en.json` | เพิ่ม 14 keys |
 
+---
+
+## 76. Section 2: การจัดการคลังความรู้และไฟล์ (Knowledge Base & Files) — 26 เม.ย. 2569
+
+> **Implement_comment.md:** Section 2.1, 2.2, 2.3 ทั้งหมด ✅ เสร็จแล้ว
+
+### 76.1 PDF Only Notice + Block Scanned PDF (Section 2.1)
+
+**ปัญหา:** PDF สแกน (ภาพ) อัปโหลดได้แต่ใช้งานไม่ได้ — ระบบใช้ PyMuPDF ดึง text layer เท่านั้น PDF สแกนไม่มี text layer → สร้าง record status "error" ค้างในระบบ
+
+**วิธีแก้:** ย้ายการตรวจสอบ text extraction ขึ้นมา**ก่อน**สร้าง record ใน DB
+
+| การเปลี่ยนแปลง | รายละเอียด |
+|----------------|-----------|
+| **Pre-validate** | เรียก `extract_text_from_pdf()` ก่อน insert record — ถ้าดึงข้อความไม่ได้ → reject ทันที HTTP 400 |
+| **Info banner** | เพิ่มข้อความ "รองรับเฉพาะไฟล์ PDF แบบมีข้อความ — ไฟล์ PDF สแกนไม่รองรับ" ด้านบนหน้า |
+| **Error toast** | แจ้งผู้ใช้ "ไฟล์นี้เป็น PDF สแกน (ภาพ) ไม่สามารถดึงข้อความได้" |
+
+**ก่อน (flow เดิม):**
+```
+Upload → Insert record (processing) → Extract text → ล้มเหลว → Update status "error" → record ค้าง
+```
+
+**หลัง (flow ใหม่):**
+```
+Upload → Extract text → ล้มเหลว → Reject ทันที (ไม่สร้าง record)
+Upload → Extract text → สำเร็จ → Insert record → ดำเนินการต่อ
+```
+
+**แนวทาง OCR ในอนาคต (ถ้าต้องการรองรับ PDF สแกน):**
+
+| แนวทาง | Library | ข้อดี | ข้อเสีย |
+|--------|---------|-------|---------|
+| Tesseract OCR | `pytesseract` + `pdf2image` | ฟรี, รองรับภาษาไทย | ต้องติดตั้ง system dependency, ช้า |
+| EasyOCR | `easyocr` | รองรับไทย built-in | โมเดลใหญ่ ~1GB, ใช้ GPU ดีกว่า |
+| Google Cloud Vision | `google-cloud-vision` | แม่นมาก, เร็ว | มีค่าใช้จ่าย API |
+| Azure AI Document Intelligence | `azure-ai-formrecognizer` | แม่น, รองรับ table extraction | มีค่าใช้จ่าย, ซับซ้อน |
+
+แผน OCR: ตรวจจับ scanned PDF → ถาม user → แปลง page เป็น image → OCR → text → เข้า pipeline เดิม → เพิ่ม flag `is_ocr: true`
+
+### 76.2 แสดงรายละเอียดไฟล์ครบถ้วน (Section 2.2)
+
+| การเปลี่ยนแปลง | รายละเอียด |
+|----------------|-----------|
+| `uploaded_by` column | บันทึก user ID ตอน upload (เอกสารเก่า = NULL) |
+| Uploader name | JOIN `user_profiles` แสดง "อัปโหลดโดย ชื่อ-นามสกุล" บน document card |
+| วันที่ absolute | เปลี่ยนจาก "5 นาทีที่แล้ว" → "อัปโหลดเมื่อ DD/MM/YYYY" |
+
+### 76.3 ระบบแท็กจัดกลุ่มไฟล์ (Section 2.3)
+
+| การเปลี่ยนแปลง | รายละเอียด |
+|----------------|-----------|
+| DB | `tags TEXT[]` + GIN index ใน documents (migration 020) |
+| `PATCH /documents/{id}/tags` | อัพเดทแท็กของเอกสาร |
+| `GET /documents/tags/all` | ดึงแท็กทั้งหมดใน org (auto-suggest) |
+| Upload รับ tags | `upload_document()` รับ `tags` comma-separated |
+| Tag filter bar | ปุ่ม "ทั้งหมด" + ปุ่มแท็กแต่ละตัว กรองเอกสารตามแท็ก |
+| Tag chips | แสดงแท็กเป็น chip พร้อมไอคอนบน document card |
+| Edit tags modal | แสดงแท็กที่เคยใช้เป็น chip กดเลือกได้ทันที + พิมพ์แท็กใหม่ + ลบแท็กด้วยปุ่ม x |
+
+### 76.4 ไฟล์ที่แก้ไขทั้งหมด
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/document.py` | Pre-validate scanned PDF, `DocumentResponse` เพิ่ม `uploaded_by`/`uploader_name`/`tags`, `list_documents()` JOIN uploader, `upload_document()` รับ tags + บันทึก uploaded_by, endpoints ใหม่: `update_document_tags`, `list_all_tags` |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | Info banner, scanned PDF error toast, uploader name, วันที่ absolute, tag filter bar, tag chips, edit tags modal (clickable suggestions) |
+| `frontend/src/api/endpoints.ts` | `upload()` เพิ่ม tags param, `updateTags()`, `listTags()` |
+| `frontend/src/types/index.ts` | `Document` interface เพิ่ม `tags`, `uploaded_by`, `uploader_name` |
+| `frontend/src/i18n/th.json` | เพิ่ม ~16 keys (pdfOnlyNotice, scannedPdfError, tags, uploadedBy ฯลฯ) |
+| `frontend/src/i18n/en.json` | เพิ่ม ~16 keys (English equivalents) |
+| `Implement_comment.md` | อัพเดท Section 2.1, 2.2, 2.3 เป็น ✅ เสร็จแล้ว + เพิ่มแนวทาง OCR |
+
+### 76.5 สิ่งที่ยังเหลือ (Implement_comment.md)
+
+| Section | หัวข้อ | สถานะ |
+|---------|--------|-------|
+| 1.1 | ระบบอนุมัติ 3 Flow | ✅ เสร็จ |
+| 1.2 | ประวัติการอนุมัติ | ✅ เสร็จ |
+| 2.1 | PDF Notice + Block Scan | ✅ เสร็จ |
+| 2.2 | รายละเอียดไฟล์ (uploaded_by) | ✅ เสร็จ |
+| 2.3 | ระบบแท็ก | ✅ เสร็จ |
+| 3.1 | Bot Visibility | ⏳ ยังไม่ได้ทำ |
+| 4.1 | Notification Badge | ⏳ ยังไม่ได้ทำ |
+| 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
+

@@ -24,11 +24,12 @@ import type {
 // ── Documents ───────────────────────────────────────────────────
 
 export const documentsApi = {
-    /** Upload a PDF document for processing. Optionally pre-link to bots. */
-    upload: (file: File, botIds: string[], organizationId: string) => {
+    /** Upload a PDF document for processing. Optionally pre-link to bots and add tags. */
+    upload: (file: File, botIds: string[], organizationId: string, tags: string[] = []) => {
         const formData = new FormData();
         formData.append("file", file);
         if (botIds.length > 0) formData.append("bot_ids", botIds.join(","));
+        if (tags.length > 0) formData.append("tags", tags.join(","));
         formData.append("organization_id", organizationId);
 
         return apiClient.post<DocumentUploadResponse>(
@@ -36,7 +37,7 @@ export const documentsApi = {
             formData,
             {
                 headers: { "Content-Type": "multipart/form-data" },
-                timeout: 300_000, // PDF parsing + chunking + embedding อาจใช้เวลา 5 นาที
+                timeout: 300_000,
             }
         );
     },
@@ -69,6 +70,18 @@ export const documentsApi = {
     getPreviewUrl: (documentId: string, organizationId: string, download = false) =>
         apiClient.get<{ url: string; filename: string }>(`/api/documents/${documentId}/preview`, {
             params: { organization_id: organizationId, download },
+        }),
+
+    /** Update tags for a document. */
+    updateTags: (documentId: string, organizationId: string, tags: string[]) =>
+        apiClient.patch(`/api/documents/${documentId}/tags`, { tags }, {
+            params: { organization_id: organizationId },
+        }),
+
+    /** Get all unique tags in an organization. */
+    listTags: (organizationId: string) =>
+        apiClient.get<{ tags: string[] }>("/api/documents/tags/all", {
+            params: { organization_id: organizationId },
         }),
 };
 

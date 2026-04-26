@@ -130,6 +130,9 @@ export interface Document {
     storage_bytes: number | null;       // actual DB storage (chunks + embeddings)
     mime_type: string | null;
     status: DocumentStatus;
+    tags: string[];
+    uploaded_by: string | null;
+    uploader_name: string | null;
     created_at: string;
 }
 

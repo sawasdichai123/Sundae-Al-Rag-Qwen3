@@ -65,6 +65,9 @@ class DocumentResponse(BaseModel):
     storage_bytes: Optional[int] = None
     mime_type: Optional[str] = None
     status: str
+    tags: list[str] = []
+    uploaded_by: Optional[str] = None
+    uploader_name: Optional[str] = None
     created_at: str
 
 
@@ -113,8 +116,28 @@ async def list_documents(
         except Exception as size_exc:
             logger.warning("Failed to fetch storage sizes: %s", size_exc)
 
+        # Fetch uploader names
+        uploader_ids = list({doc["uploaded_by"] for doc in (result.data or []) if doc.get("uploaded_by")})
+        uploader_map: dict[str, str] = {}
+        if uploader_ids:
+            try:
+                profiles = await (
+                    supabase.table("user_profiles")
+                    .select("id, email, first_name, last_name")
+                    .in_("id", uploader_ids)
+                ).execute()
+                for p in profiles.data or []:
+                    name = " ".join(filter(None, [p.get("first_name"), p.get("last_name")])) or p.get("email", "")
+                    uploader_map[p["id"]] = name
+            except Exception as up_exc:
+                logger.warning("Failed to fetch uploader names: %s", up_exc)
+
         return [
-            DocumentResponse(**{**doc, "storage_bytes": storage_map.get(doc["id"])})
+            DocumentResponse(**{
+                **doc,
+                "storage_bytes": storage_map.get(doc["id"]),
+                "uploader_name": uploader_map.get(doc.get("uploaded_by", "")) if doc.get("uploaded_by") else None,
+            })
             for doc in (result.data or [])
         ]
 
@@ -285,6 +308,75 @@ async def link_document_to_bots(
         raise HTTPException(status_code=500, detail="Failed to link document.")
 
 
+# ── Tags Endpoints ──────────────────────────────────────────────
+
+
+class UpdateTagsRequest(BaseModel):
+    tags: list[str] = []
+
+
+@router.patch("/{document_id}/tags")
+async def update_document_tags(
+    document_id: str,
+    organization_id: str,
+    body: UpdateTagsRequest,
+    user: CurrentUser = Depends(require_org_admin),
+):
+    """Update tags for a document."""
+    await verify_organization(user, organization_id)
+    supabase = get_supabase()
+
+    try:
+        cleaned_tags = list({t.strip() for t in body.tags if t.strip()})
+
+        result = await (
+            supabase.table("documents")
+            .update({"tags": cleaned_tags})
+            .eq("id", document_id)
+            .eq("organization_id", organization_id)
+        ).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found.")
+
+        return {"message": "ok", "document_id": document_id, "tags": cleaned_tags}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to update tags for document %s: %s", document_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to update tags.")
+
+
+@router.get("/tags/all")
+async def list_all_tags(
+    organization_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Get all unique tags used across documents in an organization."""
+    await verify_organization(user, organization_id)
+    supabase = get_supabase()
+
+    try:
+        result = await (
+            supabase.table("documents")
+            .select("tags")
+            .eq("organization_id", organization_id)
+        ).execute()
+
+        all_tags: set[str] = set()
+        for doc in result.data or []:
+            for tag in doc.get("tags") or []:
+                if tag.strip():
+                    all_tags.add(tag.strip())
+
+        return {"tags": sorted(all_tags)}
+
+    except Exception as exc:
+        logger.error("Failed to list tags (org=%s): %s", organization_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to list tags.")
+
+
 # ── Helper Functions ─────────────────────────────────────────────
 
 
@@ -348,6 +440,7 @@ async def upload_document(
     file: UploadFile = File(...),
     organization_id: str = Form(...),
     bot_ids: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
     user: CurrentUser = Depends(require_org_admin),
 ) -> UploadResponse:
     """Upload a PDF document and process it through the RAG pipeline.
@@ -357,6 +450,7 @@ async def upload_document(
         organization_id: UUID of the tenant organization.
         bot_ids:         Optional comma-separated UUIDs of bots to link.
                          Empty/omitted = document is org-wide (not yet linked).
+        tags:            Optional comma-separated tags for categorization.
     """
     await verify_organization(user, organization_id)
 
@@ -371,6 +465,11 @@ async def upload_document(
     parsed_bot_ids: list[str] = []
     if bot_ids:
         parsed_bot_ids = [b.strip() for b in bot_ids.split(",") if b.strip()]
+
+    # Parse comma-separated tags → list[str]
+    parsed_tags: list[str] = []
+    if tags:
+        parsed_tags = [t.strip() for t in tags.split(",") if t.strip()]
 
     document_id = str(uuid.uuid4())
     sanitized_name = _re.sub(r"[^a-zA-Z0-9._\-\u0E00-\u0E7F ]", "_", file.filename or "untitled.pdf")
@@ -391,7 +490,14 @@ async def upload_document(
                 detail=f"File too large ({len(doc_bytes) / 1024 / 1024:.1f} MB). Maximum is 50 MB.",
             )
 
-        # ── 3. Upload original PDF to Supabase Storage ───────────
+        # ── 3. Pre-validate: extract text BEFORE creating record ──
+        #    Block scanned PDFs (no text layer) early — no orphan records
+        try:
+            full_text = extract_text_from_pdf(doc_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        # ── 4. Upload original PDF to Supabase Storage ───────────
         storage_path = f"{organization_id}/{document_id}.pdf"
         try:
             await supabase.storage.from_(STORAGE_BUCKET).upload(
@@ -402,10 +508,9 @@ async def upload_document(
             logger.info("Original PDF uploaded to storage: %s", storage_path)
         except Exception as storage_exc:
             logger.error("Failed to upload PDF to storage: %s", storage_exc)
-            # Non-fatal — continue processing even if storage upload fails
             storage_path = None
 
-        # ── 4. Insert document record (status = processing) ──────
+        # ── 5. Insert document record (status = processing) ──────
         file_size = len(doc_bytes)
 
         doc_row = {
@@ -417,24 +522,13 @@ async def upload_document(
             "file_size_bytes": file_size,
             "mime_type": "application/pdf",
             "status": "processing",
+            "uploaded_by": user.id,
+            "tags": parsed_tags,
         }
         await (supabase.table("documents").insert(doc_row)).execute()
         logger.info(
             "Document record created: %s (org=%s)", document_id, organization_id
         )
-
-        # ── 5. Extract text ──────────────────────────────────────
-        try:
-            full_text = extract_text_from_pdf(doc_bytes)
-        except ValueError as exc:
-            # Update status to error and return 400
-            await (
-                supabase.table("documents")
-                .update({"status": "error"})
-                .eq("id", document_id)
-                .eq("organization_id", organization_id)
-            ).execute()
-            raise HTTPException(status_code=400, detail=str(exc))
 
         # ── Validate extracted text size ───────────────────────
         MAX_TEXT_SIZE = 10 * 1024 * 1024  # 10MB of text
