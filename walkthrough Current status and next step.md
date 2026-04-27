@@ -5538,5 +5538,44 @@ Implement Section 4.1 — Notification Badge บน sidebar เมนู ไม�
 
 | Section | หัวข้อ | สถานะ |
 |---------|--------|-------|
-| 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
+| 4.2 | คำศัพท์/สี audit | ✅ เสร็จ |
+
+---
+
+## Section 79: คำศัพท์/สี Audit รอบสุดท้าย (27 เม.ย. 2569)
+
+### 79.1 สรุปสิ่งที่ทำ
+
+Audit ความสอดคล้องของ wording, i18n keys, และสี badge ทุกหน้า:
+
+| ตรวจสอบ | ผล |
+|---------|-----|
+| i18n keys TH/EN ครบ | ✅ 655 keys ตรงกันทั้ง 2 ภาษา |
+| "Bot" / "บอท" ถูกต้อง | ✅ ไม่มี "AI Bot" ปน |
+| "คลังความรู้" ถูกต้อง | ✅ ใช้ i18n key ทุกจุด |
+| สี badge มาตรฐาน | ✅ เขียว=พร้อม, เหลือง=รอ, แดง=ผิดพลาด |
+| Hardcoded strings | ✅ แก้ 1 จุด — InboxPage.tsx |
+| "owner" → "admin" | ✅ เปลี่ยน 1 key — dangerZone.ownerOnly → adminOnly |
+
+### 79.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `frontend/src/pages/InboxPage.tsx` | แก้ hardcoded "ทั้งหมด/LINE/Web" → i18n keys |
+| `frontend/src/pages/DangerZonePage.tsx` | `dangerZone.ownerOnly` → `dangerZone.adminOnly` |
+| `frontend/src/i18n/th.json` | เพิ่ม `inbox.filterAll/Line/Web` + rename key |
+| `frontend/src/i18n/en.json` | เพิ่ม `inbox.filterAll/Line/Web` + rename key |
+
+### 79.3 สถานะ Implement Plan — ✅ ครบทุกข้อ
+
+| Section | หัวข้อ | สถานะ |
+|---------|--------|-------|
+| 1.1 | ระบบอนุมัติ 3 Flow | ✅ |
+| 1.2 | ประวัติการอนุมัติ | ✅ |
+| 2.1 | PDF Notice + Block Scan | ✅ |
+| 2.2 | รายละเอียดไฟล์ (uploaded_by) | ✅ |
+| 2.3 | ระบบแท็ก | ✅ |
+| 3.1 | Bot Visibility | ✅ |
+| 4.1 | Notification Badge | ✅ |
+| 4.2 | คำศัพท์/สี audit | ✅ |
 

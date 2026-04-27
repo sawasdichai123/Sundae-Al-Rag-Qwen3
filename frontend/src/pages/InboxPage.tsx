@@ -353,7 +353,7 @@ export default function InboxPage() {
                                         : "bg-steel-100 text-steel-500 hover:bg-steel-200"
                                 }`}
                             >
-                                {f === "all" ? "ทั้งหมด" : f === "line" ? "LINE" : "Web"}
+                                {f === "all" ? t("inbox.filterAll") : f === "line" ? t("inbox.filterLine") : t("inbox.filterWeb")}
                             </button>
                         ))}
                     </div>

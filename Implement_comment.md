@@ -214,21 +214,28 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 
 ---
 
-### 4.2 ความสอดคล้องของคำศัพท์และสี
+### 4.2 ความสอดคล้องของคำศัพท์และสี ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- แก้ไขไปแล้วบางส่วน (commit `195df60`) — Bot→บอท, Knowledge Base→คลังความรู้ ฯลฯ
-- อาจยังมีตกหล่นในบางหน้า
+> **Implement เมื่อ:** 27 เม.ย. 2569
 
-**สิ่งที่ต้องตรวจสอบ:**
+**ผล Audit:**
 
-| ตรวจสอบ | มาตรฐาน |
-|---------|---------|
-| "Bot" vs "AI Bot" vs "บอท" | ใช้ **"บอท"** ทั้งหมด (Thai) / **"Bot"** (English) |
-| "Knowledge Base" vs "คลังความรู้" | ใช้ **"คลังความรู้"** ทั้งหมด (Thai) |
-| สีของ badge/สถานะ | เขียว = พร้อมใช้งาน, เหลือง = รอดำเนินการ, แดง = ข้อผิดพลาด |
+| ตรวจสอบ | ผล |
+|---------|-----|
+| i18n keys TH/EN ครบ | ✅ 655 keys ตรงกันทั้ง 2 ภาษา |
+| "Bot" vs "บอท" | ✅ ถูกต้องทุกหน้า ไม่มี "AI Bot" ปน |
+| "คลังความรู้" | ✅ ใช้ i18n ถูกต้อง |
+| สี badge/สถานะ | ✅ เขียว=พร้อม, เหลือง=รอ, แดง=ผิดพลาด ทุกหน้า |
+| Hardcoded strings | ✅ แก้ InboxPage.tsx "ทั้งหมด/LINE/Web" → i18n |
+| "owner" → "admin" | ✅ เปลี่ยน `dangerZone.ownerOnly` → `dangerZone.adminOnly` |
 
-> **หมายเหตุ:** ส่วนใหญ่แก้ไขไปแล้วใน th.json — ต้อง audit ซ้ำหลัง implement ฟีเจอร์ใหม่
+**ไฟล์ที่แก้ไข:**
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `frontend/src/pages/InboxPage.tsx` | แก้ hardcoded "ทั้งหมด" → `t("inbox.filterAll")` |
+| `frontend/src/pages/DangerZonePage.tsx` | เปลี่ยน key `dangerZone.ownerOnly` → `dangerZone.adminOnly` |
+| `frontend/src/i18n/th.json` + `en.json` | เพิ่ม `inbox.filterAll/Line/Web` + rename `dangerZone.adminOnly` |
 
 ---
 
@@ -241,7 +248,7 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 | ~~5~~ | ~~ระบบแท็ก (2.3)~~ | ~~กลาง~~ | ~~ต้องการเมื่อเอกสารเยอะ~~ | ✅ เสร็จแล้ว |
 | ~~4~~ | ~~Bot Visibility (3.1)~~ | ~~กลาง~~ | ~~ต้องการเมื่อ org มีหลายแผนก~~ | ✅ เสร็จแล้ว |
 | ~~3~~ | ~~Notification Badge (4.1)~~ | ~~กลาง~~ | ~~UX ดีขึ้นมาก~~ | ✅ เสร็จแล้ว |
-| 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement | ⏳ ยังไม่ได้ทำ |
+| ~~6~~ | ~~คำศัพท์/สี (4.2)~~ | ~~ต่ำ~~ | ~~audit ซ้ำหลัง implement~~ | ✅ เสร็จแล้ว |
 
 ---
 

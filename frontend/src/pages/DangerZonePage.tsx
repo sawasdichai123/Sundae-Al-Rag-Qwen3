@@ -184,7 +184,7 @@ export default function DangerZonePage() {
                             </button>
                         ) : (
                             <div className="text-xs text-steel-500">
-                                {t("dangerZone.ownerOnly")}
+                                {t("dangerZone.adminOnly")}
                             </div>
                         )
                     )}
