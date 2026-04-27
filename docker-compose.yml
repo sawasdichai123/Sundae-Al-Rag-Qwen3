@@ -27,6 +27,8 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     container_name: sundae-frontend
+    env_file:
+      - ./frontend/.env
     ports:
       - "5173:80"
     depends_on:
