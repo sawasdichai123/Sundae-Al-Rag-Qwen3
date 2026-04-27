@@ -188,26 +188,29 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 
 ## 4. การปรับปรุง UI/UX และการแจ้งเตือน
 
-### 4.1 Notification Badge บนเมนู
+### 4.1 Notification Badge บนเมนู ✅ เสร็จแล้ว
 
-**สถานะปัจจุบัน:**
-- ไม่มี badge บน nav items ใดเลย
-- มีแค่ "Pending Approval" badge ใน header สำหรับ user ที่ยังไม่ถูก approve
+> **Implement เมื่อ:** 27 เม.ย. 2569
 
-**สิ่งที่ต้องเพิ่ม:**
+**สิ่งที่ Implement ไปแล้ว:**
 
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม badge ตัวเลขที่เมนู **"องค์กร"** — แสดงจำนวนสมาชิกรออนุมัติ |
-| `frontend/src/layouts/DashboardLayout.tsx` | เพิ่ม badge ตัวเลขที่เมนู **"แชท"** — แสดงจำนวนข้อความที่ยังไม่อ่าน (ถ้ามีระบบ read/unread) |
-| `frontend/src/store/orgStore.ts` หรือ store ใหม่ | เพิ่ม state สำหรับ pending count + unread chat count |
-| `frontend/src/api/endpoints.ts` | เพิ่ม API call สำหรับดึง pending count + unread count |
+| รายการ | รายละเอียด |
+|--------|-----------|
+| **Badge "องค์กร"** | แสดงจำนวนสมาชิกรออนุมัติ (org-level, Org Admin เท่านั้น) |
+| **Badge "กล่องข้อความ"** | แสดงจำนวน session ที่เรียกหาแอดมิน (`status = 'human_takeover'`) |
+| **Badge "อนุมัติผู้ใช้"** | แสดงจำนวน user รออนุมัติ platform-wide (support/admin เท่านั้น) |
+| **Polling 10 วินาที** | อัพเดทอัตโนมัติทุก 10 วินาที + refresh เมื่อเปลี่ยนหน้า + refresh เมื่อกลับมาที่ tab |
+| **ไม่ต้องเพิ่ม DB** | ใช้ข้อมูลจาก `chat_sessions`, `org_invitations`, `user_profiles` ที่มีอยู่แล้ว |
 
-#### Backend (API สำหรับ badge counts)
-| ไฟล์ | การเปลี่ยนแปลง |
-|------|----------------|
-| `backend/app/routers/approval.py` | เพิ่ม `GET /api/orgs/{org_id}/pending-count` — return จำนวนสมาชิกรออนุมัติ |
-| `backend/app/routers/inbox.py` | เพิ่ม `GET /api/orgs/{org_id}/unread-count` — return จำนวนข้อความที่ยังไม่อ่าน (ต้องเพิ่ม read/unread tracking ใน chat_sessions ด้วย) |
+**ไฟล์ที่แก้ไข:**
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/inbox.py` | เพิ่ม `GET /api/inbox/takeover-count` — นับ session `human_takeover` |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `inboxApi.takeoverCount()` |
+| `frontend/src/layouts/DashboardLayout.tsx` | Badge counts polling + render badge สีแดงบน nav items (รองรับ sidebar ปกติ + ย่อ) |
+
+> **หมายเหตุ:** Unread chat count (นับข้อความที่ยังไม่อ่าน) ไม่ได้ทำเพราะต้องสร้าง table ใหม่ — ใช้ takeover count แทนซึ่งตอบโจทย์ "ลูกค้าเรียกหาแอดมิน" ได้ตรงกว่า
 
 ---
 
@@ -237,7 +240,7 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
 | ~~1~~ | ~~แจ้งเตือน PDF + รายละเอียดไฟล์ + Block Scan (2.1, 2.2)~~ | ~~ต่ำ-กลาง~~ | ~~แก้ปัญหาผู้ใช้สับสน~~ | ✅ เสร็จแล้ว |
 | ~~5~~ | ~~ระบบแท็ก (2.3)~~ | ~~กลาง~~ | ~~ต้องการเมื่อเอกสารเยอะ~~ | ✅ เสร็จแล้ว |
 | ~~4~~ | ~~Bot Visibility (3.1)~~ | ~~กลาง~~ | ~~ต้องการเมื่อ org มีหลายแผนก~~ | ✅ เสร็จแล้ว |
-| 3 | Notification Badge (4.1) | กลาง | UX ดีขึ้นมาก | ⏳ ยังไม่ได้ทำ |
+| ~~3~~ | ~~Notification Badge (4.1)~~ | ~~กลาง~~ | ~~UX ดีขึ้นมาก~~ | ✅ เสร็จแล้ว |
 | 6 | คำศัพท์/สี (4.2) | ต่ำ | audit ซ้ำหลัง implement | ⏳ ยังไม่ได้ทำ |
 
 ---

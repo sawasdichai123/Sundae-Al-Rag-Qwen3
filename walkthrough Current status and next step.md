@@ -5501,6 +5501,42 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_bots_unique_name_per_org
 | 2.2 | รายละเอียดไฟล์ (uploaded_by) | ✅ เสร็จ |
 | 2.3 | ระบบแท็ก | ✅ เสร็จ |
 | 3.1 | Bot Visibility | ✅ เสร็จ |
-| 4.1 | Notification Badge | ⏳ ยังไม่ได้ทำ |
+| 4.1 | Notification Badge | ✅ เสร็จ |
+| 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
+
+---
+
+## Section 78: Notification Badge — Sidebar (27 เม.ย. 2569)
+
+### 78.1 สรุปสิ่งที่ทำ
+
+Implement Section 4.1 — Notification Badge บน sidebar เมนู ไม่ต้องเพิ่ม DB table ใหม่:
+
+| Badge | เมนู | ข้อมูลที่แสดง | ใครเห็น |
+|-------|------|--------------|---------|
+| 🔴 | **องค์กร** | จำนวนสมาชิกรออนุมัติใน org | Org Admin |
+| 🔴 | **กล่องข้อความ** | จำนวน session ที่ลูกค้าเรียกหาแอดมิน (`human_takeover`) | Org Admin |
+| 🔴 | **อนุมัติผู้ใช้** | จำนวน user รออนุมัติ (platform-wide) | Platform support/admin |
+
+### 78.2 Polling Strategy
+
+| Trigger | เมื่อไหร่ |
+|---------|----------|
+| Interval | ทุก 10 วินาที |
+| Navigation | เปลี่ยนหน้า (route change) |
+| Tab focus | alt-tab กลับมาที่ tab (visibilitychange) |
+
+### 78.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/inbox.py` | เพิ่ม `GET /api/inbox/takeover-count` — นับ `chat_sessions WHERE status = 'human_takeover'` |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `inboxApi.takeoverCount()` |
+| `frontend/src/layouts/DashboardLayout.tsx` | Badge polling logic (useCallback + useRef interval) + render badge สีแดงบน nav items (รองรับ sidebar ปกติ + ย่อ) |
+
+### 78.4 สิ่งที่ยังเหลือ (Implement_comment.md)
+
+| Section | หัวข้อ | สถานะ |
+|---------|--------|-------|
 | 4.2 | คำศัพท์/สี audit | ⏳ ยังไม่ได้ทำ |
 

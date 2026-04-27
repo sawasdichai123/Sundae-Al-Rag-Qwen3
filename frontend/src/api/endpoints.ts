@@ -374,6 +374,12 @@ export const inboxApi = {
         apiClient.get("/api/inbox/my-sessions", {
             params: { organization_id: organizationId },
         }),
+
+    /** Count sessions with human_takeover status (for badge). */
+    takeoverCount: (organizationId: string) =>
+        apiClient.get<{ count: number }>("/api/inbox/takeover-count", {
+            params: { organization_id: organizationId },
+        }),
 };
 
 // ── Admin (User Approval) ────────────────────────────────────────

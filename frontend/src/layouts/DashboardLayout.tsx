@@ -7,10 +7,11 @@
  *   (all child routes are blocked at layout level)
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { useOrgStore, selectIsOrgAdmin, selectHasOrgs } from "../store/orgStore";
+import { adminApi, inboxApi } from "../api/endpoints";
 import OrgSwitcher from "../components/OrgSwitcher";
 import LanguageToggle from "../components/LanguageToggle";
 import { useT } from "../i18n";
@@ -181,6 +182,53 @@ export default function DashboardLayout() {
     const _activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
     void _activeOrgLogo;
 
+    // Badge counts
+    const [pendingCount, setPendingCount] = useState(0);
+    const [takeoverCount, setTakeoverCount] = useState(0);
+    const [approvalCount, setApprovalCount] = useState(0);
+    const badgeInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const fetchBadgeCounts = useCallback(async () => {
+        const promises: Promise<unknown>[] = [];
+
+        // Org-level badges (Org Admin only)
+        if (activeOrgId && isOrgAdmin) {
+            promises.push(
+                adminApi.orgPendingCount(activeOrgId).then((r) => setPendingCount(r.data.count)).catch(() => {}),
+                inboxApi.takeoverCount(activeOrgId).then((r) => setTakeoverCount(r.data.count)).catch(() => {}),
+            );
+        }
+
+        // Platform-level badge (support/admin only)
+        if (role === "admin" || role === "support") {
+            promises.push(
+                adminApi.listPending().then((r) => setApprovalCount(r.data.length)).catch(() => {}),
+            );
+        }
+
+        await Promise.allSettled(promises);
+    }, [activeOrgId, isOrgAdmin, role]);
+
+    useEffect(() => {
+        fetchBadgeCounts();
+        if (badgeInterval.current) clearInterval(badgeInterval.current);
+        badgeInterval.current = setInterval(fetchBadgeCounts, 10_000);
+        const onFocus = () => fetchBadgeCounts();
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) onFocus(); });
+        return () => {
+            if (badgeInterval.current) clearInterval(badgeInterval.current);
+            document.removeEventListener("visibilitychange", onFocus);
+        };
+    }, [fetchBadgeCounts]);
+
+    useEffect(() => { fetchBadgeCounts(); }, [location.pathname, fetchBadgeCounts]);
+
+    const badgeCounts: Record<string, number> = {
+        "/organization": pendingCount,
+        "/inbox": takeoverCount,
+        "/approvals": approvalCount,
+    };
+
     // ⚠️ STRICT approval check — only flag as unapproved when user profile
     // is loaded (user !== null) AND role is "user" AND not approved.
     // This prevents showing lockout before profile finishes loading.
@@ -279,6 +327,7 @@ export default function DashboardLayout() {
                     )}
                     {visibleNav.map((item) => {
                         const Icon = item.icon;
+                        const count = badgeCounts[item.to] || 0;
                         return (
                             <NavLink
                                 key={item.to}
@@ -289,8 +338,24 @@ export default function DashboardLayout() {
                                     } ${collapsed ? "justify-center" : ""}`
                                 }
                             >
-                                <span className="shrink-0"><Icon /></span>
-                                {!collapsed && <span className="truncate">{t(item.labelKey)}</span>}
+                                <span className="shrink-0 relative">
+                                    <Icon />
+                                    {collapsed && count > 0 && (
+                                        <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold leading-none">
+                                            {count > 99 ? "99+" : count}
+                                        </span>
+                                    )}
+                                </span>
+                                {!collapsed && (
+                                    <>
+                                        <span className="truncate flex-1">{t(item.labelKey)}</span>
+                                        {count > 0 && (
+                                            <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                                                {count > 99 ? "99+" : count}
+                                            </span>
+                                        )}
+                                    </>
+                                )}
                             </NavLink>
                         );
                     })}

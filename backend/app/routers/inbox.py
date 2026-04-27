@@ -12,6 +12,7 @@ Endpoints:
     GET  /api/inbox/sessions/{session_id}/messages/new   → Poll new messages after timestamp
     PUT  /api/inbox/sessions/{session_id}/status          → Update session status (support/admin/owner)
     POST /api/inbox/sessions/{session_id}/messages        → Send reply (support/admin/owner)
+    GET  /api/inbox/takeover-count                         → Count human_takeover sessions (for badge)
 
 SECURITY:
     Session management requires support/admin role OR org owner.
@@ -514,3 +515,34 @@ async def get_new_messages(
     except Exception as exc:
         logger.error("Failed to poll new messages (session=%s): %s", session_id, exc)
         raise HTTPException(status_code=500, detail="Failed to get new messages.")
+
+
+# ── Takeover Count (for badge) ──────────────────────────────────
+
+
+class TakeoverCountResponse(BaseModel):
+    count: int
+
+
+@router.get("/takeover-count", response_model=TakeoverCountResponse)
+async def takeover_count(
+    organization_id: str,
+    user: CurrentUser = Depends(require_approved),
+) -> TakeoverCountResponse:
+    """Count sessions with human_takeover status (for notification badge)."""
+    await _require_inbox_manager(user, organization_id)
+    supabase = get_supabase()
+
+    try:
+        result = await (
+            supabase.table("chat_sessions")
+            .select("id", count="exact")
+            .eq("organization_id", organization_id)
+            .eq("status", "human_takeover")
+        ).execute()
+
+        return TakeoverCountResponse(count=result.count or 0)
+
+    except Exception as exc:
+        logger.error("Failed to count takeover sessions (org=%s): %s", organization_id, exc)
+        return TakeoverCountResponse(count=0)
