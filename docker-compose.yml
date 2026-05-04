@@ -27,8 +27,6 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
     container_name: sundae-frontend
-    env_file:
-      - ./frontend/.env
     ports:
       - "5173:80"
     depends_on:
@@ -48,6 +46,8 @@ services:
     env_file:
       - ./.env
       - ./backend/.env
+    volumes:
+      - model_cache:/root/.cache
     environment:
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:8001}
@@ -63,6 +63,7 @@ services:
   ngrok:
     image: ngrok/ngrok:latest
     container_name: sundae-ngrok
+    profiles: ["dev"]
     command: http host.docker.internal:8001 --log stdout
     ports:
       - "4040:4040"
@@ -125,3 +126,4 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  model_cache:

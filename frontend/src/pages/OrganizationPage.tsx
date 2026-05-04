@@ -497,7 +497,6 @@ export default function OrganizationPage() {
     const [orgName, setOrgName] = useState("");
     const [orgNameDraft, setOrgNameDraft] = useState("");
     const [editingName, setEditingName] = useState(false);
-    const [orgSlug, setOrgSlug] = useState<string | null>(null);
     const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null);
     const [orgCreatedAt, setOrgCreatedAt] = useState<string | null>(null);
     const [memberCount, setMemberCount] = useState<number>(0);
@@ -523,7 +522,6 @@ export default function OrganizationPage() {
             const { data } = await orgApi.get(activeOrgId);
             setOrgName(data.name);
             setOrgNameDraft(data.name);
-            setOrgSlug(data.slug ?? null);
             setOrgLogoUrl((data as any).logo_url ?? null);
             setOrgCreatedAt((data as any).created_at ?? null);
             // Fetch counts
