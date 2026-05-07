@@ -97,6 +97,7 @@ export default function BotsPage() {
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const isOrgAdmin = useOrgStore((s) => s.activeOrgRole) === "admin";
     const orgId = (activeOrgId ?? user?.organization_id ?? import.meta.env.VITE_DEFAULT_ORG_ID) as string;
 
     // ── Load bots ───────────────────────────────────────────────
@@ -282,6 +283,29 @@ export default function BotsPage() {
 
     // ── Visibility filter ───────────────────────────────────────
     const [visibilityFilter, setVisibilityFilter] = useState<string | null>(null);
+
+    // Visibility label rename state
+    const [renameGroup, setRenameGroup] = useState<string | null>(null);
+    const [renameGroupInput, setRenameGroupInput] = useState("");
+    const [renameGroupSaving, setRenameGroupSaving] = useState(false);
+
+    const handleRenameGroup = async () => {
+        if (!renameGroup || !orgId) return;
+        const newName = renameGroupInput.trim();
+        if (!newName || newName === renameGroup) { setRenameGroup(null); return; }
+        setRenameGroupSaving(true);
+        try {
+            await botsApi.renameVisibilityLabel(orgId, renameGroup, newName);
+            toast("success", t("bots.renameGroupSuccess"));
+            if (visibilityFilter === renameGroup) setVisibilityFilter(newName);
+            setRenameGroup(null);
+            await loadBots();
+        } catch {
+            toast("error", t("bots.renameGroupFailed"));
+        } finally {
+            setRenameGroupSaving(false);
+        }
+    };
 
     const visibilityGroups = Array.from(
         new Set(bots.map((b) => b.visibility === "restricted" ? (b.visibility_label || t("bots.badgeRestricted")) : null).filter(Boolean))
@@ -783,17 +807,62 @@ export default function BotsPage() {
                             {t("bots.badgeAll")}
                         </button>
                         {visibilityGroups.map((group) => (
-                            <button
-                                key={group}
-                                onClick={() => setVisibilityFilter(visibilityFilter === group ? null : group)}
-                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                                    visibilityFilter === group
-                                        ? "bg-amber-500 text-white"
-                                        : "bg-amber-50 text-amber-600 hover:bg-amber-100"
-                                }`}
-                            >
-                                {group}
-                            </button>
+                            renameGroup === group ? (
+                                <div key={group} className="inline-flex items-center gap-1">
+                                    <input
+                                        type="text"
+                                        value={renameGroupInput}
+                                        onChange={(e) => setRenameGroupInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") { e.preventDefault(); handleRenameGroup(); }
+                                            if (e.key === "Escape") setRenameGroup(null);
+                                        }}
+                                        autoFocus
+                                        disabled={renameGroupSaving}
+                                        className="px-2 py-1 border border-amber-400 rounded-full text-xs w-28 focus:outline-none focus:ring-2 focus:ring-amber-100"
+                                        placeholder={t("bots.renameGroupPlaceholder")}
+                                    />
+                                    <button onClick={handleRenameGroup} disabled={renameGroupSaving} className="text-amber-600 hover:text-amber-800 cursor-pointer">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+                                    <button onClick={() => setRenameGroup(null)} className="text-steel-400 hover:text-steel-600 cursor-pointer">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            ) : (
+                                <div key={group} className="inline-flex items-center group">
+                                    <button
+                                        onClick={() => setVisibilityFilter(visibilityFilter === group ? null : group)}
+                                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                            visibilityFilter === group
+                                                ? "bg-amber-500 text-white"
+                                                : "bg-amber-50 text-amber-600 hover:bg-amber-100"
+                                        } ${isOrgAdmin ? "rounded-r-none" : ""}`}
+                                    >
+                                        {group}
+                                    </button>
+                                    {isOrgAdmin && (
+                                        <button
+                                            onClick={() => { setRenameGroup(group); setRenameGroupInput(group); }}
+                                            className={`px-1 py-1.5 rounded-r-full text-xs opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer ${
+                                                visibilityFilter === group
+                                                    ? "bg-amber-500 text-amber-200 hover:text-white"
+                                                    : "bg-amber-50 text-amber-300 hover:text-amber-600"
+                                            }`}
+                                            title={t("bots.renameGroup")}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                                                <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
+                                                <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                </div>
+                            )
                         ))}
                     </div>
                 )}

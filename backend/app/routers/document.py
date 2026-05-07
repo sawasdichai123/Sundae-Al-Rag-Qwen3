@@ -348,6 +348,65 @@ async def update_document_tags(
         raise HTTPException(status_code=500, detail="Failed to update tags.")
 
 
+class RenameTagRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+@router.patch("/tags/rename")
+async def rename_tag(
+    organization_id: str,
+    body: RenameTagRequest,
+    user: CurrentUser = Depends(require_org_admin),
+):
+    """Rename a tag across all documents in an organization."""
+    await verify_organization(user, organization_id)
+
+    old_name = body.old_name.strip()
+    new_name = body.new_name.strip()
+    if not old_name or not new_name:
+        raise HTTPException(status_code=400, detail="Tag names cannot be empty.")
+    if old_name == new_name:
+        raise HTTPException(status_code=400, detail="New name must be different.")
+
+    supabase = get_supabase()
+
+    try:
+        result = await (
+            supabase.table("documents")
+            .select("id, tags")
+            .eq("organization_id", organization_id)
+            .contains("tags", [old_name])
+        ).execute()
+
+        docs = result.data or []
+        if not docs:
+            raise HTTPException(status_code=404, detail=f"No documents found with tag '{old_name}'.")
+
+        updated = 0
+        for doc in docs:
+            tags = doc.get("tags") or []
+            new_tags = [new_name if t == old_name else t for t in tags]
+            # Deduplicate in case new_name already exists
+            new_tags = list(dict.fromkeys(new_tags))
+            await (
+                supabase.table("documents")
+                .update({"tags": new_tags})
+                .eq("id", doc["id"])
+                .eq("organization_id", organization_id)
+            ).execute()
+            updated += 1
+
+        logger.info("Tag renamed '%s' → '%s' in %d docs (org=%s)", old_name, new_name, updated, organization_id)
+        return {"message": "ok", "old_name": old_name, "new_name": new_name, "documents_updated": updated}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to rename tag (org=%s): %s", organization_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to rename tag.")
+
+
 @router.get("/tags/all")
 async def list_all_tags(
     organization_id: str,

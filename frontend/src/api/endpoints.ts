@@ -83,6 +83,12 @@ export const documentsApi = {
         apiClient.get<{ tags: string[] }>("/api/documents/tags/all", {
             params: { organization_id: organizationId },
         }),
+
+    /** Rename a tag across all documents in an organization. */
+    renameTag: (organizationId: string, oldName: string, newName: string) =>
+        apiClient.patch("/api/documents/tags/rename", { old_name: oldName, new_name: newName }, {
+            params: { organization_id: organizationId },
+        }),
 };
 
 // ── Chat (Omnichannel) ──────────────────────────────────────────
@@ -328,6 +334,12 @@ export const botsApi = {
     /** Delete a bot. */
     delete: (botId: string, organizationId: string) =>
         apiClient.delete(`/api/bots/${botId}`, {
+            params: { organization_id: organizationId },
+        }),
+
+    /** Rename a visibility label across all bots in an organization. */
+    renameVisibilityLabel: (organizationId: string, oldName: string, newName: string) =>
+        apiClient.patch("/api/bots/visibility-label/rename", { old_name: oldName, new_name: newName }, {
             params: { organization_id: organizationId },
         }),
 };

@@ -132,6 +132,11 @@ export default function KnowledgeBasePage() {
     const [editTags, setEditTags] = useState<string[]>([]);
     const [tagSaving, setTagSaving] = useState(false);
 
+    // Tag rename state
+    const [renameTag, setRenameTag] = useState<string | null>(null);
+    const [renameTagInput, setRenameTagInput] = useState("");
+    const [renameTagSaving, setRenameTagSaving] = useState(false);
+
     const user = useAuthStore((s) => s.user);
     const toast = useToastStore((s) => s.addToast);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
@@ -235,6 +240,25 @@ export default function KnowledgeBasePage() {
             toast("error", t("kb.tagsFailed"));
         } finally {
             setTagSaving(false);
+        }
+    };
+
+    const handleRenameTag = async () => {
+        if (!renameTag || !orgId) return;
+        const newName = renameTagInput.trim();
+        if (!newName || newName === renameTag) { setRenameTag(null); return; }
+        setRenameTagSaving(true);
+        try {
+            await documentsApi.renameTag(orgId, renameTag, newName);
+            toast("success", t("kb.renameTagSuccess"));
+            if (selectedTag === renameTag) setSelectedTag(newName);
+            setRenameTag(null);
+            await loadDocuments();
+            await loadTags();
+        } catch {
+            toast("error", t("kb.renameTagFailed"));
+        } finally {
+            setRenameTagSaving(false);
         }
     };
 
@@ -379,17 +403,62 @@ export default function KnowledgeBasePage() {
                             {t("kb.allTags")}
                         </button>
                         {allTags.map((tag) => (
-                            <button
-                                key={tag}
-                                onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
-                                    selectedTag === tag
-                                        ? "bg-brand-400 text-steel-900"
-                                        : "bg-steel-100 text-steel-600 hover:bg-steel-200"
-                                }`}
-                            >
-                                {tag}
-                            </button>
+                            renameTag === tag ? (
+                                <div key={tag} className="inline-flex items-center gap-1">
+                                    <input
+                                        type="text"
+                                        value={renameTagInput}
+                                        onChange={(e) => setRenameTagInput(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") { e.preventDefault(); handleRenameTag(); }
+                                            if (e.key === "Escape") setRenameTag(null);
+                                        }}
+                                        autoFocus
+                                        disabled={renameTagSaving}
+                                        className="px-2 py-1 border border-brand-400 rounded-full text-xs w-28 focus:outline-none focus:ring-2 focus:ring-brand-100"
+                                        placeholder={t("kb.renameTagPlaceholder")}
+                                    />
+                                    <button onClick={handleRenameTag} disabled={renameTagSaving} className="text-brand-600 hover:text-brand-800 cursor-pointer">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                            <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+                                        </svg>
+                                    </button>
+                                    <button onClick={() => setRenameTag(null)} className="text-steel-400 hover:text-steel-600 cursor-pointer">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                                            <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            ) : (
+                                <div key={tag} className="inline-flex items-center group">
+                                    <button
+                                        onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
+                                        className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer ${
+                                            selectedTag === tag
+                                                ? "bg-brand-400 text-steel-900"
+                                                : "bg-steel-100 text-steel-600 hover:bg-steel-200"
+                                        } ${isOrgAdmin ? "rounded-r-none" : ""}`}
+                                    >
+                                        {tag}
+                                    </button>
+                                    {isOrgAdmin && (
+                                        <button
+                                            onClick={() => { setRenameTag(tag); setRenameTagInput(tag); }}
+                                            className={`px-1 py-1.5 rounded-r-full text-xs opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer ${
+                                                selectedTag === tag
+                                                    ? "bg-brand-400 text-steel-700 hover:text-steel-900"
+                                                    : "bg-steel-100 text-steel-400 hover:text-steel-600"
+                                            }`}
+                                            title={t("kb.renameTag")}
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+                                                <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.262a1.75 1.75 0 0 0 0-2.474Z" />
+                                                <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9A.75.75 0 0 1 14 9v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                </div>
+                            )
                         ))}
                     </div>
                 )}
@@ -492,29 +561,32 @@ export default function KnowledgeBasePage() {
                                                     ))}
                                                 </div>
                                             )}
-                                            {/* Linked bots */}
-                                            {(doc.bot_ids ?? []).length > 0 && (
-                                                <div className="flex items-center gap-1 flex-wrap">
-                                                    {(doc.bot_ids ?? []).slice(0, 3).map((bid) => {
-                                                        const b = bots.find((x) => x.id === bid);
-                                                        return (
+                                            {/* Linked bots (skip deleted bots) */}
+                                            {(() => {
+                                                const validBots = (doc.bot_ids ?? [])
+                                                    .map((bid) => ({ bid, bot: bots.find((x) => x.id === bid) }))
+                                                    .filter((x) => x.bot);
+                                                if (validBots.length === 0) return null;
+                                                return (
+                                                    <div className="flex items-center gap-1 flex-wrap">
+                                                        {validBots.slice(0, 3).map(({ bid, bot }) => (
                                                             <span
                                                                 key={bid}
                                                                 className="inline-flex items-center gap-1 text-[11px] text-brand-700 bg-brand-50 border border-brand-100 px-2 py-0.5 rounded-full"
-                                                                title={b?.name ?? bid}
+                                                                title={bot!.name}
                                                             >
                                                                 <span className="w-1.5 h-1.5 bg-brand-400 rounded-full" />
-                                                                {b?.name ?? "—"}
+                                                                {bot!.name}
                                                             </span>
-                                                        );
-                                                    })}
-                                                    {(doc.bot_ids ?? []).length > 3 && (
-                                                        <span className="text-[11px] text-steel-400">
-                                                            +{(doc.bot_ids ?? []).length - 3}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            )}
+                                                        ))}
+                                                        {validBots.length > 3 && (
+                                                            <span className="text-[11px] text-steel-400">
+                                                                +{validBots.length - 3}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     </div>
                                 </div>

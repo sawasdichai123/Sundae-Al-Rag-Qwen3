@@ -337,6 +337,61 @@ async def update_bot(
         raise HTTPException(status_code=500, detail="Failed to update bot.")
 
 
+class RenameVisibilityLabelRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+@router.patch("/visibility-label/rename")
+async def rename_visibility_label(
+    organization_id: str,
+    body: RenameVisibilityLabelRequest,
+    user: CurrentUser = Depends(require_org_admin),
+):
+    """Rename a visibility label across all bots in an organization."""
+    await verify_organization(user, organization_id)
+
+    old_name = body.old_name.strip()
+    new_name = body.new_name.strip()
+    if not old_name or not new_name:
+        raise HTTPException(status_code=400, detail="Label names cannot be empty.")
+    if old_name == new_name:
+        raise HTTPException(status_code=400, detail="New name must be different.")
+
+    supabase = get_supabase()
+
+    try:
+        result = await (
+            supabase.table("bots")
+            .select("id")
+            .eq("organization_id", organization_id)
+            .eq("visibility_label", old_name)
+            .eq("is_active", True)
+        ).execute()
+
+        bots_to_update = result.data or []
+        if not bots_to_update:
+            raise HTTPException(status_code=404, detail=f"No bots found with label '{old_name}'.")
+
+        bot_ids = [b["id"] for b in bots_to_update]
+        await (
+            supabase.table("bots")
+            .update({"visibility_label": new_name})
+            .eq("organization_id", organization_id)
+            .eq("visibility_label", old_name)
+            .eq("is_active", True)
+        ).execute()
+
+        logger.info("Visibility label renamed '%s' → '%s' for %d bots (org=%s)", old_name, new_name, len(bot_ids), organization_id)
+        return {"message": "ok", "old_name": old_name, "new_name": new_name, "bots_updated": len(bot_ids)}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to rename visibility label (org=%s): %s", organization_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to rename visibility label.")
+
+
 @router.delete("/{bot_id}", response_model=BotDeleteResponse)
 async def delete_bot(
     bot_id: str,

@@ -198,6 +198,10 @@
   "kb.existingTags": "Previously used tags — click to add",
   "kb.currentTags": "Tags on this document",
   "kb.noTags": "No tags yet",
+  "kb.renameTag": "Rename tag",
+  "kb.renameTagPlaceholder": "New tag name",
+  "kb.renameTagSuccess": "Tag renamed successfully",
+  "kb.renameTagFailed": "Failed to rename tag",
   "kb.statusPending": "Pending",
 
   "bots.title": "AI Bots",
@@ -274,6 +278,10 @@
   "bots.duplicateName": "This bot name already exists in the organization. Please use a different name.",
   "bots.filterAll": "All",
   "bots.existingGroups": "Existing groups (click to use same members)",
+  "bots.renameGroup": "Rename group",
+  "bots.renameGroupPlaceholder": "New group name",
+  "bots.renameGroupSuccess": "Group renamed successfully",
+  "bots.renameGroupFailed": "Failed to rename group",
 
   "inbox.title": "Inbox",
   "inbox.desc": "All conversation history",

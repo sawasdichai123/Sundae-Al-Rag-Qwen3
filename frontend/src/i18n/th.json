@@ -198,6 +198,10 @@
   "kb.existingTags": "แท็กที่เคยใช้ — กดเพื่อเพิ่ม",
   "kb.currentTags": "แท็กของเอกสารนี้",
   "kb.noTags": "ยังไม่มีแท็ก",
+  "kb.renameTag": "เปลี่ยนชื่อแท็ก",
+  "kb.renameTagPlaceholder": "ชื่อแท็กใหม่",
+  "kb.renameTagSuccess": "เปลี่ยนชื่อแท็กสำเร็จ",
+  "kb.renameTagFailed": "เปลี่ยนชื่อแท็กไม่สำเร็จ",
   "kb.statusPending": "รอดำเนินการ",
 
   "bots.title": "บอท",
@@ -274,6 +278,10 @@
   "bots.duplicateName": "ชื่อบอทนี้มีอยู่แล้วในองค์กร กรุณาใช้ชื่ออื่น",
   "bots.filterAll": "ทั้งหมด",
   "bots.existingGroups": "กลุ่มที่มีอยู่แล้ว (กดเพื่อใช้สมาชิกเดิม)",
+  "bots.renameGroup": "เปลี่ยนชื่อกลุ่ม",
+  "bots.renameGroupPlaceholder": "ชื่อกลุ่มใหม่",
+  "bots.renameGroupSuccess": "เปลี่ยนชื่อกลุ่มสำเร็จ",
+  "bots.renameGroupFailed": "เปลี่ยนชื่อกลุ่มไม่สำเร็จ",
 
   "inbox.title": "กล่องข้อความ",
   "inbox.desc": "ประวัติการสนทนาทั้งหมด",

@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 26 เมษายน 2569 — **Bot Visibility ✅ | ชื่อซ้ำ Prevention ✅ | Group Auto-fill ✅ | PDF Block Scan ✅ | Tags ✅ | User Approval 3 Flow ✅**
+> **อัพเดทล่าสุด**: 7 พฤษภาคม 2569 — **Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅ | LINE Visibility Plan ✅ | OCR Plan ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -5578,4 +5578,95 @@ Audit ความสอดคล้องของ wording, i18n keys, แล�
 | 3.1 | Bot Visibility | ✅ |
 | 4.1 | Notification Badge | ✅ |
 | 4.2 | คำศัพท์/สี audit | ✅ |
+
+---
+
+## Section 80: Docker Compose Fix + Dockerfile Python Upgrade (7 พ.ค. 2569)
+
+### 80.1 สรุปสิ่งที่ทำ
+
+ตรวจสอบและแก้ไข Docker Compose สำหรับ production build:
+
+| ปัญหา | แก้ไข |
+|-------|-------|
+| frontend `env_file` ไม่มีผล (VITE_* ต้อง bake ตอน build) | ลบ `env_file` ออก — ใช้ `args` ที่มีอยู่แล้ว |
+| model cache หายทุกครั้งที่ recreate container (BGE-M3 ~2.3GB) | เพิ่ม `model_cache:/root/.cache` volume |
+| ngrok start ทุกครั้งที่ `docker compose up` | เพิ่ม `profiles: ["dev"]` |
+| Python version ไม่ตรง local (3.14) | แก้ Dockerfile จาก `python:3.11-slim` → `python:3.14-slim` |
+| TS build error: unused `orgSlug` variable | ลบ unused state ใน OrganizationPage.tsx |
+
+### 80.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `docker-compose.yml` | ลบ frontend env_file, เพิ่ม backend model_cache volume, เพิ่ม ngrok dev profile |
+| `backend/Dockerfile` | `python:3.11-slim` → `python:3.14-slim` ทั้ง builder + runtime |
+| `frontend/src/pages/OrganizationPage.tsx` | ลบ unused `orgSlug` state + `setOrgSlug` call |
+
+---
+
+## Section 81: Tag Rename + Visibility Label Rename (7 พ.ค. 2569)
+
+### 81.1 สรุปสิ่งที่ทำ
+
+เพิ่มฟีเจอร์เปลี่ยนชื่อ Tag (Knowledge Base) และ Visibility Label (Bot) แบบรวม — เปลี่ยนชื่อครั้งเดียวมีผลกับทุกเอกสาร/บอทที่ใช้ชื่อนั้น:
+
+| ฟีเจอร์ | รายละเอียด |
+|---------|-----------|
+| Tag Rename | `PATCH /api/documents/tags/rename` — เปลี่ยนชื่อ tag ในทุกเอกสารของ org + deduplicate |
+| Visibility Label Rename | `PATCH /api/bots/visibility-label/rename` — เปลี่ยน label ในทุกบอทที่ใช้ชื่อเดียวกัน |
+| UI | Hover ที่ tag/group filter → ไอคอนดินสอ (Org Admin only) → inline rename input |
+
+### 81.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/document.py` | เพิ่ม `PATCH /api/documents/tags/rename` endpoint |
+| `backend/app/routers/bot.py` | เพิ่ม `PATCH /api/bots/visibility-label/rename` endpoint |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `documentsApi.renameTag()` + `botsApi.renameVisibilityLabel()` |
+| `frontend/src/pages/KnowledgeBasePage.tsx` | Tag filter bar: rename state + inline edit UI |
+| `frontend/src/pages/BotsPage.tsx` | Visibility group filter: rename state + inline edit UI + เพิ่ม `isOrgAdmin` |
+| `frontend/src/i18n/th.json` | เพิ่ม `kb.renameTag*`, `bots.renameGroup*` |
+| `frontend/src/i18n/en.json` | เพิ่ม `kb.renameTag*`, `bots.renameGroup*` |
+
+---
+
+## Section 82: Linked Bot Display Fix — ซ่อนบอทที่ถูกลบ (7 พ.ค. 2569)
+
+### 82.1 สรุปสิ่งที่ทำ
+
+แก้ bug ที่เอกสารใน Knowledge Base แสดง "—" ใน linked bots เมื่อ bot_id อ้างอิงถึงบอทที่ถูกลบไปแล้ว:
+
+- กรอง `bot_ids` ที่หา bot ไม่เจอออกก่อนแสดงผล
+- ถ้าไม่มี valid bot เลย จะไม่แสดงส่วน linked bots ทั้งหมด
+
+### 82.2 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `frontend/src/pages/KnowledgeBasePage.tsx` | กรอง deleted bot_ids ออกจาก linked bots display |
+
+---
+
+## Section 83: Implementation Plans — OCR + LINE Visibility (7 พ.ค. 2569)
+
+### 83.1 สรุป
+
+สร้าง implementation plan 2 ฉบับ (ยังไม่ implement):
+
+| แผน | ไฟล์ | สถานะ |
+|-----|------|-------|
+| OCR — รองรับ scanned PDF + รูปภาพ | `Implement_plan_OCR.md` | ⏸️ รอ implement |
+| LINE Visibility Control — ผูก LINE UID กับ org member | `Implement_plan_Line.md` | ⏸️ รอ implement |
+
+### 83.2 OCR Plan สรุป
+- ใช้ EasyOCR (Thai + English, ไม่ต้อง API key, รันบน local)
+- รองรับ: scanned PDF, hybrid PDF, PNG/JPG/TIFF/BMP/WEBP
+- เป็น pre-processing step — ไม่ต้องเพิ่ม DB
+- ความแม่นยำ: English ~85-95%, Thai ~70-85%
+
+### 83.3 LINE Visibility Plan สรุป
+- เพิ่ม `line_user_id` column ใน `org_members` (1 column เท่านั้น)
+- ผู้ใช้ผูก LINE ผ่าน binding code 6 หลัก (Web → LINE)
+- ผูกแล้ว → เห็นบอท restricted ตามสิทธิ์ | ไม่ผูก → เห็นเฉพาะ visibility: "all"
 
