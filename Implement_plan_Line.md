@@ -194,14 +194,19 @@ if user_text.isdigit() and len(user_text) == 6:
 
 ## Section 4 — Frontend: หน้า LINE Binding
 
-### 4.1 เพิ่มส่วน "ผูกบัญชี LINE" ในหน้า Organization Settings
+### 4.1 เพิ่มส่วน "ผูกบัญชี LINE" ในหน้า Profile
 
-**ไฟล์:** `frontend/src/pages/OrganizationPage.tsx` (เพิ่มในส่วน Settings)
+**ไฟล์:** `frontend/src/pages/ProfilePage.tsx` (เพิ่มในส่วนข้อมูลส่วนตัว)
+
+> **เหตุผลที่ไม่ใช้ OrganizationPage:**
+> OrganizationPage เป็นหน้าสำหรับ Org Admin เท่านั้น แต่การผูก LINE
+> เป็นการตั้งค่า **ส่วนตัว** ที่ **สมาชิกทุกคน** ต้องทำได้
+> ProfilePage เหมาะที่สุดเพราะทุก role เข้าถึงได้
 
 **UI:**
 ```
 ┌──────────────────────────────────────────┐
-│  🔗 ผูกบัญชี LINE                        │
+│  ผูกบัญชี LINE                            │
 │                                          │
 │  สถานะ: ยังไม่ได้ผูก                      │
 │                                          │
@@ -219,7 +224,7 @@ if user_text.isdigit() and len(user_text) == 6:
 │                                          │
 │  ──────── หลังผูกสำเร็จ ────────          │
 │                                          │
-│  สถานะ: ✅ ผูกแล้ว                       │
+│  สถานะ: ผูกแล้ว                          │
 │  [ยกเลิกการผูก]                          │
 │                                          │
 └──────────────────────────────────────────┘
@@ -228,8 +233,8 @@ if user_text.isdigit() and len(user_text) == 6:
 ### 4.2 Component Structure
 
 ```
-OrganizationPage.tsx
-  └── LineBindingSection (new component หรือ inline section)
+ProfilePage.tsx
+  └── LineBindingSection (new section ต่อจาก profile form)
         ├── สถานะ: ผูก/ไม่ผูก
         ├── ปุ่มสร้างรหัส → POST /line-binding/code
         ├── แสดงรหัส + countdown
@@ -248,7 +253,7 @@ OrganizationPage.tsx
 | **5.3** | Backend: `_get_visible_bots()` แทน `_get_active_bots()` | `webhook_line.py` |
 | **5.4** | Backend: Binding API (create code, verify, unbind) | `organization.py` |
 | **5.5** | Backend: Binding code handler ใน webhook | `webhook_line.py` |
-| **5.6** | Frontend: LINE Binding UI section | `OrganizationPage.tsx` |
+| **5.6** | Frontend: LINE Binding UI section | `ProfilePage.tsx` |
 | **5.7** | ทดสอบ E2E: ผูก → เห็นบอท restricted → ยกเลิก → ไม่เห็น | Manual test |
 
 ---
@@ -262,6 +267,34 @@ OrganizationPage.tsx
 | ยกเลิกโดยคนอื่น | เฉพาะเจ้าของบัญชี หรือ Org Admin เท่านั้น |
 | LINE UID ปลอม | ไม่มีปัญหา — UID มาจาก LINE webhook ที่ verify signature แล้ว |
 | Guest access | ยังใช้งานบอท `visibility: "all"` ได้ปกติ ไม่บังคับผูก |
+
+---
+
+## Bug ที่พบ (ต้องแก้ก่อน/พร้อมกับ implement)
+
+### Bug: Inbox LINE Push ไม่ decrypt access_token
+
+**ไฟล์:** `backend/app/routers/inbox.py` บรรทัด 440-446
+
+**ปัญหา:** เมื่อ Admin ตอบ LINE session ผ่าน Inbox ระบบดึง `line_access_token` จาก DB
+แต่ **ไม่ได้ decrypt** ก่อนส่งให้ LINE Push API — token ที่เก็บใน DB ถูกเข้ารหัส AES-GCM
+ทำให้ push ไป LINE ไม่ได้ (fail silently เพราะ try/except ดักไว้)
+
+**แก้:** เพิ่ม `decrypt_secret()` ก่อนส่ง:
+
+```python
+# ก่อน (bug)
+access_token=org_result.data[0]["line_access_token"],
+
+# หลัง (แก้)
+from app.core.utils import decrypt_secret
+access_token=decrypt_secret(org_result.data[0]["line_access_token"]),
+```
+
+**เทียบกับ webhook ที่ทำถูก:** `webhook_line.py` บรรทัด 364
+```python
+access_token = decrypt_secret(org.get("line_access_token") or "")
+```
 
 ---
 

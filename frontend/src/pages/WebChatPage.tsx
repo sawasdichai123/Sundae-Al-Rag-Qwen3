@@ -814,7 +814,12 @@ export default function WebChatPage() {
 
                         {/* Chat Messages */}
                         <div className="space-y-6">
-                            {messages.map((msg) => {
+                            {messages.map((msg, msgIdx) => {
+                                // Hide user_read and admin_seen system messages
+                                if (msg.role === "system" && (msg.content === "user_read" || msg.content === "admin_seen")) {
+                                    return null;
+                                }
+
                                 // System messages — centered banner
                                 if (msg.role === "system") {
                                     return (
@@ -828,6 +833,11 @@ export default function WebChatPage() {
 
                                 const isUser = msg.role === "user";
                                 const isAdmin = msg.role === "admin";
+
+                                // Read receipt: user's message seen by admin?
+                                const hasAdminSeen = isUser && messages.slice(msgIdx + 1).some(
+                                    (m) => m.content === "admin_seen" && m.role === "system"
+                                );
 
                                 return (
                                     <div
@@ -897,8 +907,22 @@ export default function WebChatPage() {
                                                 </div>
                                             )}
 
-                                            <p className={`text-[10px] mt-2 ${isUser ? "text-steel-400" : "text-steel-400"}`}>
+                                            <p className={`text-[10px] mt-2 flex items-center gap-1 ${isUser ? "text-steel-400" : "text-steel-400"}`}>
                                                 {msg.timestamp.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
+                                                {isUser && sessionStatus === "human_takeover" && (
+                                                    <span className={`font-medium ${hasAdminSeen ? "text-blue-500" : ""}`}>
+                                                        {hasAdminSeen ? (
+                                                            <>
+                                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 inline">
+                                                                    <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
+                                                                </svg>
+                                                                {" "}{t("chat.adminSeen")}
+                                                            </>
+                                                        ) : (
+                                                            <>· {t("chat.sent")}</>
+                                                        )}
+                                                    </span>
+                                                )}
                                             </p>
                                         </div>
 
@@ -972,16 +996,18 @@ export default function WebChatPage() {
 
                 {/* ── Human Takeover Banner ─────────────────────────── */}
                 {sessionStatus === "human_takeover" && (
-                    <div className="bg-blue-50 border-t border-blue-200 px-4 py-2.5 flex items-center justify-center gap-3">
-                        <span className="text-xs font-medium text-blue-700">
-                            {t("chat.staffCaring")}
-                        </span>
-                        <button
-                            onClick={handleCancelHuman}
-                            className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full hover:bg-red-100 transition-colors cursor-pointer"
-                        >
-                            {t("chat.cancelHuman")}
-                        </button>
+                    <div className="bg-blue-50 border-t border-blue-200 px-4 py-2.5 flex flex-col items-center gap-1.5">
+                        <div className="flex items-center justify-center gap-3">
+                            <span className="text-xs font-medium text-blue-700">
+                                {t("chat.staffCaring")}
+                            </span>
+                            <button
+                                onClick={handleCancelHuman}
+                                className="text-[11px] font-medium text-red-600 bg-red-50 border border-red-200 px-3 py-1 rounded-full hover:bg-red-100 transition-colors cursor-pointer"
+                            >
+                                {t("chat.cancelHuman")}
+                            </button>
+                        </div>
                     </div>
                 )}
 

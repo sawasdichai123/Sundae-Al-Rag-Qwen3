@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 7 พฤษภาคม 2569 — **Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅ | LINE Visibility Plan ✅ | OCR Plan ✅**
+> **อัพเดทล่าสุด**: 11 พฤษภาคม 2569 — **Read Receipt (Bidirectional) ✅ | Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅ | LINE Visibility Plan ✅ | OCR Plan ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -5669,4 +5669,34 @@ Audit ความสอดคล้องของ wording, i18n keys, แล�
 - เพิ่ม `line_user_id` column ใน `org_members` (1 column เท่านั้น)
 - ผู้ใช้ผูก LINE ผ่าน binding code 6 หลัก (Web → LINE)
 - ผูกแล้ว → เห็นบอท restricted ตามสิทธิ์ | ไม่ผูก → เห็นเฉพาะ visibility: "all"
+
+---
+
+## Section 84: Read Receipt — Bidirectional (11 พ.ค. 2569)
+
+### 84.1 สรุป
+
+เพิ่มระบบ Read Receipt แบบ 2 ทิศทาง สำหรับ Human Handoff Chat โดย**ไม่ต้องแก้ DB schema** — ใช้ system message (`chat_messages` table เดิม) เป็นตัวบันทึกสถานะการอ่าน
+
+| ทิศทาง | สิ่งที่แสดง | ตำแหน่ง |
+|--------|------------|---------|
+| Admin → User | ข้อความ admin แสดง "ส่งแล้ว" / "✓ อ่านแล้ว" | ฝั่ง Admin (Inbox) ใต้ข้อความ admin |
+| User → Admin | ข้อความ user แสดง "ส่งแล้ว" / "✓ เจ้าหน้าที่เห็นข้อความแล้ว" | ฝั่ง User (WebChat) ใต้ข้อความ user |
+
+### 84.2 วิธีการทำงาน (ไม่แก้ DB)
+
+- เมื่อ **user** เปิดอ่านแชทที่มีข้อความจาก admin → backend แทรก system message `"user_read"` ใน `chat_messages`
+- เมื่อ **admin** เปิดอ่านแชทที่มีข้อความจาก user → backend แทรก system message `"admin_seen"` ใน `chat_messages`
+- Deduplicated: จะแทรกเฉพาะเมื่อยังไม่มี receipt หลังข้อความล่าสุดของอีกฝ่าย
+- System messages `user_read` และ `admin_seen` ถูกซ่อนจากการแสดงผลเป็น bubble — แสดงเป็น label ใต้ข้อความแทน
+
+### 84.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/inbox.py` | เพิ่ม `_maybe_insert_read_receipt()` helper — bidirectional, เรียกใน `get_session_messages` + `get_new_messages` (poll) |
+| `frontend/src/pages/WebChatPage.tsx` | ซ่อน `user_read`/`admin_seen` bubble, แสดง "ส่งแล้ว"/"เจ้าหน้าที่เห็นข้อความแล้ว" ใต้ข้อความ user (เฉพาะ human_takeover) |
+| `frontend/src/pages/InboxPage.tsx` | ซ่อน `user_read`/`admin_seen` bubble, แสดง "ส่งแล้ว"/"อ่านแล้ว" (สีขาวบนพื้นน้ำเงิน) ใต้ข้อความ admin |
+| `frontend/src/i18n/th.json` | เพิ่ม `chat.userRead` ("อ่านแล้ว"), `chat.sent` ("ส่งแล้ว") |
+| `frontend/src/i18n/en.json` | เพิ่ม `chat.userRead` ("Read"), `chat.sent` ("Sent") |
 

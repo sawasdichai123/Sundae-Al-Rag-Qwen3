@@ -140,6 +140,57 @@ async def _require_inbox_manager(
         )
 
 
+async def _maybe_insert_read_receipt(
+    user: CurrentUser,
+    organization_id: str,
+    session_id: str,
+    messages_data: list[dict],
+    supabase,
+) -> None:
+    """Insert read receipt system messages (bidirectional).
+
+    - Non-admin user opens chat with admin replies → insert 'user_read'
+    - Admin opens chat with user messages → insert 'admin_seen'
+    """
+    member = await (
+        supabase.table("org_members")
+        .select("org_role")
+        .eq("user_id", user.id)
+        .eq("organization_id", organization_id)
+        .limit(1)
+    ).execute()
+    is_admin = member.data and member.data[0].get("org_role") == "admin"
+
+    if is_admin:
+        target_role = "user"
+        receipt_content = "admin_seen"
+    else:
+        target_role = "admin"
+        receipt_content = "user_read"
+
+    last_target_idx = -1
+    for i in range(len(messages_data) - 1, -1, -1):
+        if messages_data[i].get("role") == target_role:
+            last_target_idx = i
+            break
+    if last_target_idx < 0:
+        return
+
+    for m in messages_data[last_target_idx + 1:]:
+        if m.get("role") == "system" and m.get("content") == receipt_content:
+            return
+
+    await (
+        supabase.table("chat_messages")
+        .insert({
+            "session_id": session_id,
+            "organization_id": organization_id,
+            "role": "system",
+            "content": receipt_content,
+        })
+    ).execute()
+
+
 # ── Endpoints ────────────────────────────────────────────────────
 
 
@@ -283,7 +334,11 @@ async def get_session_messages(
     organization_id: str,
     user: CurrentUser = Depends(require_approved),
 ) -> list[MessageResponse]:
-    """Get all messages in a chat session, ordered by creation time."""
+    """Get all messages in a chat session, ordered by creation time.
+
+    When called by a non-admin user, inserts a 'user_read' system message
+    so the admin can see that the user has read their reply.
+    """
     await verify_organization(user, organization_id)
     await verify_session_access(user, session_id, organization_id)
     supabase = get_supabase()
@@ -296,6 +351,12 @@ async def get_session_messages(
             .eq("organization_id", organization_id)
             .order("created_at", desc=False)
         ).execute()
+
+        # Insert "user_read" when a non-admin user opens messages with admin replies (non-blocking, deduplicated)
+        try:
+            await _maybe_insert_read_receipt(user, organization_id, session_id, result.data or [], supabase)
+        except Exception:
+            pass
 
         return [MessageResponse(**m) for m in (result.data or [])]
 
@@ -507,8 +568,22 @@ async def get_new_messages(
             else "active"
         )
 
+        # Insert read receipt (bidirectional) when polling picks up messages
+        new_msgs = messages_result.data or []
+        try:
+            all_msgs_result = await (
+                supabase.table("chat_messages")
+                .select("role, content")
+                .eq("session_id", session_id)
+                .eq("organization_id", organization_id)
+                .order("created_at", desc=False)
+            ).execute()
+            await _maybe_insert_read_receipt(user, organization_id, session_id, all_msgs_result.data or [], supabase)
+        except Exception:
+            pass
+
         return PollResponse(
-            messages=[MessageResponse(**m) for m in (messages_result.data or [])],
+            messages=[MessageResponse(**m) for m in new_msgs],
             session_status=current_status,
         )
 

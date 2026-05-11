@@ -509,7 +509,12 @@ export default function InboxPage() {
                                 <div className="text-center py-12 text-xs text-steel-400">{t("inbox.noMessages")}</div>
                             ) : (
                                 <div className="space-y-4">
-                                    {messages.map((msg) => {
+                                    {messages.map((msg, msgIdx) => {
+                                        // Hide user_read and admin_seen system messages
+                                        if (msg.role === "system" && (msg.content === "user_read" || msg.content === "admin_seen")) {
+                                            return null;
+                                        }
+
                                         // System messages — centered banner
                                         if (msg.role === "system") {
                                             return (
@@ -524,6 +529,11 @@ export default function InboxPage() {
                                         const isAdmin = msg.role === "admin";
                                         // Admin perspective: AI + admin replies on right, customer on left
                                         const isRight = isAdmin || msg.role === "assistant";
+
+                                        // Check if this admin message has been read by the user
+                                        const hasUserRead = isAdmin && messages.slice(msgIdx + 1).some(
+                                            (m) => m.content === "user_read" && m.role === "system"
+                                        );
 
                                         return (
                                         <div
@@ -581,8 +591,22 @@ export default function InboxPage() {
                                                         </div>
                                                     </div>
                                                 )}
-                                                <p className="text-[9px] mt-1.5 opacity-60">
+                                                <p className={`text-[9px] mt-1.5 flex items-center gap-1 ${isAdmin ? "text-white/70" : "opacity-60"}`}>
                                                     {new Date(msg.created_at).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
+                                                    {isAdmin && (
+                                                        <span className={`font-medium ${hasUserRead ? "text-white" : ""}`}>
+                                                            {hasUserRead ? (
+                                                                <>
+                                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 inline">
+                                                                        <path fillRule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clipRule="evenodd" />
+                                                                    </svg>
+                                                                    {" "}{t("chat.userRead")}
+                                                                </>
+                                                            ) : (
+                                                                <>· {t("chat.sent")}</>
+                                                            )}
+                                                        </span>
+                                                    )}
                                                 </p>
                                             </div>
                                             {/* Right avatar (AI or admin) */}
