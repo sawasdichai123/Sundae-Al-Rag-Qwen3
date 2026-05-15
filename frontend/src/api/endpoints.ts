@@ -547,4 +547,16 @@ export const orgApi = {
             `/api/orgs/${orgId}/line-config`,
             data,
         ),
+
+    /** Generate a 6-digit LINE binding code. */
+    createLineBindingCode: (orgId: string) =>
+        apiClient.post<{ code: string; expires_in: number }>(`/api/orgs/${orgId}/line-binding/code`),
+
+    /** Check LINE binding status. */
+    getLineBindingStatus: (orgId: string) =>
+        apiClient.get<{ is_linked: boolean; line_user_id: string | null }>(`/api/orgs/${orgId}/line-binding`),
+
+    /** Remove LINE binding. */
+    unbindLine: (orgId: string) =>
+        apiClient.delete(`/api/orgs/${orgId}/line-binding`),
 };

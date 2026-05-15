@@ -168,24 +168,58 @@ async def _save_message(
         logger.warning("[LINE] Failed to save message (session=%s): %s", session_id, exc)
 
 
-# ── Helper: Bot list ─────────────────────────────────────────────
+# ── Helper: Lookup member by LINE UID ────────────────────────────
 
 
-async def _get_active_bots(organization_id: str) -> list[dict]:
-    """Return all active bots for the given org, ordered by creation date."""
+async def _lookup_member_by_line(organization_id: str, line_user_id: str) -> dict | None:
+    """Find org member by their linked LINE User ID."""
+    supabase = get_supabase()
+    try:
+        result = await (
+            supabase.table("org_members")
+            .select("user_id, org_role")
+            .eq("organization_id", organization_id)
+            .eq("line_user_id", line_user_id)
+            .limit(1)
+        ).execute()
+        return result.data[0] if result.data else None
+    except Exception as exc:
+        logger.warning("[LINE] Failed to lookup member by LINE UID: %s", exc)
+        return None
+
+
+# ── Helper: Bot list (visibility-filtered) ───────────────────────
+
+
+async def _get_visible_bots(organization_id: str, line_user_id: str) -> list[dict]:
+    """Return active bots filtered by LINE user's visibility permissions."""
     supabase = get_supabase()
     try:
         result = await (
             supabase.table("bots")
-            .select("id, name")
+            .select("id, name, visibility, visible_to")
             .eq("organization_id", organization_id)
             .eq("is_active", True)
             .order("created_at", desc=False)
         ).execute()
-        return result.data or []
+        all_bots = result.data or []
     except Exception as exc:
         logger.error("[LINE] Failed to load bots for org %s: %s", organization_id, exc)
         return []
+
+    member = await _lookup_member_by_line(organization_id, line_user_id)
+
+    if member:
+        user_id = member["user_id"]
+        is_admin = member.get("org_role") == "admin"
+        return [
+            b for b in all_bots
+            if b.get("visibility", "all") == "all"
+            or is_admin
+            or user_id in (b.get("visible_to") or [])
+        ]
+    else:
+        return [b for b in all_bots if b.get("visibility", "all") == "all"]
 
 
 # ── Helper: Send bot selection Quick Reply ───────────────────────
@@ -391,13 +425,7 @@ async def line_webhook(
         logger.debug("[LINE] Verification ping from org %s", org_id)
         return {"status": "ok", "events": 0}
 
-    # ── 4. Load active bots ──────────────────────────────────────
-    bots = await _get_active_bots(org_id)
-    if not bots:
-        logger.warning("[LINE] Org %s has no active bots", org_id)
-        return {"status": "ok", "events": 0}
-
-    # ── 5. Process each event (message or postback) ──────────────
+    # ── 4–5. Process each event (message or postback) ─────────────
     processed = 0
     for event in events:
         event_type = event.get("type")
@@ -409,6 +437,9 @@ async def line_webhook(
                 continue
             reply_token = event.get("replyToken", "")
             line_user_id = event.get("source", {}).get("userId", "unknown")
+            bots = await _get_visible_bots(org_id, line_user_id)
+            if not bots:
+                continue
             background_tasks.add_task(
                 _handle_bot_selection, postback_data, reply_token, line_user_id, org_id, access_token, bots
             )
@@ -426,6 +457,24 @@ async def line_webhook(
 
         reply_token = event.get("replyToken", "")
         line_user_id = event.get("source", {}).get("userId", "unknown")
+
+        # 5-bind. Binding code (6 digits) → link LINE to org member
+        if user_text.isdigit() and len(user_text) == 6:
+            from app.routers.organization import try_bind_line_account
+            bound = await try_bind_line_account(user_text, line_user_id, org_id)
+            if bound:
+                bind_text = "✅ ผูกบัญชีสำเร็จ! ตอนนี้คุณสามารถเข้าถึงบอทที่จำกัดสิทธิ์ได้แล้ว"
+                background_tasks.add_task(reply_message, reply_token, bind_text, access_token)
+                processed += 1
+                continue
+            else:
+                bind_fail_text = "❌ รหัสไม่ถูกต้องหรือหมดอายุ กรุณาสร้างรหัสใหม่จากหน้าโปรไฟล์"
+                background_tasks.add_task(reply_message, reply_token, bind_fail_text, access_token)
+                processed += 1
+                continue
+
+        # Load bots filtered by this user's visibility
+        bots = await _get_visible_bots(org_id, line_user_id)
 
         # 5a. Help keyword → แสดงคำสั่งที่ใช้ได้
         if user_text.lower() in HELP_KEYWORDS:
@@ -465,6 +514,13 @@ async def line_webhook(
                     agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
                     background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
                     background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
+            processed += 1
+            continue
+
+        # No visible bots for this user → skip bot-dependent actions
+        if not bots:
+            no_bot_text = "ขออภัยค่ะ ไม่มีบอทที่คุณสามารถเข้าถึงได้ในขณะนี้"
+            background_tasks.add_task(reply_message, reply_token, no_bot_text, access_token)
             processed += 1
             continue
 

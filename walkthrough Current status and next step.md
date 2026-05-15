@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 11 พฤษภาคม 2569 — **Read Receipt (Bidirectional) ✅ | Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅ | LINE Visibility Plan ✅ | OCR Plan ✅**
+> **อัพเดทล่าสุด**: 14 พฤษภาคม 2569 — **LINE Visibility Control ✅ | LINE Decrypt Bug Fix ✅ | LLM Prompt Optimization ✅ | Read Receipt ✅ | Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -736,22 +736,40 @@ WHERE email = 'sawasdichai.amor@bumail.net' AND is_approved = false;
 
 ### สาเหตุที่เปลี่ยน
 
-| Model | RAM ที่ต้องการ | สถานะ |
-|-------|--------------|-------|
+| Model | VRAM/RAM ที่ต้องการ | สถานะ |
+|-------|-------------------|-------|
 | `qwen3:14b` | ~16 GB | ❌ RAM ไม่พอบนเครื่อง dev |
 | `qwen2.5:7b` | ~8 GB | ⚠️ ได้ถ้า RAM พอ |
-| **`qwen2.5:3b`** | **~4 GB** | ✅ **ใช้อยู่ปัจจุบัน** |
+| **`qwen2.5:3b`** | **~3-4 GB** | ✅ **ใช้อยู่ปัจจุบัน** |
+| `qwen3:0.6b` | ~0.5 GB (Q4) | ❌ ประสิทธิภาพไม่เพียงพอ |
 
 Model ถูก set ผ่าน `LLM_MODEL=qwen2.5:3b` ใน `backend/.env`
 
-### ผลกระทบต่อคุณภาพ
+### ทำไมไม่ใช้ Qwen3 0.6B ที่ใหม่กว่า?
 
-| ด้าน | qwen3:14b | qwen2.5:3b |
-|------|-----------|------------|
-| ภาษาไทย | ดีมาก | ดี (อาจสั้นกว่า) |
-| ความแม่นยำ | สูง | ปานกลาง-สูง |
-| ความเร็ว | ช้ากว่า | เร็วกว่า |
-| RAM | 16 GB | 4 GB |
+แม้ว่า Qwen3 จะเป็นรุ่นใหม่กว่า (2025) แต่ตัวเล็กสุด (0.6B) มี parameter น้อยกว่า qwen2.5:3b ถึง **5 เท่า** ทำให้คุณภาพการตอบต่ำกว่าอย่างมีนัยสำคัญ — โดยเฉพาะงาน RAG ที่ต้องเข้าใจ context ยาวและตอบภาษาไทย
+
+| ด้าน | qwen2.5:3b (ใช้อยู่) | qwen3:0.6b (ไม่ใช้) | เหตุผล |
+|------|---------------------|---------------------|--------|
+| Parameters | 3B | 0.6B | 3B ให้ความเข้าใจภาษาดีกว่ามาก |
+| ภาษาไทย | ดี | อ่อน | 0.6B มี vocab/training ไม่พอสำหรับไทย |
+| RAG Comprehension | ปานกลาง-สูง | ต่ำ | ต้องเข้าใจ context ยาวหลาย chunk |
+| Strict Grounding | ทำได้ดี | มักฝ่าฝืน | model เล็กมักไม่ปฏิบัติตาม system prompt อย่างเคร่งครัด |
+| Hallucination | ต่ำ | สูง | model เล็กแต่งข้อมูลบ่อยกว่า |
+| VRAM (Q4) | ~3 GB | ~0.5 GB | ประหยัดกว่าแต่แลกด้วยคุณภาพ |
+| ความเร็ว | เร็ว | เร็วมาก | ทั้งคู่ตอบเร็วพอสำหรับ production |
+
+**สรุป:** "รุ่นใหม่กว่า" ≠ "ดีกว่า" — Qwen3 ดีกว่า Qwen2.5 **ที่ขนาดเท่ากัน** (เช่น 3B vs 3B) แต่ 0.6B ยังไงก็สู้ 3B ไม่ได้ เพราะ parameter ต่างกัน 5 เท่า
+
+### ผลกระทบต่อคุณภาพ (เปรียบเทียบทุกตัวเลือก)
+
+| ด้าน | qwen3:14b | qwen2.5:3b | qwen3:0.6b |
+|------|-----------|------------|------------|
+| ภาษาไทย | ดีมาก | ดี (อาจสั้นกว่า) | อ่อน |
+| ความแม่นยำ | สูง | ปานกลาง-สูง | ต่ำ |
+| Strict Grounding | ดีมาก | ดี | ไม่น่าเชื่อถือ |
+| ความเร็ว | ช้ากว่า | เร็ว | เร็วมาก |
+| VRAM (Q4) | ~9 GB | ~3 GB | ~0.5 GB |
 
 ### ไฟล์ที่เกี่ยวข้อง (ไม่ต้องแก้ — อ่านจาก .env อัตโนมัติ)
 
@@ -5699,4 +5717,89 @@ Audit ความสอดคล้องของ wording, i18n keys, แล�
 | `frontend/src/pages/InboxPage.tsx` | ซ่อน `user_read`/`admin_seen` bubble, แสดง "ส่งแล้ว"/"อ่านแล้ว" (สีขาวบนพื้นน้ำเงิน) ใต้ข้อความ admin |
 | `frontend/src/i18n/th.json` | เพิ่ม `chat.userRead` ("อ่านแล้ว"), `chat.sent` ("ส่งแล้ว") |
 | `frontend/src/i18n/en.json` | เพิ่ม `chat.userRead` ("Read"), `chat.sent` ("Sent") |
+
+---
+
+## Section 85: LINE Visibility Control — Implement (14 พ.ค. 2569)
+
+### 85.1 สรุป
+
+Implement ตาม `Implement_plan_Line.md` ครบทุก section — ผูก LINE User ID กับสมาชิกใน org เพื่อให้ Bot Visibility Control ทำงานกับ LINE ได้เหมือน Web Chat
+
+| สถานะ LINE User | เห็นบอทอะไร |
+|-----------------|------------|
+| ไม่ได้ผูก (Guest) | เฉพาะ `visibility: "all"` |
+| ผูกแล้ว (Member) | `"all"` + `"restricted"` ที่ตัวเองอยู่ใน `visible_to` |
+| ผูกแล้ว (Admin) | เห็นทุกบอท |
+
+### 85.2 Binding Flow
+
+1. User login Web → ไปหน้า Profile → กด "สร้างรหัสผูกบัญชี"
+2. ระบบสร้าง binding code 6 หลัก (TTL 5 นาที) เก็บใน memory
+3. User ไปพิมพ์ code ใน LINE chat
+4. Webhook รับ code → จับคู่กับ pending binding → บันทึก `line_user_id` ใน `org_members`
+5. Web polling ทุก 3 วิ → พบว่าผูกสำเร็จ → UI อัพเดท
+
+### 85.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/webhook_line.py` | เพิ่ม `_lookup_member_by_line()`, เปลี่ยน `_get_active_bots()` → `_get_visible_bots()` (กรอง visibility), เพิ่ม binding code handler (6 หลัก) |
+| `backend/app/routers/organization.py` | เพิ่ม 3 endpoints: `POST /line-binding/code`, `GET /line-binding`, `DELETE /line-binding` + `try_bind_line_account()` helper + in-memory `_pending_bindings` dict |
+| `frontend/src/pages/ProfilePage.tsx` | เพิ่ม `LineBindingSection` component — สถานะผูก/ไม่ผูก, สร้างรหัส + countdown, polling สถานะ, ปุ่มยกเลิก |
+| `frontend/src/api/endpoints.ts` | เพิ่ม `createLineBindingCode()`, `getLineBindingStatus()`, `unbindLine()` |
+| `frontend/src/i18n/th.json` | เพิ่ม 13 keys สำหรับ LINE binding UI |
+| `frontend/src/i18n/en.json` | เพิ่ม 13 keys สำหรับ LINE binding UI |
+
+---
+
+## Section 86: LINE Decrypt Bug Fix (14 พ.ค. 2569)
+
+### 86.1 สรุป
+
+แก้ bug ที่ admin ตอบ LINE session ผ่าน Inbox แล้วข้อความไม่ถึง user — เพราะ `line_access_token` ถูกเข้ารหัส AES-GCM ใน DB แต่ส่งไป LINE Push API โดยไม่ decrypt ก่อน
+
+### 86.2 การแก้ไข
+
+```python
+# ก่อน (bug) — inbox.py:506
+access_token=org_result.data[0]["line_access_token"],
+
+# หลัง (แก้แล้ว)
+from app.core.utils import decrypt_secret
+access_token=decrypt_secret(org_result.data[0]["line_access_token"]),
+```
+
+### 86.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/inbox.py` | เพิ่ม `decrypt_secret()` ก่อนส่ง `line_access_token` ไป LINE Push API |
+
+---
+
+## Section 87: LLM Prompt Optimization — สรุปกระชับขึ้น (14 พ.ค. 2569)
+
+### 87.1 สรุป
+
+ได้รับ feedback ว่า LLM ตอบยาวเกินไป ไม่สรุปเนื้อหาก่อนตอบ — ปรับ System Prompt + เพิ่ม soft token limit
+
+### 87.2 System Prompt ที่ปรับ (ข้อ 5-8 ใหม่)
+
+| ข้อ | เดิม | ใหม่ |
+|-----|------|------|
+| 5 | "ตอบให้กระชับ ตรงประเด็น" | "**สรุปสาระสำคัญให้กระชับที่สุด** ใช้ 2-4 ประโยคเป็นหลัก เพิ่มได้เฉพาะเมื่อเนื้อหาสำคัญจริงๆ" |
+| 6 | "สรุปรวมเป็นคำตอบเดียว" | "**ห้ามคัดลอกเนื้อหาจาก Context มาทั้งก้อน** ต้องสรุปด้วยภาษาของตัวเอง" |
+| 7 | - | "สรุปรวมหลายส่วนเป็นคำตอบเดียวที่กระชับ" |
+| 8 | - | "ไม่ต้องทวนคำถาม ไม่ต้องขึ้นต้นด้วย 'จากเอกสาร...' ตอบตรงประเด็นทันที" |
+
+### 87.3 Soft Token Limit
+
+เพิ่ม `num_predict: 512` ใน Ollama options (ทั้ง stream และ non-stream) — ประมาณ 5-8 ประโยคไทย เป็น safety net ป้องกันคำตอบยาวเกินไป แต่ไม่ hard cut ถ้าเนื้อหาสำคัญ
+
+### 87.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/services/llm_generator.py` | ปรับ `SYSTEM_PROMPT` ข้อ 5-8 + เพิ่ม `num_predict: 512` ทั้ง stream/non-stream |
 

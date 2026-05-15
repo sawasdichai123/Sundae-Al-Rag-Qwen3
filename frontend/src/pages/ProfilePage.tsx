@@ -40,6 +40,157 @@ async function getCroppedBlob(src: string, area: Area): Promise<Blob> {
     );
 }
 
+function LineBindingSection({ orgId, t }: { orgId: string; t: (key: string) => string }) {
+    const toast = useToastStore((s) => s.addToast);
+    const [status, setStatus] = useState<{ is_linked: boolean; line_user_id: string | null } | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [code, setCode] = useState<string | null>(null);
+    const [expiresAt, setExpiresAt] = useState<number | null>(null);
+    const [countdown, setCountdown] = useState(0);
+    const [generating, setGenerating] = useState(false);
+    const [unbinding, setUnbinding] = useState(false);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    const fetchStatus = async () => {
+        try {
+            const { data } = await orgApi.getLineBindingStatus(orgId);
+            setStatus(data);
+            if (data.is_linked && code) {
+                setCode(null);
+                setExpiresAt(null);
+                if (pollRef.current) clearInterval(pollRef.current);
+            }
+        } catch {
+            setStatus({ is_linked: false, line_user_id: null });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchStatus();
+        return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    }, [orgId]);
+
+    useEffect(() => {
+        if (!expiresAt) return;
+        const tick = () => {
+            const left = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+            setCountdown(left);
+            if (left <= 0) {
+                setCode(null);
+                setExpiresAt(null);
+                if (pollRef.current) clearInterval(pollRef.current);
+            }
+        };
+        tick();
+        const timer = setInterval(tick, 1000);
+        return () => clearInterval(timer);
+    }, [expiresAt]);
+
+    const handleGenerate = async () => {
+        setGenerating(true);
+        try {
+            const { data } = await orgApi.createLineBindingCode(orgId);
+            setCode(data.code);
+            setExpiresAt(Date.now() + data.expires_in * 1000);
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = setInterval(fetchStatus, 3000);
+        } catch (err) {
+            toast(getApiError(err), "error");
+        } finally {
+            setGenerating(false);
+        }
+    };
+
+    const handleUnbind = async () => {
+        setUnbinding(true);
+        try {
+            await orgApi.unbindLine(orgId);
+            setStatus({ is_linked: false, line_user_id: null });
+            toast(t("profile.lineUnbindSuccess"), "success");
+        } catch (err) {
+            toast(getApiError(err), "error");
+        } finally {
+            setUnbinding(false);
+        }
+    };
+
+    if (loading) return null;
+
+    const minutes = Math.floor(countdown / 60);
+    const seconds = countdown % 60;
+
+    return (
+        <div className="bg-white rounded-2xl border border-steel-100 mb-6 overflow-hidden">
+            <div className="px-6 py-4 border-b border-steel-100 flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-green-500">
+                    <path d="M12 2C6.48 2 2 5.93 2 10.73c0 2.86 1.5 5.39 3.83 7.04l-.96 3.53L8.8 19.3c1.01.3 2.08.46 3.2.46 5.52 0 10-3.93 10-8.77S17.52 2 12 2z" />
+                </svg>
+                <div>
+                    <h2 className="text-sm font-semibold text-steel-800">{t("profile.lineBinding")}</h2>
+                    <p className="text-xs text-steel-400 mt-0.5">{t("profile.lineBindingDesc")}</p>
+                </div>
+            </div>
+            <div className="px-6 py-4">
+                {status?.is_linked ? (
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            <span className="text-sm font-medium text-green-700">{t("profile.lineLinked")}</span>
+                        </div>
+                        <button
+                            onClick={handleUnbind}
+                            disabled={unbinding}
+                            className="text-xs font-medium text-red-600 bg-red-50 border border-red-200 px-3 py-1.5 rounded-full hover:bg-red-100 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                            {unbinding ? <Spinner size={12} /> : t("profile.lineUnbind")}
+                        </button>
+                    </div>
+                ) : code ? (
+                    <div className="space-y-3">
+                        <div className="text-center">
+                            <p className="text-xs text-steel-500 mb-2">{t("profile.lineCodeLabel")}</p>
+                            <div className="flex justify-center gap-2">
+                                {code.split("").map((d, i) => (
+                                    <span key={i} className="w-10 h-12 flex items-center justify-center text-xl font-bold text-steel-800 bg-steel-50 border border-steel-200 rounded-lg">
+                                        {d}
+                                    </span>
+                                ))}
+                            </div>
+                            <p className="text-xs text-steel-400 mt-2">
+                                {t("profile.lineCodeExpiry")} {minutes}:{seconds.toString().padStart(2, "0")}
+                            </p>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                            <p className="text-xs font-medium text-amber-700 mb-1">{t("profile.lineHowTo")}</p>
+                            <ol className="text-xs text-amber-600 space-y-0.5 list-decimal list-inside">
+                                <li>{t("profile.lineStep1")}</li>
+                                <li>{t("profile.lineStep2")}</li>
+                                <li>{t("profile.lineStep3")}</li>
+                            </ol>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-steel-300"></span>
+                            <span className="text-sm text-steel-500">{t("profile.lineNotLinked")}</span>
+                        </div>
+                        <button
+                            onClick={handleGenerate}
+                            disabled={generating}
+                            className="text-xs font-medium text-white bg-green-500 px-4 py-1.5 rounded-full hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                            {generating ? <Spinner size={12} /> : t("profile.lineGenerateCode")}
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function ProfilePage() {
     const t = useT();
     const navigate = useNavigate();
@@ -426,6 +577,14 @@ export default function ProfilePage() {
                     </div>
                 )}
             </div>
+
+            {/* Section LINE Binding */}
+            {(() => {
+                const activeOrgId = useOrgStore.getState().activeOrgId;
+                if (!activeOrgId) return null;
+
+                return <LineBindingSection orgId={activeOrgId} t={t} />;
+            })()}
 
             {/* Section B: Platform (admin/support only) */}
             {(user?.role === "admin" || user?.role === "support") && (() => {

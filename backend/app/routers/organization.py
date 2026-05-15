@@ -1681,3 +1681,128 @@ async def update_line_config(
         has_credentials=bool(org.get("line_access_token") and org.get("line_channel_secret")),
         webhook_url=webhook_url,
     )
+
+
+# ── LINE Binding (link LINE UID to org member) ────────────────────
+
+_pending_bindings: dict[str, dict] = {}
+
+
+class BindingCodeResponse(BaseModel):
+    code: str
+    expires_in: int
+
+
+class BindingStatusResponse(BaseModel):
+    is_linked: bool
+    line_user_id: str | None = None
+
+
+@router.post("/{org_id}/line-binding/code", response_model=BindingCodeResponse)
+async def create_binding_code(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+) -> BindingCodeResponse:
+    """Generate a 6-digit code for the user to type in LINE to link their account."""
+    validate_uuid_param(org_id, "org_id")
+    await verify_organization(user, org_id)
+
+    for code, info in list(_pending_bindings.items()):
+        if info["user_id"] == user.id and info["organization_id"] == org_id:
+            del _pending_bindings[code]
+
+    code = "".join(random.choices(string.digits, k=6))
+    while code in _pending_bindings:
+        code = "".join(random.choices(string.digits, k=6))
+
+    _pending_bindings[code] = {
+        "user_id": user.id,
+        "organization_id": org_id,
+        "created_at": datetime.now(timezone.utc),
+    }
+
+    return BindingCodeResponse(code=code, expires_in=300)
+
+
+@router.get("/{org_id}/line-binding", response_model=BindingStatusResponse)
+async def get_binding_status(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+) -> BindingStatusResponse:
+    """Check if the current user has linked their LINE account."""
+    validate_uuid_param(org_id, "org_id")
+    await verify_organization(user, org_id)
+    supabase = get_supabase()
+
+    result = await (
+        supabase.table("org_members")
+        .select("line_user_id")
+        .eq("user_id", user.id)
+        .eq("organization_id", org_id)
+        .limit(1)
+    ).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Member not found.")
+
+    line_uid = result.data[0].get("line_user_id")
+    return BindingStatusResponse(is_linked=bool(line_uid), line_user_id=line_uid)
+
+
+@router.delete("/{org_id}/line-binding")
+async def unbind_line(
+    org_id: str,
+    user: CurrentUser = Depends(require_approved),
+):
+    """Remove LINE binding for the current user."""
+    validate_uuid_param(org_id, "org_id")
+    await verify_organization(user, org_id)
+    supabase = get_supabase()
+
+    await (
+        supabase.table("org_members")
+        .update({"line_user_id": None})
+        .eq("user_id", user.id)
+        .eq("organization_id", org_id)
+    ).execute()
+
+    logger.info("[LINE] User %s unlinked LINE from org %s", user.email, org_id[:8])
+    return {"success": True}
+
+
+async def try_bind_line_account(
+    code: str, line_user_id: str, organization_id: str
+) -> bool:
+    """Attempt to bind a LINE user ID using a pending binding code.
+
+    Called from webhook_line.py when user sends a 6-digit code.
+    Returns True if binding succeeded.
+    """
+    info = _pending_bindings.get(code)
+    if not info:
+        return False
+
+    if info["organization_id"] != organization_id:
+        return False
+
+    elapsed = (datetime.now(timezone.utc) - info["created_at"]).total_seconds()
+    if elapsed > 300:
+        del _pending_bindings[code]
+        return False
+
+    supabase = get_supabase()
+    try:
+        await (
+            supabase.table("org_members")
+            .update({"line_user_id": line_user_id})
+            .eq("user_id", info["user_id"])
+            .eq("organization_id", organization_id)
+        ).execute()
+    except Exception as exc:
+        logger.error("[LINE] Failed to bind LINE UID: %s", exc)
+        return False
+
+    del _pending_bindings[code]
+    logger.info("[LINE] Bound LINE UID %s to user %s in org %s",
+                line_user_id[:10], info["user_id"][:8], organization_id[:8])
+    return True

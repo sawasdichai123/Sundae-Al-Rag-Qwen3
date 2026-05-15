@@ -500,10 +500,11 @@ async def send_admin_message(
                 ).execute()
                 if org_result.data and org_result.data[0].get("line_access_token"):
                     from app.services.line_service import push_message
+                    from app.core.utils import decrypt_secret
                     await push_message(
                         user_id=sess["platform_user_id"],
                         text=content,
-                        access_token=org_result.data[0]["line_access_token"],
+                        access_token=decrypt_secret(org_result.data[0]["line_access_token"]),
                     )
                     logger.info("[LINE] Pushed admin reply to user %s", sess["platform_user_id"][:10])
         except Exception as push_exc:
