@@ -5803,3 +5803,171 @@ access_token=decrypt_secret(org_result.data[0]["line_access_token"]),
 |------|----------|
 | `backend/app/services/llm_generator.py` | ปรับ `SYSTEM_PROMPT` ข้อ 5-8 + เพิ่ม `num_predict: 512` ทั้ง stream/non-stream |
 
+---
+
+## Section 88: LINE Bot Document Filter (16 พ.ค. 2569)
+
+### 88.1 สรุป
+
+กรองบอทที่ยังไม่มีเอกสารออกจากรายการเลือกบอทใน LINE และ Widget — ป้องกัน user เลือกบอทที่ไม่สามารถตอบคำถามได้
+
+### 88.2 ตรรกะการกรอง
+
+```python
+# Query เอกสารทั้งหมดของ org → สร้าง set ของ bot_id ที่มีเอกสาร
+docs_result = await supabase.table("documents")
+    .select("bot_ids")
+    .eq("organization_id", organization_id)
+bots_with_docs = set()
+for doc in docs_result.data:
+    for bid in (doc.get("bot_ids") or []):
+        bots_with_docs.add(bid)
+# กรองเฉพาะบอทที่มีเอกสาร
+all_bots = [b for b in all_bots if b["id"] in bots_with_docs]
+```
+
+### 88.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/webhook_line.py` | `_get_visible_bots()` เพิ่ม document filtering query |
+| `backend/app/routers/widget.py` | `list_widget_bots()` เพิ่ม document filtering เดียวกัน |
+
+---
+
+## Section 89: LINE Flex Message Bot Selection (16 พ.ค. 2569)
+
+### 89.1 สรุป
+
+ปรับ UI การเลือกบอทใน LINE จาก Quick Reply (ปุ่มเล็กๆ ใต้ข้อความ) เป็น Flex Message card ที่สวยและใช้งานง่ายกว่า
+
+### 89.2 Flex Message Design
+
+| ส่วน | รายละเอียด |
+|------|-----------|
+| Header | พื้นสีเหลือง brand (#FFD100), ข้อความ "กรุณาเลือกหัวข้อที่ต้องการสอบถาม" |
+| Body | แต่ละบอทเป็น 1 แถว: 📋 icon + ชื่อบอท + ปุ่ม "เลือก ›" |
+| Footer | ข้อความ hint "กดเลือกหัวข้อด้านบน" |
+| Action | Postback action ส่ง `bot_id` กลับ webhook |
+
+### 89.3 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/webhook_line.py` | เขียน `_send_bot_selection()` ใหม่ทั้งหมด — สร้าง Flex Message JSON |
+| `backend/app/services/line_service.py` | เพิ่ม `reply_flex_message()` สำหรับส่ง Flex Message ผ่าน LINE Reply API |
+
+---
+
+## Section 90: LLM Topic Bypass — คำถามกว้าง (16 พ.ค. 2569)
+
+### 90.1 สรุป
+
+แก้ปัญหา LLM dump เนื้อหาทั้งหมดเมื่อถามคำถามกว้างๆ (เช่น "สิทธิ์การเข้าถึง") โดย bypass LLM ทั้งหมด — สร้างรายการหัวข้อจาก code แทน
+
+### 90.2 ตรรกะ
+
+```
+คำถามจาก User
+    ↓
+Vector Search → ได้ parent chunks
+    ↓
+จำนวน chunks >= 2 (MULTI_CONTEXT_THRESHOLD)?
+    ├── ใช่ → คำถามกว้าง → _build_topics_response() (ไม่เรียก LLM)
+    └── ไม่ → คำถามเจาะจง → ส่งให้ LLM สรุป 2-4 ประโยค
+```
+
+### 90.3 ตัวอย่างผลลัพธ์
+
+**คำถาม:** "สิทธิ์การเข้าถึง"
+```
+มีข้อมูลที่เกี่ยวข้องในหัวข้อต่อไปนี้:
+1. การยืนยันตัวตน (Authentication)
+2. ขั้นตอนการขอสิทธิ์เพิ่มเติม (Access Request)
+
+สามารถสอบถามหัวข้อที่สนใจเพิ่มเติมได้เลยค่ะ
+```
+
+**คำถาม:** "VPN ใช้ยังไง" → ได้ 1 chunk → LLM สรุปกระชับ
+
+### 90.4 ฟังก์ชันเสริม
+
+| ฟังก์ชัน | หน้าที่ |
+|----------|---------|
+| `_extract_heading(chunk)` | ดึงบรรทัดแรกที่มีความหมายจาก chunk เป็นชื่อหัวข้อ (strip #, -, numbering) |
+| `_build_topics_response(chunks)` | สร้างข้อความรายการหัวข้อแบบ numbered list |
+
+### 90.5 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/services/llm_generator.py` | เพิ่ม `_extract_heading()`, `_build_topics_response()`, `MULTI_CONTEXT_THRESHOLD = 2`, split `SYSTEM_PROMPT` เป็น `SYSTEM_PROMPT_DIRECT` / `SYSTEM_PROMPT_TOPICS` |
+| `backend/app/routers/chat.py` | ย้าย topic bypass มาเช็คก่อน rerank (ใช้ `len(parent_results)`) ทั้ง `/ask` และ `/ask/stream` |
+
+---
+
+## Section 91: Qwen3 Compatibility + Think Tag Filtering (16 พ.ค. 2569)
+
+### 91.1 สรุป
+
+เพิ่ม compatibility กับ Qwen3 models ที่มี thinking mode (`<think>...</think>`) — กรอง think block ออกก่อนส่งคำตอบให้ user
+
+### 91.2 การจัดการ
+
+| ส่วน | วิธีการ |
+|------|---------|
+| `/no_think` directive | ต่อท้าย user message ทุกครั้ง — ปิด thinking mode ลด token usage |
+| Non-stream filter | `re.sub(r"<think>[\s\S]*?</think>\s*", "", raw)` |
+| Stream filter | Buffer-based: สะสม token จนเจอ `</think>` แล้ว yield เฉพาะส่วนหลัง |
+
+### 91.3 การเปลี่ยน Model
+
+ตอน dev ใช้ `qwen2.5:3b` (RAM ~4 GB) — ตอน production เปลี่ยนผ่าน env var:
+
+```env
+LLM_MODEL=qwen3:14b   # หรือ model อื่นตามสเปคเครื่อง
+```
+
+### 91.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/services/llm_generator.py` | เพิ่ม `/no_think`, think tag filter (stream + non-stream) |
+| `backend/app/core/config.py` | default `llm_model = "qwen2.5:3b"` |
+| `backend/.env.example` | `LLM_MODEL=qwen2.5:3b` + comment แนะนำ model ตามสเปค RAM |
+
+---
+
+## Section 92: Backend Startup Fixes — Python 3.14 + Windows (16 พ.ค. 2569)
+
+### 92.1 สรุป
+
+แก้ backend ค้างตอน startup บน Python 3.14 + Windows 11 — มี 3 ปัญหาซ้อนกัน
+
+### 92.2 ปัญหาและการแก้ไข
+
+| ปัญหา | สาเหตุ | การแก้ไข |
+|-------|--------|----------|
+| `import GPUtil` ค้าง | GPUtil พยายาม detect GPU ตอน import แล้วแฮงค์ | เปลี่ยนเป็น lazy load — โหลดเฉพาะตอนเรียก `/health/metrics` |
+| `platform.system()` ค้าง | Python 3.14 เรียก `_wmi_query()` ซึ่ง hang บน Windows 11 | Monkeypatch: `platform._wmi_query = raise OSError`, `platform.system = lambda: "Windows"` |
+| Ollama warmup blocking | timeout 120s ทำให้ startup ช้า/ค้าง | ลด timeout เป็น 10s + เปลี่ยน warmup prompt เป็น `"hi /no_think"` |
+
+### 92.3 Supabase Client Fix
+
+เพิ่ม options ตอนสร้าง async client เพื่อป้องกัน auth token refresh ค้าง:
+
+```python
+options=AsyncClientOptions(
+    auto_refresh_token=False,    # ไม่ต้อง refresh — ใช้ service_role_key
+    persist_session=False,       # ไม่ต้อง persist — server-side only
+)
+```
+
+### 92.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/health.py` | GPUtil → lazy load via `_try_load_gputil()` |
+| `backend/app/core/database.py` | Monkeypatch `platform._wmi_query` + `AsyncClientOptions(auto_refresh_token=False)` |
+| `backend/app/main.py` | Ollama warmup timeout 120s → 10s, prompt `"hi"` → `"hi /no_think"` |
+
