@@ -494,7 +494,20 @@ async def list_widget_bots(
             .eq("is_active", True)
             .order("name")
         ).execute()
-        return result.data or []
+        all_bots = result.data or []
+
+        # Exclude bots that have no documents linked
+        docs_result = await (
+            supabase.table("documents")
+            .select("bot_ids")
+            .eq("organization_id", org_id)
+        ).execute()
+        bots_with_docs: set[str] = set()
+        for doc in (docs_result.data or []):
+            for bid in (doc.get("bot_ids") or []):
+                bots_with_docs.add(bid)
+
+        return [b for b in all_bots if b["id"] in bots_with_docs]
     except Exception as exc:
         logger.error("[Widget] Failed to list bots for org %s: %s", org_id, exc)
         raise HTTPException(status_code=500, detail="Failed to list bots.")

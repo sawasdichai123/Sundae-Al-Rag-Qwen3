@@ -20,11 +20,16 @@ from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_supabase
 
-try:
-    import GPUtil
-    _HAS_GPU = True
-except (ImportError, Exception):
-    _HAS_GPU = False
+_HAS_GPU = False
+GPUtil = None
+def _try_load_gputil():
+    global _HAS_GPU, GPUtil
+    try:
+        import GPUtil as _gpu
+        GPUtil = _gpu
+        _HAS_GPU = True
+    except (ImportError, Exception):
+        _HAS_GPU = False
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,8 @@ async def system_metrics(_user=Depends(get_current_user)) -> dict:
 
     # GPU (optional)
     gpu_list: list[dict] = []
+    if not _HAS_GPU:
+        _try_load_gputil()
     if _HAS_GPU:
         try:
             for g in GPUtil.getGPUs():

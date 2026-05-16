@@ -36,7 +36,7 @@ from app.core.auth import CurrentUser, require_approved, verify_organization, ve
 from app.core.database import get_supabase
 from app.core.utils import sanitize_user_input
 from app.services.ai_models import get_embedding_service, get_reranker_service
-from app.services.llm_generator import generate_response, generate_response_stream
+from app.services.llm_generator import generate_response, generate_response_stream, MULTI_CONTEXT_THRESHOLD, _build_topics_response
 from app.services.vector_search import search_parent_chunks
 
 logger = logging.getLogger(__name__)
@@ -225,40 +225,10 @@ async def ask_question(
         t2 = time.time()
         logger.info("Step 2 Search: %.1fs — %d parent chunks (org=%s)", t2 - t1, len(parent_results), organization_id)
 
-        # ── Step 3: Rerank parent chunks ────────────────────────
-        # OPTIMIZATION: Skip reranker for ≤2 results (use vector similarity)
-        if parent_results and len(parent_results) > 2:
-            reranker = get_reranker_service()
-            parent_texts = [p.text for p in parent_results]
-
-            rerank_results = await reranker.rerank(
-                query=user_query,
-                passages=parent_texts,
-            )
-
-            surviving_texts = [r.text for r in rerank_results]
-
-            # Build source references from reranked results
-            sources: list[SourceChunk] = []
-            for rr in rerank_results:
-                if rr.original_index < len(parent_results):
-                    original_parent = parent_results[rr.original_index]
-                    sources.append(
-                        SourceChunk(
-                            document_id=original_parent.document_id,
-                            document_name=original_parent.document_name,
-                            chunk_index=original_parent.chunk_index,
-                            page_start=original_parent.page_start,
-                            page_end=original_parent.page_end,
-                            score=round(rr.score, 4),
-                        )
-                    )
-
-            t3 = time.time()
-            logger.info("Step 3 Rerank: %.1fs — %d → %d survived (org=%s)", t3 - t2, len(parent_results), len(rerank_results), organization_id)
-        elif parent_results:
-            # ≤2 results: skip reranker, use vector similarity ranking
-            surviving_texts = [p.text for p in parent_results]
+        # ── Broad question bypass: list topics instead of full answer ──
+        if len(parent_results) >= MULTI_CONTEXT_THRESHOLD:
+            parent_texts_for_topics = [p.text for p in parent_results]
+            answer = _build_topics_response(parent_texts_for_topics)
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
@@ -270,19 +240,35 @@ async def ask_question(
                 )
                 for p in parent_results
             ]
-            t3 = time.time()
-            logger.info("Step 3 Rerank: SKIPPED (≤2 results) — keeping %d chunks (org=%s)", len(parent_results), organization_id)
+            t3 = t4 = time.time()
+            logger.info("Broad question bypass: %d chunks → topic listing (org=%s)", len(parent_results), organization_id)
         else:
-            surviving_texts = []
-            sources = []
-            t3 = time.time()
+            # ── Step 3: Rerank parent chunks ────────────────────────
+            if parent_results:
+                surviving_texts = [p.text for p in parent_results]
+                sources = [
+                    SourceChunk(
+                        document_id=p.document_id,
+                        document_name=p.document_name,
+                        chunk_index=p.chunk_index,
+                        page_start=p.page_start,
+                        page_end=p.page_end,
+                        score=round(p.best_child_similarity, 4),
+                    )
+                    for p in parent_results
+                ]
+                t3 = time.time()
+            else:
+                surviving_texts = []
+                sources = []
+                t3 = time.time()
 
-        # ── Step 4: Generate response via LLM ───────────────────
-        answer = await generate_response(
-            user_query=user_query,
-            retrieved_contexts=surviving_texts,
-            system_prompt=bot_system_prompt,
-        )
+            # ── Step 4: Generate response via LLM ───────────────────
+            answer = await generate_response(
+                user_query=user_query,
+                retrieved_contexts=surviving_texts,
+                system_prompt=bot_system_prompt,
+            )
 
         t4 = time.time()
         logger.info("Step 4 LLM: %.1fs (org=%s, answer_len=%d)", t4 - t3, organization_id, len(answer))
@@ -421,31 +407,23 @@ async def ask_question_stream(
             top_k=3,  # Reduced for faster CPU reranking
         )
 
-        # OPTIMIZATION: Skip reranker for ≤2 results (use vector similarity)
-        if parent_results and len(parent_results) > 2:
-            reranker = get_reranker_service()
-            parent_texts = [p.text for p in parent_results]
-            rerank_results = await reranker.rerank(
-                query=user_query,
-                passages=parent_texts,
-            )
-            surviving_texts = [r.text for r in rerank_results]
-            sources: list[SourceChunk] = []
-            for rr in rerank_results:
-                if rr.original_index < len(parent_results):
-                    original_parent = parent_results[rr.original_index]
-                    sources.append(
-                        SourceChunk(
-                            document_id=original_parent.document_id,
-                            document_name=original_parent.document_name,
-                            chunk_index=original_parent.chunk_index,
-                            page_start=original_parent.page_start,
-                            page_end=original_parent.page_end,
-                            score=round(rr.score, 4),
-                        )
-                    )
+        # ── Broad question bypass: list topics instead of full answer ──
+        _is_broad = len(parent_results) >= MULTI_CONTEXT_THRESHOLD
+
+        if _is_broad:
+            surviving_texts = [p.text for p in parent_results]
+            sources: list[SourceChunk] = [
+                SourceChunk(
+                    document_id=p.document_id,
+                    document_name=p.document_name,
+                    chunk_index=p.chunk_index,
+                    page_start=p.page_start,
+                    page_end=p.page_end,
+                    score=round(p.best_child_similarity, 4),
+                )
+                for p in parent_results
+            ]
         elif parent_results:
-            # ≤2 results: skip reranker, use vector similarity ranking
             surviving_texts = [p.text for p in parent_results]
             sources = [
                 SourceChunk(
@@ -525,20 +503,29 @@ async def ask_question_stream(
         )
         yield f"data: {sources_data}\n\n"
 
-        # Stream LLM tokens
+        # Stream LLM tokens (or bypass with topic list)
         full_answer = []
         try:
-            async for token in generate_response_stream(
-                user_query=user_query,
-                retrieved_contexts=surviving_texts,
-                system_prompt=bot_system_prompt,
-            ):
-                full_answer.append(token)
+            if _is_broad:
+                topics_text = _build_topics_response(surviving_texts)
+                full_answer.append(topics_text)
                 token_data = json.dumps(
-                    {"type": "token", "content": token},
+                    {"type": "token", "content": topics_text},
                     ensure_ascii=False,
                 )
                 yield f"data: {token_data}\n\n"
+            else:
+                async for token in generate_response_stream(
+                    user_query=user_query,
+                    retrieved_contexts=surviving_texts,
+                    system_prompt=bot_system_prompt,
+                ):
+                    full_answer.append(token)
+                    token_data = json.dumps(
+                        {"type": "token", "content": token},
+                        ensure_ascii=False,
+                    )
+                    yield f"data: {token_data}\n\n"
         except Exception as stream_exc:
             logger.error("LLM streaming failed: %s", stream_exc)
             error_data = json.dumps(

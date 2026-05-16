@@ -81,16 +81,16 @@ async def _warmup_models() -> None:
     except Exception as exc:
         logger.error("[Warmup] Reranker model failed to load (non-fatal): %s", exc)
 
-    # 3. Warm up Ollama — load LLM into GPU/RAM
+    # 3. Warm up Ollama — fire-and-forget, don't block startup
     settings = get_settings()
     try:
-        logger.info("[Warmup] Warming up Ollama model: %s ...", settings.llm_model)
-        async with httpx.AsyncClient(timeout=120) as client:
+        logger.info("[Warmup] Sending Ollama warmup (non-blocking): %s", settings.llm_model)
+        async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
                 f"{settings.ollama_base_url}/api/generate",
                 json={
                     "model": settings.llm_model,
-                    "prompt": "hi",
+                    "prompt": "hi /no_think",
                     "stream": False,
                     "options": {"num_predict": 1},
                     "keep_alive": "30m",
@@ -98,7 +98,7 @@ async def _warmup_models() -> None:
             )
         logger.info("[Warmup] Ollama model ready.")
     except Exception as exc:
-        logger.warning("[Warmup] Ollama warmup failed (non-fatal): %s", exc)
+        logger.warning("[Warmup] Ollama not available at startup (non-fatal): %s", exc)
 
 
 @asynccontextmanager

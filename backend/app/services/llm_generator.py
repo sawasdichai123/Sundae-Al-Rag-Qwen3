@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import AsyncIterator, List, Optional
 
 import httpx
@@ -36,22 +37,49 @@ logger = logging.getLogger(__name__)
 # System Prompt (Strict Grounding — Zero Hallucination)
 # ═══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = (
-    "คุณคือ SUNDAE ผู้ช่วย AI สำหรับตอบคำถามจากเอกสารขององค์กร\n"
-    "\n"
-    "## กฎเหล็กที่ต้องปฏิบัติอย่างเคร่งครัด:\n"
-    "1. ตอบคำถามโดยใช้ข้อมูลจาก [Context] ที่ให้มาเท่านั้น\n"
-    "2. ห้ามใช้ความรู้เดิมของคุณ ห้ามแต่งข้อมูลเพิ่มเด็ดขาด\n"
-    "3. หากข้อมูลใน [Context] ไม่มีคำตอบสำหรับคำถามนั้น "
-    "ให้ตอบสั้นๆ ว่า 'ไม่พบข้อมูลในเอกสาร' เท่านั้น\n"
-    "4. ตอบเป็นภาษาไทยเสมอ ยกเว้นชื่อเฉพาะหรือศัพท์เทคนิค\n"
-    "5. **สรุปสาระสำคัญให้กระชับที่สุด** ตอบเฉพาะใจความหลัก ตัดรายละเอียดปลีกย่อยออก "
-    "ใช้ 2-4 ประโยคเป็นหลัก เพิ่มได้เฉพาะเมื่อเนื้อหาสำคัญจริงๆ เท่านั้น\n"
-    "6. ห้ามคัดลอกเนื้อหาจาก [Context] มาทั้งก้อน ต้องสรุปด้วยภาษาของตัวเอง\n"
-    "7. หากมีข้อมูลหลายส่วนที่เกี่ยวข้อง ให้สรุปรวมเป็นคำตอบเดียวที่กระชับ\n"
-    "8. ไม่ต้องทวนคำถาม ไม่ต้องขึ้นต้นด้วย 'จากเอกสาร...' ตอบตรงประเด็นทันที\n"
-    "9. อ้างอิงเนื้อหาจาก [Context] เท่านั้น ห้ามเพิ่มเติมสิ่งที่ไม่ได้ระบุ\n"
+SYSTEM_PROMPT_DIRECT = (
+    "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
+    "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่ม\n"
+    "- ไม่มีคำตอบ → ตอบ 'ไม่พบข้อมูลในเอกสาร'\n"
+    "- ตอบภาษาไทย ยกเว้นศัพท์เทคนิค\n"
+    "- สรุปกระชับ 2-4 ประโยค ห้ามคัดลอกทั้งก้อน\n"
+    "- ไม่ต้องขึ้นต้นด้วย 'จากเอกสาร' หรือ 'ตามเอกสาร'\n"
 )
+
+SYSTEM_PROMPT_TOPICS = (
+    "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
+    "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่ม\n"
+    "- ตอบภาษาไทย ยกเว้นศัพท์เทคนิค\n"
+    "\n"
+    "คำถามนี้เกี่ยวข้องกับหลายหัวข้อ ให้ตอบตามรูปแบบนี้เท่านั้น:\n"
+    "\n"
+    "มีข้อมูลที่เกี่ยวข้องในหัวข้อต่อไปนี้:\n"
+    "1. (ชื่อหัวข้อ)\n"
+    "2. (ชื่อหัวข้อ)\n"
+    "...\n"
+    "\n"
+    "สามารถสอบถามหัวข้อที่สนใจเพิ่มเติมได้เลยค่ะ\n"
+    "\n"
+    "ห้ามอธิบายรายละเอียด ลิสต์ชื่อหัวข้อสั้นๆ เท่านั้น\n"
+)
+
+MULTI_CONTEXT_THRESHOLD = 2
+
+SYSTEM_PROMPT = SYSTEM_PROMPT_DIRECT
+
+
+def _build_topics_response(chunks: List[str]) -> str:
+    """Build a topic listing response directly from code — no LLM needed."""
+    headings = []
+    for i, chunk in enumerate(chunks, start=1):
+        heading = _extract_heading(chunk.strip())
+        headings.append(f"{i}. {heading}")
+    topic_list = "\n".join(headings)
+    return (
+        f"มีข้อมูลที่เกี่ยวข้องในหัวข้อต่อไปนี้:\n"
+        f"{topic_list}\n\n"
+        f"สามารถสอบถามหัวข้อที่สนใจเพิ่มเติมได้เลยค่ะ"
+    )
 
 # Fallback message when Ollama is unreachable or errors out
 FALLBACK_MESSAGE = "ไม่สามารถเชื่อมต่อกับ AI Engine ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง"
@@ -88,26 +116,49 @@ def assemble_context(retrieved_contexts: List[str]) -> str:
     return "\n\n".join(sections)
 
 
-def _build_user_message(query: str, context: str) -> str:
+def _extract_heading(chunk: str) -> str:
+    """Extract the first meaningful line from a chunk as a topic heading."""
+    for line in chunk.split("\n"):
+        cleaned = line.strip().lstrip("#").strip().strip("-").strip()
+        # Strip leading numbering like "1." "2."
+        cleaned = re.sub(r"^\d+[\.\)]\s*", "", cleaned).strip()
+        if len(cleaned) >= 3:
+            return cleaned[:80]
+    return chunk[:80]
+
+
+def assemble_context_topics_only(retrieved_contexts: List[str]) -> str:
+    """Build a topics-only context — headings without details."""
+    valid = [c.strip() for c in retrieved_contexts if c and c.strip()]
+    if not valid:
+        return ""
+    headings = []
+    for i, chunk in enumerate(valid, start=1):
+        heading = _extract_heading(chunk)
+        headings.append(f"{i}. {heading}")
+    return "\n".join(headings)
+
+
+def _build_user_message(query: str, context: str, topics_mode: bool = False) -> str:
     """Build the user message combining context and query.
 
-    Args:
-        query:   The user's question.
-        context: The assembled context block.
-
-    Returns:
-        Formatted user message string.
+    Appends /no_think to disable Qwen3 thinking mode — avoids wasting
+    tokens on internal reasoning and eliminates the ~2 min delay.
     """
     if context:
+        if topics_mode:
+            return (
+                f"[หัวข้อที่พบในเอกสาร]\n{context}\n\n"
+                f"[Question]\n{query}\n/no_think"
+            )
         return (
             f"[Context]\n{context}\n\n"
-            f"[Question]\n{query}"
+            f"[Question]\n{query}\n/no_think"
         )
     else:
-        # No context available — the LLM should respond with the refusal
         return (
             "[Context]\n(ไม่มีข้อมูลจากเอกสาร)\n\n"
-            f"[Question]\n{query}"
+            f"[Question]\n{query}\n/no_think"
         )
 
 
@@ -147,12 +198,14 @@ async def generate_response(
     settings = get_settings()
     target_model = model or settings.llm_model
     base_url = ollama_base_url or settings.ollama_base_url
-    prompt = system_prompt or SYSTEM_PROMPT
 
-    # Assemble context from surviving parent chunks
+    # If many chunks → broad question → return topic list from code (no LLM)
+    valid_chunks = [c for c in retrieved_contexts if c and c.strip()]
+    if len(valid_chunks) >= MULTI_CONTEXT_THRESHOLD:
+        return _build_topics_response(valid_chunks)
+
+    prompt = system_prompt or SYSTEM_PROMPT_DIRECT
     context = assemble_context(retrieved_contexts)
-
-    # Build the message payload
     user_message = _build_user_message(user_query, context)
 
     payload = {
@@ -183,10 +236,11 @@ async def generate_response(
             logger.error("Ollama response is not valid JSON: %s", json_exc)
             return FALLBACK_MESSAGE
 
-        # Extract the assistant's response
-        assistant_message = (
-            data.get("message", {}).get("content", "").strip()
-        )
+        # Extract the assistant's response (strip Qwen3 <think> blocks)
+        raw = data.get("message", {}).get("content", "").strip()
+        assistant_message = re.sub(
+            r"<think>[\s\S]*?</think>\s*", "", raw
+        ).strip()
 
         if not assistant_message:
             logger.warning(
@@ -250,8 +304,14 @@ async def generate_response_stream(
     settings = get_settings()
     target_model = model or settings.llm_model
     base_url = ollama_base_url or settings.ollama_base_url
-    prompt = system_prompt or SYSTEM_PROMPT
 
+    # If many chunks → broad question → yield topic list from code (no LLM)
+    valid_chunks = [c for c in retrieved_contexts if c and c.strip()]
+    if len(valid_chunks) >= MULTI_CONTEXT_THRESHOLD:
+        yield _build_topics_response(valid_chunks)
+        return
+
+    prompt = system_prompt or SYSTEM_PROMPT_DIRECT
     context = assemble_context(retrieved_contexts)
     user_message = _build_user_message(user_query, context)
 
@@ -270,6 +330,8 @@ async def generate_response_stream(
     }
 
     try:
+        in_think = False
+        buf = ""
         async with httpx.AsyncClient(timeout=timeout) as client:
             async with client.stream(
                 "POST",
@@ -283,8 +345,25 @@ async def generate_response_stream(
                     try:
                         data = json.loads(line)
                         token = data.get("message", {}).get("content", "")
-                        if token:
-                            yield token
+                        buf += token
+
+                        if not in_think and "<think>" in buf:
+                            in_think = True
+                            buf = ""
+
+                        if in_think:
+                            if "</think>" in buf:
+                                in_think = False
+                                after = buf.split("</think>", 1)[1]
+                                buf = ""
+                                if after.strip():
+                                    yield after
+                            continue
+
+                        if buf:
+                            yield buf
+                            buf = ""
+
                         if data.get("done", False):
                             return
                     except json.JSONDecodeError:

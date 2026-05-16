@@ -28,7 +28,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from app.core.database import get_supabase
 from app.core.line_auth import verify_line_signature_with_secret
 from app.core.utils import decrypt_secret
-from app.services.line_service import reply_message, reply_with_quick_reply
+from app.services.line_service import reply_message, reply_with_quick_reply, reply_flex_message
 from app.services.ai_models import get_embedding_service, get_reranker_service
 from app.services.llm_generator import generate_response
 from app.services.vector_search import search_parent_chunks
@@ -192,7 +192,11 @@ async def _lookup_member_by_line(organization_id: str, line_user_id: str) -> dic
 
 
 async def _get_visible_bots(organization_id: str, line_user_id: str) -> list[dict]:
-    """Return active bots filtered by LINE user's visibility permissions."""
+    """Return active bots filtered by LINE user's visibility permissions.
+
+    Bots without any linked documents are excluded — they have nothing to
+    answer from, so showing them would only confuse users.
+    """
     supabase = get_supabase()
     try:
         result = await (
@@ -206,6 +210,21 @@ async def _get_visible_bots(organization_id: str, line_user_id: str) -> list[dic
     except Exception as exc:
         logger.error("[LINE] Failed to load bots for org %s: %s", organization_id, exc)
         return []
+
+    # Filter out bots that have no documents linked
+    try:
+        docs_result = await (
+            supabase.table("documents")
+            .select("bot_ids")
+            .eq("organization_id", organization_id)
+        ).execute()
+        bots_with_docs: set[str] = set()
+        for doc in (docs_result.data or []):
+            for bid in (doc.get("bot_ids") or []):
+                bots_with_docs.add(bid)
+        all_bots = [b for b in all_bots if b["id"] in bots_with_docs]
+    except Exception as exc:
+        logger.warning("[LINE] Could not filter bots by documents: %s", exc)
 
     member = await _lookup_member_by_line(organization_id, line_user_id)
 
@@ -230,23 +249,127 @@ async def _send_bot_selection(
     bots: list[dict],
     access_token: str,
 ) -> None:
-    """Send a Quick Reply message asking the user to select a bot."""
-    items = [
-        {
-            "type": "action",
+    """Send a Flex Message card for bot selection."""
+    bot_buttons = []
+    for i, bot in enumerate(bots):
+        if i > 0:
+            bot_buttons.append({"type": "separator", "margin": "sm"})
+        bot_buttons.append({
+            "type": "box",
+            "layout": "horizontal",
             "action": {
                 "type": "postback",
-                "label": bot["name"][:20],  # LINE label limit: 20 chars
+                "label": bot["name"][:40],
                 "data": f"bot:{bot['id']}",
                 "displayText": f"เลือก: {bot['name'][:20]}",
             },
-        }
-        for bot in bots
-    ]
-    await reply_with_quick_reply(
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📋",
+                            "size": "xl",
+                            "align": "center",
+                        }
+                    ],
+                    "width": "40px",
+                    "justifyContent": "center",
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": bot["name"][:30],
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#333333",
+                            "wrap": True,
+                        }
+                    ],
+                    "flex": 1,
+                    "justifyContent": "center",
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "เลือก ›",
+                            "size": "xs",
+                            "color": "#4A90D9",
+                            "align": "end",
+                            "weight": "bold",
+                        }
+                    ],
+                    "justifyContent": "center",
+                },
+            ],
+            "paddingAll": "12px",
+            "cornerRadius": "lg",
+            "backgroundColor": "#F7F8FA",
+            "margin": "sm",
+        })
+
+    flex_content = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🤖 SUNDAE",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#333333",
+                },
+                {
+                    "type": "text",
+                    "text": "กรุณาเลือกบริการที่ต้องการ",
+                    "size": "sm",
+                    "color": "#888888",
+                    "margin": "sm",
+                },
+            ],
+            "paddingAll": "16px",
+            "backgroundColor": "#FFD100",
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": bot_buttons,
+            "paddingAll": "12px",
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "พิมพ์ 'เปลี่ยนบอท' เพื่อเลือกใหม่",
+                    "size": "xxs",
+                    "color": "#AAAAAA",
+                    "align": "center",
+                }
+            ],
+            "paddingAll": "10px",
+        },
+        "styles": {
+            "footer": {"separator": True},
+        },
+    }
+
+    await reply_flex_message(
         reply_token=reply_token,
-        text="สวัสดีค่ะ! กรุณาเลือกบริการที่ต้องการ:",
-        quick_reply_items=items,
+        flex_content=flex_content,
+        alt_text="กรุณาเลือกบริการที่ต้องการ",
         access_token=access_token,
     )
 

@@ -109,6 +109,40 @@ async def reply_with_quick_reply(
         return False
 
 
+async def reply_flex_message(
+    reply_token: str,
+    flex_content: dict,
+    alt_text: str,
+    access_token: str,
+) -> bool:
+    """Send a Flex Message via the LINE Reply API."""
+    url = f"{LINE_API_BASE}/message/reply"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    payload = {
+        "replyToken": reply_token,
+        "messages": [{
+            "type": "flex",
+            "altText": alt_text,
+            "contents": flex_content,
+        }],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code == 200:
+            logger.info("[LINE] Flex Message sent OK (token=%s...)", reply_token[:10])
+            return True
+        else:
+            logger.error("[LINE] Flex Message API error: %d — %s", resp.status_code, resp.text)
+            return False
+    except Exception as exc:
+        logger.error("[LINE] Flex Message API exception: %s", exc)
+        return False
+
+
 async def push_message(
     user_id: str,
     text: str,

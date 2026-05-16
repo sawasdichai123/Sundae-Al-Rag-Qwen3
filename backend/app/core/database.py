@@ -15,9 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import platform
 from typing import Optional
 
-from supabase import acreate_client, AsyncClient
+# Python 3.14 + Windows: platform._wmi_query() hangs indefinitely,
+# blocking platform.system() which supabase_auth calls during __init__.
+# Bypass WMI and patch the cached result directly.
+if hasattr(platform, "_wmi_query"):
+    platform._wmi_query = lambda *a, **kw: (_ for _ in ()).throw(OSError("WMI disabled"))
+    platform.system = lambda: "Windows"
+
+from supabase import acreate_client, AsyncClient, AsyncClientOptions
 
 from app.core.config import get_settings
 
@@ -49,6 +57,10 @@ async def init_supabase() -> AsyncClient:
                 acreate_client(
                     supabase_url=s.supabase_url,
                     supabase_key=s.supabase_service_role_key,
+                    options=AsyncClientOptions(
+                        auto_refresh_token=False,
+                        persist_session=False,
+                    ),
                 ),
                 timeout=10,
             )
