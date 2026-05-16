@@ -219,16 +219,27 @@ async def ask_question(
             query_embedding=query_embedding,
             organization_id=organization_id,
             bot_id=bot_id,
-            top_k=3,  # Reduced for faster CPU reranking
+            top_k=10,
         )
 
         t2 = time.time()
         logger.info("Step 2 Search: %.1fs — %d parent chunks (org=%s)", t2 - t1, len(parent_results), organization_id)
 
-        # ── Broad question bypass: list topics instead of full answer ──
-        if len(parent_results) >= MULTI_CONTEXT_THRESHOLD:
-            parent_texts_for_topics = [p.text for p in parent_results]
-            answer = _build_topics_response(parent_texts_for_topics)
+        # ── Filter low-quality chunks & decide topic list vs LLM ──
+        # High similarity (>= 0.45) = specific question → LLM answers
+        # Low similarity + multiple chunks = broad/vague → topic list
+        SPECIFIC_THRESHOLD = 0.45
+        MIN_SIMILARITY = 0.3
+        if parent_results:
+            best_sim = parent_results[0].best_child_similarity
+            cutoff = max(MIN_SIMILARITY, best_sim * 0.6)
+            parent_results = [p for p in parent_results if p.best_child_similarity >= cutoff]
+
+        best_score = parent_results[0].best_child_similarity if parent_results else 0
+        _is_broad = len(parent_results) >= 2 and best_score < SPECIFIC_THRESHOLD
+
+        if parent_results:
+            surviving_texts = [p.text for p in parent_results]
             sources = [
                 SourceChunk(
                     document_id=p.document_id,
@@ -240,29 +251,16 @@ async def ask_question(
                 )
                 for p in parent_results
             ]
-            t3 = t4 = time.time()
-            logger.info("Broad question bypass: %d chunks → topic listing (org=%s)", len(parent_results), organization_id)
         else:
-            # ── Step 3: Rerank parent chunks ────────────────────────
-            if parent_results:
-                surviving_texts = [p.text for p in parent_results]
-                sources = [
-                    SourceChunk(
-                        document_id=p.document_id,
-                        document_name=p.document_name,
-                        chunk_index=p.chunk_index,
-                        page_start=p.page_start,
-                        page_end=p.page_end,
-                        score=round(p.best_child_similarity, 4),
-                    )
-                    for p in parent_results
-                ]
-                t3 = time.time()
-            else:
-                surviving_texts = []
-                sources = []
-                t3 = time.time()
+            surviving_texts = []
+            sources = []
 
+        if _is_broad:
+            answer = _build_topics_response(surviving_texts)
+            t3 = t4 = time.time()
+            logger.info("Topic bypass: %d chunks → topic listing (org=%s)", len(parent_results), organization_id)
+        else:
+            t3 = time.time()
             # ── Step 4: Generate response via LLM ───────────────────
             answer = await generate_response(
                 user_query=user_query,
@@ -404,28 +402,25 @@ async def ask_question_stream(
             query_embedding=query_embedding,
             organization_id=organization_id,
             bot_id=bot_id,
-            top_k=3,  # Reduced for faster CPU reranking
+            top_k=10,
         )
 
-        # ── Broad question bypass: list topics instead of full answer ──
-        _is_broad = len(parent_results) >= MULTI_CONTEXT_THRESHOLD
+        # ── Filter low-quality chunks & decide topic list vs LLM ──
+        # High similarity (>= 0.45) = specific question → LLM answers
+        # Low similarity + multiple chunks = broad/vague → topic list
+        SPECIFIC_THRESHOLD = 0.45
+        MIN_SIMILARITY = 0.3
+        if parent_results:
+            best_sim = parent_results[0].best_child_similarity
+            cutoff = max(MIN_SIMILARITY, best_sim * 0.6)
+            parent_results = [p for p in parent_results if p.best_child_similarity >= cutoff]
 
-        if _is_broad:
+        best_score = parent_results[0].best_child_similarity if parent_results else 0
+        _is_broad = len(parent_results) >= 2 and best_score < SPECIFIC_THRESHOLD
+
+        if parent_results:
             surviving_texts = [p.text for p in parent_results]
             sources: list[SourceChunk] = [
-                SourceChunk(
-                    document_id=p.document_id,
-                    document_name=p.document_name,
-                    chunk_index=p.chunk_index,
-                    page_start=p.page_start,
-                    page_end=p.page_end,
-                    score=round(p.best_child_similarity, 4),
-                )
-                for p in parent_results
-            ]
-        elif parent_results:
-            surviving_texts = [p.text for p in parent_results]
-            sources = [
                 SourceChunk(
                     document_id=p.document_id,
                     document_name=p.document_name,

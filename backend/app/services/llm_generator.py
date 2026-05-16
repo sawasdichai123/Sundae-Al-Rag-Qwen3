@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT_DIRECT = (
     "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
     "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่ม\n"
-    "- ไม่มีคำตอบ → ตอบ 'ไม่พบข้อมูลในเอกสาร'\n"
     "- ตอบภาษาไทย ยกเว้นศัพท์เทคนิค\n"
     "- สรุปกระชับ 2-4 ประโยค ห้ามคัดลอกทั้งก้อน\n"
     "- ไม่ต้องขึ้นต้นด้วย 'จากเอกสาร' หรือ 'ตามเอกสาร'\n"
+    "- ถ้าคำถามไม่ตรงกับเนื้อหาใน Context พอดี ให้บอกว่ามีข้อมูลเกี่ยวกับหัวข้ออะไรบ้างใน Context แล้วถามว่าต้องการทราบหัวข้อไหน\n"
 )
 
 SYSTEM_PROMPT_TOPICS = (
@@ -63,7 +63,7 @@ SYSTEM_PROMPT_TOPICS = (
     "ห้ามอธิบายรายละเอียด ลิสต์ชื่อหัวข้อสั้นๆ เท่านั้น\n"
 )
 
-MULTI_CONTEXT_THRESHOLD = 2
+MULTI_CONTEXT_THRESHOLD = 1
 
 SYSTEM_PROMPT = SYSTEM_PROMPT_DIRECT
 
@@ -75,6 +75,13 @@ def _build_topics_response(chunks: List[str]) -> str:
         heading = _extract_heading(chunk.strip())
         headings.append(f"{i}. {heading}")
     topic_list = "\n".join(headings)
+
+    if len(headings) == 1:
+        return (
+            f"พบข้อมูลที่เกี่ยวข้องในหัวข้อนี้:\n"
+            f"{topic_list}\n\n"
+            f"ต้องการทราบรายละเอียดเพิ่มเติมไหมคะ?"
+        )
     return (
         f"มีข้อมูลที่เกี่ยวข้องในหัวข้อต่อไปนี้:\n"
         f"{topic_list}\n\n"
@@ -117,14 +124,19 @@ def assemble_context(retrieved_contexts: List[str]) -> str:
 
 
 def _extract_heading(chunk: str) -> str:
-    """Extract the first meaningful line from a chunk as a topic heading."""
+    """Extract the first meaningful heading from a chunk."""
     for line in chunk.split("\n"):
         cleaned = line.strip().lstrip("#").strip().strip("-").strip()
-        # Strip leading numbering like "1." "2."
         cleaned = re.sub(r"^\d+[\.\)]\s*", "", cleaned).strip()
-        if len(cleaned) >= 3:
-            return cleaned[:80]
-    return chunk[:80]
+        if len(cleaned) < 8:
+            continue
+        if cleaned.endswith(("เท่านั้น", "ห้าม", "ดังนี้", "ต่อไปนี้", "ได้แก่")):
+            continue
+        if not any(c.isalpha() for c in cleaned):
+            continue
+        return cleaned[:80]
+    words = chunk.strip().split()
+    return " ".join(words[:12]) + ("..." if len(words) > 12 else "")
 
 
 def assemble_context_topics_only(retrieved_contexts: List[str]) -> str:
