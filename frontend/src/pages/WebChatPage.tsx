@@ -95,6 +95,7 @@ export default function WebChatPage() {
     // Auth store
     const user = useAuthStore((s) => s.user);
     const activeOrgId = useOrgStore((s) => s.activeOrgId);
+    const activeOrgRole = useOrgStore((s) => s.activeOrgRole);
     const activeOrgLogo = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.logo_url);
     const activeOrgName = useOrgStore((s) => s.orgs.find((o) => o.id === s.activeOrgId)?.name);
     const userAvatarUrl = user?.avatar_url;
@@ -1016,7 +1017,7 @@ export default function WebChatPage() {
                     <div className="bg-white/80 backdrop-blur-xl border-t border-steel-100">
                         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4">
                             {/* Request Human button — only when session has messages & still active & not requesting */}
-                            {messages.length > 0 && (sessionStatus === "active" || sessionStatus === "helped") && !isLoading && !handoffRequesting && (
+                            {messages.length > 0 && (sessionStatus === "active" || sessionStatus === "helped") && !isLoading && !handoffRequesting && activeOrgRole !== "admin" && (
                                 <div className="flex justify-center mb-3">
                                     <button
                                         onClick={handleRequestHuman}
