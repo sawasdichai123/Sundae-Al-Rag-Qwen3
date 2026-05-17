@@ -1,7 +1,7 @@
 # SUNDAE — รายงานสรุปโปรเจกต์ฉบับเต็ม
 
 > **วันที่รายงานครั้งแรก**: 25 กุมภาพันธ์ 2569
-> **อัพเดทล่าสุด**: 14 พฤษภาคม 2569 — **LINE Visibility Control ✅ | LINE Decrypt Bug Fix ✅ | LLM Prompt Optimization ✅ | Read Receipt ✅ | Tag/Group Rename ✅ | Docker Fix ✅ | Linked Bot Display Fix ✅**
+> **อัพเดทล่าสุด**: 17 พฤษภาคม 2569 — **Web Widget Visibility + Handoff ✅ | LLM Topic Bypass Fix ✅ | System Prompt Tuning ✅ | CORS Fix ✅ | Integration Page Redesign ✅**
 > **Project**: SUNDAE — Enterprise AI Chatbot Platform
 > **Stack**: FastAPI + React + Supabase + Ollama
 
@@ -5970,4 +5970,133 @@ options=AsyncClientOptions(
 | `backend/app/routers/health.py` | GPUtil → lazy load via `_try_load_gputil()` |
 | `backend/app/core/database.py` | Monkeypatch `platform._wmi_query` + `AsyncClientOptions(auto_refresh_token=False)` |
 | `backend/app/main.py` | Ollama warmup timeout 120s → 10s, prompt `"hi"` → `"hi /no_think"` |
+
+---
+
+## Section 93: LLM Topic Bypass Fix + System Prompt Tuning (17 พ.ค. 2569)
+
+### 93.1 สรุป
+
+แก้ปัญหา LLM ไม่ถูกเรียกจริงเมื่อคำถามเฉพาะเจาะจง และปรับ system prompt ให้ตอบกระชับ 2-3 ประโยค
+
+### 93.2 ปัญหาและการแก้ไข
+
+| ปัญหา | สาเหตุ | การแก้ไข |
+|-------|--------|----------|
+| LLM ไม่ถูกเรียกเลย — ทุกคำถามได้ topic list | `MULTI_CONTEXT_THRESHOLD = 1` ใน `llm_generator.py` ทำให้ bypass LLM ทุกครั้งที่มี chunk ≥ 1 | ลบ topic bypass ออกจาก `generate_response()` + `generate_response_stream()` ให้ `chat.py` เป็นตัวตัดสินใจ |
+| LLM ตอบยาวเกินไป (bullet list 5+ หัวข้อ) | qwen2.5:3b ไม่ค่อยทำตาม instruction ภาษาไทย | ปรับ system prompt: เพิ่ม few-shot example + ห้าม bullet/list/bold ชัดเจน |
+| คำถามเฉพาะถูกจัดเป็น broad | `SPECIFIC_THRESHOLD = 0.45` สูงเกินไปสำหรับ BGE-M3 | ลด threshold เป็น `0.25` |
+
+### 93.3 System Prompt (เวอร์ชันปัจจุบัน)
+
+```python
+SYSTEM_PROMPT_DIRECT = (
+    "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
+    "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่มเด็ดขาด\n"
+    "- สรุปกระชับ 2-3 ประโยคเป็นย่อหน้าเดียว ห้ามเกิน 4 ประโยค\n"
+    "- ห้าม bullet point, list, ตัวเลขนำหน้า, bold\n"
+    "- สรุปด้วยภาษาตัวเอง ห้ามคัดลอก Context\n"
+    "- มี few-shot example ให้ model เห็นรูปแบบที่ต้องการ\n"
+)
+```
+
+### 93.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/services/llm_generator.py` | ลบ `MULTI_CONTEXT_THRESHOLD` + topic bypass, ปรับ system prompt |
+| `backend/app/routers/chat.py` | ลบ import `MULTI_CONTEXT_THRESHOLD`, ลด `SPECIFIC_THRESHOLD` 0.45 → 0.25 |
+
+---
+
+## Section 94: Web Widget — Bot Visibility + Integration Page Redesign (17 พ.ค. 2569)
+
+### 94.1 สรุป
+
+เพิ่มการเช็ค `visibility` ใน Widget API — bot ที่เป็น `restricted` จะไม่สามารถเข้าถึงผ่าน public widget ได้ และ redesign หน้า Integration ให้จัดการ bot บน widget ได้โดยไม่ต้องแก้ embed code
+
+### 94.2 ปัญหาเดิม
+
+- Widget ไม่ได้เช็ค `visibility` → bot restricted เข้าถึงได้ผ่าน public widget
+- หน้า Integration ใช้ dropdown เลือก 1 bot → ถ้าเปลี่ยน bot ต้องแก้ HTML + re-upload
+- Bot ที่ไม่มีเอกสารยังแสดงใน widget
+
+### 94.3 การแก้ไข
+
+**Backend (`widget.py`):**
+- `_get_widget_bot()`: เพิ่มเช็ค `visibility != "all"` → return 403
+- `list_widget_bots()`: เพิ่ม `.eq("visibility", "all")` ใน query
+- ป้องกันทั้ง direct API call และ bot list
+
+**Frontend (`IntegrationPage.tsx`):**
+- เปลี่ยนจาก dropdown เลือก 1 bot → **list ทุก bot + toggle `is_web_enabled`**
+- Embed code ใช้ `data-org-id` → ก๊อปครั้งเดียว ไม่ต้องแก้เมื่อเปลี่ยน bot
+- แสดงเฉพาะ bot ที่ `visibility="all"` + มีเอกสารเชื่อม
+- เพิ่ม hint text: "แสดงเฉพาะบอทที่ตั้งการมองเห็นเป็น 'ทุกคน' เท่านั้น"
+
+### 94.4 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/widget.py` | เพิ่ม visibility check ใน `_get_widget_bot()` + `list_widget_bots()` |
+| `frontend/src/pages/IntegrationPage.tsx` | Redesign: dropdown → bot list + toggle |
+| `frontend/src/i18n/th.json` | เพิ่ม i18n strings สำหรับ widget bot list |
+| `frontend/src/i18n/en.json` | เพิ่ม i18n strings สำหรับ widget bot list |
+
+---
+
+## Section 95: Web Widget — Human Handoff Button + FAB Fix (17 พ.ค. 2569)
+
+### 95.1 สรุป
+
+เพิ่มปุ่ม "ขอพูดคุยกับเจ้าหน้าที่" ใน widget ให้ผู้ใช้สามารถ escalate ไปหา admin ได้ และแก้ FAB ไม่ลอย
+
+### 95.2 ปัญหาเดิม
+
+- Widget มีระบบ human takeover (poll, banner, status) แต่ **ไม่มีปุ่มให้ user กดขอ**
+- Backend `/api/chat/request-human` ต้อง JWT → widget ที่เป็น public ใช้ไม่ได้
+- FAB button ไม่ลอย fixed เพราะมี `fab.style.position = "relative"` override CSS
+- CORS ไม่ allow `127.0.0.1:5500` (Live Server)
+
+### 95.3 การแก้ไข
+
+**Backend (`widget.py`):**
+- เพิ่ม `POST /api/widget/request-human` — ใช้ HMAC session token แทน JWT
+- Rate limit 10/minute
+- เปลี่ยน session status → `human_takeover` + insert system message
+
+**Widget (`widget.js`):**
+- เพิ่มปุ่ม "👤 ขอพูดคุยกับเจ้าหน้าที่" เหนือ input area
+- แสดงเฉพาะเมื่อ status = `active` + มี session
+- กดแล้ว → banner "Admin กำลังช่วยเหลือคุณอยู่" + เริ่ม poll ทุก 3 วินาที
+- ซ่อนปุ่มเมื่อ takeover/resolved/helped
+- ลบ `fab.style.position = "relative"` → FAB ลอย fixed มุมขวาล่าง
+
+**Config (`config.py`):**
+- เพิ่ม `127.0.0.1:5500`, `localhost:5500` ใน default CORS origins
+
+### 95.4 Flow: Widget Human Handoff
+
+```
+User พิมพ์คำถาม → AI ตอบ (RAG)
+         ↓
+ปุ่ม "ขอพูดคุยกับเจ้าหน้าที่" แสดง
+         ↓
+User กด → POST /api/widget/request-human
+         ↓
+Session status → human_takeover
+Banner แสดง "Admin กำลังช่วยเหลือคุณอยู่"
+         ↓
+Widget poll ทุก 3 วินาที ← Admin ตอบผ่าน Inbox
+         ↓
+Admin กด "Resolved" → session สิ้นสุด
+```
+
+### 95.5 ไฟล์ที่แก้ไข
+
+| ไฟล์ | การแก้ไข |
+|------|----------|
+| `backend/app/routers/widget.py` | เพิ่ม `POST /api/widget/request-human` endpoint |
+| `backend/static/widget.js` | เพิ่มปุ่ม handoff + ลบ `position: relative` bug |
+| `backend/app/core/config.py` | เพิ่ม `127.0.0.1:5500` ใน default CORS origins |
 

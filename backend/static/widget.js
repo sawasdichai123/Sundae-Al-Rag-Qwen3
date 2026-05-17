@@ -180,6 +180,15 @@
     }\
     .sw-send:disabled { opacity: 0.45; cursor: not-allowed; }\
     .sw-send:hover:not(:disabled) { opacity: 0.82; }\
+    .sw-human-btn {\
+      width: 100%; padding: 8px; margin: 0;\
+      background: none; border: 1px solid #e5e7eb; border-radius: 10px;\
+      color: #6b7280; font-size: 12px; font-weight: 500; cursor: pointer;\
+      transition: background 0.2s, color 0.2s; font-family: inherit;\
+    }\
+    .sw-human-btn:hover { background: #fef3c7; color: #92400e; border-color: #fcd34d; }\
+    .sw-human-btn:disabled { opacity: 0.4; cursor: not-allowed; }\
+    .sw-human-btn.sw-hidden { display: none; }\
     .sw-spinner { display: flex; align-items: center; justify-content: center; height: 80px; color: #aaa; font-size: 13px; }\
   ";
   document.head.appendChild(style);
@@ -188,7 +197,6 @@
   // FAB
   var fab = document.createElement("button");
   fab.className = "sw-fab";
-  fab.style.position = "relative";
   fab.setAttribute("aria-label", "Open chat");
   fab.innerHTML = '<svg class="sw-fab-icon" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"/></svg><span class="sw-badge" id="sw-badge"></span>';
   document.body.appendChild(fab);
@@ -204,6 +212,9 @@
     </div>\
     <div class="sw-banner" id="sw-banner"><span class="sw-banner-dot"></span><span id="sw-banner-text"></span></div>\
     <div class="sw-messages" id="sw-messages"><div class="sw-spinner">กำลังโหลด...</div></div>\
+    <div style="padding: 4px 16px 0; flex-shrink: 0;">\
+      <button class="sw-human-btn sw-hidden" id="sw-human-btn">👤 ขอพูดคุยกับเจ้าหน้าที่</button>\
+    </div>\
     <div class="sw-input-area" id="sw-input-area" style="display:none">\
       <input class="sw-input" id="sw-input" type="text" placeholder="พิมพ์ข้อความ..." autocomplete="off" />\
       <button class="sw-send" id="sw-send" disabled>ส่ง</button>\
@@ -222,11 +233,13 @@
   var inputArea = document.getElementById("sw-input-area");
   var inputEl   = document.getElementById("sw-input");
   var sendBtn   = document.getElementById("sw-send");
+  var humanBtn  = document.getElementById("sw-human-btn");
 
   // ── Event listeners ────────────────────────────────────────────
   fab.addEventListener("click", function () { toggle(true); });
   closeBtn.addEventListener("click", function () { toggle(false); });
   switchBtn.addEventListener("click", handleSwitchBot);
+  humanBtn.addEventListener("click", requestHuman);
   inputEl.addEventListener("input", function () {
     sendBtn.disabled = !inputEl.value.trim() || isLoading || sessionStatus === "resolved" || sessionStatus === "helped";
   });
@@ -466,6 +479,26 @@
     }
   }
 
+  // ── Request human handoff ───────────────────────────────────────
+  async function requestHuman() {
+    if (!sessionId || !sessionToken || sessionStatus !== "active") return;
+    humanBtn.disabled = true;
+    try {
+      var res = await fetch(SERVER + "/api/widget/request-human", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, session_token: sessionToken }),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var data = await res.json();
+      applyStatus(data.new_status);
+      addMessage("ระบบกำลังเรียกเจ้าหน้าที่ให้คุณ กรุณารอสักครู่...", "bot");
+    } catch (err) {
+      console.error("[SUNDAE Widget] Request human failed:", err);
+      humanBtn.disabled = false;
+    }
+  }
+
   // ── Status & polling ───────────────────────────────────────────
   function applyStatus(status) {
     sessionStatus = status;
@@ -475,6 +508,14 @@
     inputEl.disabled = ended;
     sendBtn.disabled = ended;
     inputEl.placeholder = ended ? "การสนทนาสิ้นสุดแล้ว" : "พิมพ์ข้อความ...";
+
+    // Show/hide human button: only when active + has session
+    if (status === "active" && sessionId) {
+      humanBtn.classList.remove("sw-hidden");
+      humanBtn.disabled = false;
+    } else {
+      humanBtn.classList.add("sw-hidden");
+    }
 
     if (status === "human_takeover") {
       startPoll();

@@ -108,7 +108,7 @@ async def _get_widget_bot(bot_id: str) -> dict:
     try:
         result = await (
             supabase.table("bots")
-            .select("id, organization_id, name, system_prompt, is_web_enabled, is_active")
+            .select("id, organization_id, name, system_prompt, is_web_enabled, is_active, visibility")
             .eq("id", bot_id)
             .limit(1)
         ).execute()
@@ -128,6 +128,12 @@ async def _get_widget_bot(bot_id: str) -> dict:
         raise HTTPException(
             status_code=403,
             detail="Web chat is not enabled for this bot.",
+        )
+
+    if bot.get("visibility", "all") != "all":
+        raise HTTPException(
+            status_code=403,
+            detail="This bot is not available for public access.",
         )
 
     return bot
@@ -492,6 +498,7 @@ async def list_widget_bots(
             .eq("organization_id", org_id)
             .eq("is_web_enabled", True)
             .eq("is_active", True)
+            .eq("visibility", "all")
             .order("name")
         ).execute()
         all_bots = result.data or []
@@ -571,3 +578,68 @@ async def poll_widget_session(
     except Exception as exc:
         logger.error("[Widget] Poll failed for session %s: %s", session_id, exc)
         raise HTTPException(status_code=500, detail="Poll failed.")
+
+
+# ── Request Human Handoff ─────────────────────────────────────
+
+
+class WidgetHandoffRequest(BaseModel):
+    session_id: str
+    session_token: str
+
+
+class WidgetHandoffResponse(BaseModel):
+    message: str
+    new_status: str
+
+
+@router.post("/request-human", response_model=WidgetHandoffResponse)
+@limiter.limit("10/minute")
+async def widget_request_human(
+    request: Request,
+    body: WidgetHandoffRequest,
+) -> WidgetHandoffResponse:
+    """Anonymous user requests a human agent via the widget."""
+    if not _verify_session_token(body.session_id, body.session_token):
+        raise HTTPException(status_code=403, detail="Invalid session token.")
+
+    supabase = get_supabase()
+    try:
+        sess = await (
+            supabase.table("chat_sessions")
+            .select("id, status, organization_id")
+            .eq("id", body.session_id)
+            .limit(1)
+        ).execute()
+        if not sess.data:
+            raise HTTPException(status_code=404, detail="Session not found.")
+
+        session = sess.data[0]
+        if session["status"] == "human_takeover":
+            return WidgetHandoffResponse(message="Already waiting for agent.", new_status="human_takeover")
+
+        now_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+
+        await (
+            supabase.table("chat_sessions")
+            .update({"status": "human_takeover", "last_message_at": now_iso})
+            .eq("id", body.session_id)
+        ).execute()
+
+        system_msg = {
+            "id": str(uuid.uuid4()),
+            "session_id": body.session_id,
+            "organization_id": session["organization_id"],
+            "role": "system",
+            "content": "ผู้ใช้ขอพูดคุยกับเจ้าหน้าที่ (ผ่าน Widget)",
+        }
+        await (supabase.table("chat_messages").insert(system_msg)).execute()
+
+        logger.info("[Widget] Human handoff requested: session=%s", body.session_id)
+        return WidgetHandoffResponse(message="Handoff requested.", new_status="human_takeover")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("[Widget] Handoff failed for session %s: %s", body.session_id, exc)
+        raise HTTPException(status_code=500, detail="Handoff request failed.")
