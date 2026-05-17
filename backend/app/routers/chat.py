@@ -36,7 +36,7 @@ from app.core.auth import CurrentUser, require_approved, verify_organization, ve
 from app.core.database import get_supabase
 from app.core.utils import sanitize_user_input
 from app.services.ai_models import get_embedding_service, get_reranker_service
-from app.services.llm_generator import generate_response, generate_response_stream, MULTI_CONTEXT_THRESHOLD, _build_topics_response
+from app.services.llm_generator import generate_response, generate_response_stream, _build_topics_response
 from app.services.vector_search import search_parent_chunks
 
 logger = logging.getLogger(__name__)
@@ -226,9 +226,9 @@ async def ask_question(
         logger.info("Step 2 Search: %.1fs — %d parent chunks (org=%s)", t2 - t1, len(parent_results), organization_id)
 
         # ── Filter low-quality chunks & decide topic list vs LLM ──
-        # High similarity (>= 0.45) = specific question → LLM answers
+        # High similarity (>= 0.25) = specific question → LLM answers
         # Low similarity + multiple chunks = broad/vague → topic list
-        SPECIFIC_THRESHOLD = 0.45
+        SPECIFIC_THRESHOLD = 0.25
         MIN_SIMILARITY = 0.3
         if parent_results:
             best_sim = parent_results[0].best_child_similarity
@@ -237,6 +237,13 @@ async def ask_question(
 
         best_score = parent_results[0].best_child_similarity if parent_results else 0
         _is_broad = len(parent_results) >= 2 and best_score < SPECIFIC_THRESHOLD
+
+        logger.info(
+            "RAG decision: chunks=%d, best_score=%.4f, threshold=%.2f, is_broad=%s",
+            len(parent_results), best_score, SPECIFIC_THRESHOLD, _is_broad,
+        )
+        for i, p in enumerate(parent_results[:5]):
+            logger.info("  chunk[%d] sim=%.4f", i, p.best_child_similarity)
 
         if parent_results:
             surviving_texts = [p.text for p in parent_results]
@@ -406,9 +413,9 @@ async def ask_question_stream(
         )
 
         # ── Filter low-quality chunks & decide topic list vs LLM ──
-        # High similarity (>= 0.45) = specific question → LLM answers
+        # High similarity (>= 0.25) = specific question → LLM answers
         # Low similarity + multiple chunks = broad/vague → topic list
-        SPECIFIC_THRESHOLD = 0.45
+        SPECIFIC_THRESHOLD = 0.25
         MIN_SIMILARITY = 0.3
         if parent_results:
             best_sim = parent_results[0].best_child_similarity
@@ -417,6 +424,12 @@ async def ask_question_stream(
 
         best_score = parent_results[0].best_child_similarity if parent_results else 0
         _is_broad = len(parent_results) >= 2 and best_score < SPECIFIC_THRESHOLD
+
+        print(f"\n{'='*60}")
+        print(f"[RAG] chunks={len(parent_results)}, best_score={best_score:.4f}, threshold={SPECIFIC_THRESHOLD}, is_broad={_is_broad}")
+        for i, p in enumerate(parent_results[:5]):
+            print(f"[RAG]   chunk[{i}] sim={p.best_child_similarity:.4f} | {p.text[:50].replace(chr(10),' ')}")
+        print(f"{'='*60}\n")
 
         if parent_results:
             surviving_texts = [p.text for p in parent_results]

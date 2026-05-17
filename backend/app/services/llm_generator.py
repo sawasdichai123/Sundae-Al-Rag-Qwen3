@@ -39,11 +39,17 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_DIRECT = (
     "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
-    "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่ม\n"
+    "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่มเด็ดขาด\n"
     "- ตอบภาษาไทย ยกเว้นศัพท์เทคนิค\n"
-    "- สรุปกระชับ 2-4 ประโยค ห้ามคัดลอกทั้งก้อน\n"
+    "- สรุปกระชับ 2-3 ประโยคเป็นย่อหน้าเดียว ห้ามเกิน 4 ประโยค\n"
+    "- ห้ามใช้หัวข้อย่อย ห้ามใช้ bullet point ห้ามใช้ตัวเลขนำหน้า ห้ามใช้ตัวหนา\n"
+    "- สรุปด้วยภาษาของตัวเอง ห้ามคัดลอกจาก Context\n"
     "- ไม่ต้องขึ้นต้นด้วย 'จากเอกสาร' หรือ 'ตามเอกสาร'\n"
-    "- ถ้าคำถามไม่ตรงกับเนื้อหาใน Context พอดี ให้บอกว่ามีข้อมูลเกี่ยวกับหัวข้ออะไรบ้างใน Context แล้วถามว่าต้องการทราบหัวข้อไหน\n"
+    "- ถ้าคำถามไม่ตรงกับเนื้อหาใน Context ให้บอกว่ามีข้อมูลเกี่ยวกับหัวข้ออะไรบ้าง แล้วถามว่าต้องการทราบหัวข้อไหน\n"
+    "\n"
+    "ตัวอย่างคำตอบที่ดี:\n"
+    "Q: นโยบายการ Deploy คืออะไร\n"
+    "A: การ Deploy ขึ้น Production ทำได้เฉพาะวันอังคารถึงพฤหัสบดี เวลา 23:00-02:00 น. โดยห้าม Deploy ในวันศุกร์เด็ดขาดยกเว้น Critical Hotfix ทุกครั้งต้องผ่านการ Review และ Approve จาก Tech Lead ก่อน\n"
 )
 
 SYSTEM_PROMPT_TOPICS = (
@@ -62,8 +68,6 @@ SYSTEM_PROMPT_TOPICS = (
     "\n"
     "ห้ามอธิบายรายละเอียด ลิสต์ชื่อหัวข้อสั้นๆ เท่านั้น\n"
 )
-
-MULTI_CONTEXT_THRESHOLD = 1
 
 SYSTEM_PROMPT = SYSTEM_PROMPT_DIRECT
 
@@ -211,11 +215,6 @@ async def generate_response(
     target_model = model or settings.llm_model
     base_url = ollama_base_url or settings.ollama_base_url
 
-    # If many chunks → broad question → return topic list from code (no LLM)
-    valid_chunks = [c for c in retrieved_contexts if c and c.strip()]
-    if len(valid_chunks) >= MULTI_CONTEXT_THRESHOLD:
-        return _build_topics_response(valid_chunks)
-
     prompt = system_prompt or SYSTEM_PROMPT_DIRECT
     context = assemble_context(retrieved_contexts)
     user_message = _build_user_message(user_query, context)
@@ -316,12 +315,6 @@ async def generate_response_stream(
     settings = get_settings()
     target_model = model or settings.llm_model
     base_url = ollama_base_url or settings.ollama_base_url
-
-    # If many chunks → broad question → yield topic list from code (no LLM)
-    valid_chunks = [c for c in retrieved_contexts if c and c.strip()]
-    if len(valid_chunks) >= MULTI_CONTEXT_THRESHOLD:
-        yield _build_topics_response(valid_chunks)
-        return
 
     prompt = system_prompt or SYSTEM_PROMPT_DIRECT
     context = assemble_context(retrieved_contexts)
