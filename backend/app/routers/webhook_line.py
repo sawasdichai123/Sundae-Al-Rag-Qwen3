@@ -43,6 +43,41 @@ SWITCH_KEYWORDS     = {"เปลี่ยนบอท", "สลับบอท"
 END_KEYWORDS        = {"จบการสนทนา", "ปิดการสนทนา", "end", "/end"}
 AGENT_KEYWORDS      = {"ติดต่อเจ้าหน้าที่", "คุยกับเจ้าหน้าที่", "agent", "/agent"}
 HELP_KEYWORDS       = {"ช่วยเหลือ", "วิธีใช้", "help", "/help", "?", "คำสั่ง"}
+GREETING_KEYWORDS   = {
+    "สวัสดี", "สวัสดีครับ", "สวัสดีค่ะ", "หวัดดี", "หวัดดีครับ", "หวัดดีค่ะ",
+    "หวัดดีจ้า", "ดีครับ", "ดีค่ะ", "เป็นไงบ้าง", "เป็นไงบ้างครับ", "เป็นไงบ้างคะ",
+    "hello", "hi", "hey", "good morning", "good afternoon",
+}
+GREETING_REPLY = "สวัสดีค่ะ 😊 มีอะไรให้ช่วยไหมคะ พิมพ์คำถามได้เลย หรือพิมพ์ 'ช่วยเหลือ' เพื่อดูคำสั่งที่ใช้ได้ค่ะ"
+
+# ── Webhook event de-duplication ──────────────────────────────────
+# LINE retries webhook delivery on slow/failed responses, which would
+# otherwise re-run the RAG pipeline and duplicate saved messages.
+# In-memory is fine for a single-worker deployment (same fallback used
+# elsewhere in this codebase when Redis isn't configured).
+_SEEN_EVENT_TTL_SECONDS = 120
+_seen_event_ids: dict[str, float] = {}
+
+
+def _event_dedup_key(event: dict) -> str:
+    """Best-effort stable identifier for a webhook event."""
+    return (
+        event.get("webhookEventId")
+        or event.get("message", {}).get("id")
+        or f"{event.get('type')}:{event.get('timestamp')}:{event.get('source', {}).get('userId')}"
+    )
+
+
+def _is_duplicate_event(key: str) -> bool:
+    """Return True (and skip) if this event was already processed recently."""
+    now = time.time()
+    expired = [k for k, ts in _seen_event_ids.items() if now - ts > _SEEN_EVENT_TTL_SECONDS]
+    for k in expired:
+        _seen_event_ids.pop(k, None)
+    if key in _seen_event_ids:
+        return True
+    _seen_event_ids[key] = now
+    return False
 
 
 # ── Helpers: Session management ──────────────────────────────────
@@ -248,8 +283,14 @@ async def _send_bot_selection(
     reply_token: str,
     bots: list[dict],
     access_token: str,
+    intent: str = "",
 ) -> None:
-    """Send a Flex Message card for bot selection."""
+    """Send a Flex Message card for bot selection.
+
+    intent: optional suffix appended to each bot's postback data (e.g. "agent")
+    so _handle_bot_selection knows what to do once the user picks a bot.
+    """
+    suffix = f":{intent}" if intent else ""
     bot_buttons = []
     for i, bot in enumerate(bots):
         if i > 0:
@@ -260,7 +301,7 @@ async def _send_bot_selection(
             "action": {
                 "type": "postback",
                 "label": bot["name"][:40],
-                "data": f"bot:{bot['id']}",
+                "data": f"bot:{bot['id']}{suffix}",
                 "displayText": f"เลือก: {bot['name'][:20]}",
             },
             "contents": [
@@ -385,21 +426,28 @@ async def _handle_bot_selection(
     access_token: str,
     bots: list[dict],
 ) -> bool:
-    """Handle 'bot:{bot_id}' Quick Reply selection. Returns True if handled."""
+    """Handle 'bot:{bot_id}' or 'bot:{bot_id}:agent' selection. Returns True if handled."""
     if not text.startswith("bot:"):
         return False
 
-    selected_bot_id = text[4:].strip()
+    payload = text[4:].strip()
+    selected_bot_id, _, intent = payload.partition(":")
     bot = next((b for b in bots if b["id"] == selected_bot_id), None)
     if not bot:
         return False
 
     session = await _create_line_session(line_user_id, selected_bot_id, organization_id)
-    greeting = f"คุณกำลังพูดคุยกับ {bot['name']} พิมพ์คำถามได้เลยค่ะ"
+
+    if intent == "agent":
+        await _request_human_takeover(session["id"])
+        greeting = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
+    else:
+        greeting = f"คุณกำลังพูดคุยกับ {bot['name']} พิมพ์คำถามได้เลยค่ะ"
+
     await reply_message(reply_token, greeting, access_token)
     await _save_message(session["id"], organization_id, "assistant", greeting)
 
-    logger.info("[LINE] User %s selected bot %s", line_user_id[:10], bot["name"])
+    logger.info("[LINE] User %s selected bot %s (intent=%s)", line_user_id[:10], bot["name"], intent or "chat")
     return True
 
 
@@ -551,6 +599,10 @@ async def line_webhook(
     # ── 4–5. Process each event (message or postback) ─────────────
     processed = 0
     for event in events:
+        if _is_duplicate_event(_event_dedup_key(event)):
+            logger.info("[LINE] Duplicate event skipped for org %s", org_id[:8])
+            continue
+
         event_type = event.get("type")
 
         # Postback events — bot selection via Quick Reply (no visible text in chat)
@@ -599,6 +651,12 @@ async def line_webhook(
         # Load bots filtered by this user's visibility
         bots = await _get_visible_bots(org_id, line_user_id)
 
+        # 5-greet. Greeting/small-talk → ตอบเป็นกันเอง ไม่ยัด RAG
+        if user_text.lower() in GREETING_KEYWORDS:
+            background_tasks.add_task(reply_message, reply_token, GREETING_REPLY, access_token)
+            processed += 1
+            continue
+
         # 5a. Help keyword → แสดงคำสั่งที่ใช้ได้
         if user_text.lower() in HELP_KEYWORDS:
             help_text = (
@@ -629,14 +687,17 @@ async def line_webhook(
                 agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
                 background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
                 background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
-            else:
-                # ไม่มี session — สร้างใหม่แล้ว takeover ทันที
-                if bots:
-                    session = await _create_line_session(line_user_id, bots[0]["id"], org_id)
-                    await _request_human_takeover(session["id"])
-                    agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
-                    background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
-                    background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
+            elif len(bots) == 1:
+                # ไม่มี session, มีบอทเดียว — สร้างใหม่แล้ว takeover ทันที
+                session = await _create_line_session(line_user_id, bots[0]["id"], org_id)
+                await _request_human_takeover(session["id"])
+                agent_text = "รับทราบค่ะ กรุณารอสักครู่ เจ้าหน้าที่จะติดต่อกลับโดยเร็วที่สุดค่ะ 🙏"
+                background_tasks.add_task(reply_message, reply_token, agent_text, access_token)
+                background_tasks.add_task(_save_message, session["id"], org_id, "assistant", agent_text)
+            elif bots:
+                # ไม่มี session, มีหลายบอท — ถามก่อนว่าต้องการติดต่อแผนกไหน
+                # แทนที่จะสุ่มเลือก bots[0] ให้เอง
+                background_tasks.add_task(_send_bot_selection, reply_token, bots, access_token, "agent")
             processed += 1
             continue
 

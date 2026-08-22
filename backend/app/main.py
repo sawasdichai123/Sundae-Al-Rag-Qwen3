@@ -3,6 +3,7 @@ SUNDAE Backend — FastAPI Application Entry Point
 """
 
 import asyncio
+import contextlib
 import logging
 import uuid as _uuid_module
 from contextlib import asynccontextmanager
@@ -18,6 +19,9 @@ from app.core.config import get_settings
 from app.core.limiter import limiter
 from app.routers import health, document, chat, bot, inbox, approval, organization, webhook_line, widget
 from app.services.ai_models import get_embedding_service, get_reranker_service
+from app.services.llm_generator import OLLAMA_KEEP_ALIVE
+
+OLLAMA_KEEPALIVE_PING_INTERVAL_SECONDS = 20 * 60  # ping Ollama before its keep_alive window can expire
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +85,11 @@ async def _warmup_models() -> None:
     except Exception as exc:
         logger.error("[Warmup] Reranker model failed to load (non-fatal): %s", exc)
 
-    # 3. Warm up Ollama — fire-and-forget, don't block startup
+    # 3. Warm up Ollama
     settings = get_settings()
     try:
-        logger.info("[Warmup] Sending Ollama warmup (non-blocking): %s", settings.llm_model)
-        async with httpx.AsyncClient(timeout=10) as client:
+        logger.info("[Warmup] Sending Ollama warmup: %s", settings.llm_model)
+        async with httpx.AsyncClient(timeout=30) as client:
             await client.post(
                 f"{settings.ollama_base_url}/api/generate",
                 json={
@@ -93,12 +97,43 @@ async def _warmup_models() -> None:
                     "prompt": "hi /no_think",
                     "stream": False,
                     "options": {"num_predict": 1},
-                    "keep_alive": "30m",
+                    "keep_alive": OLLAMA_KEEP_ALIVE,
                 },
             )
         logger.info("[Warmup] Ollama model ready.")
     except Exception as exc:
         logger.warning("[Warmup] Ollama not available at startup (non-fatal): %s", exc)
+
+
+async def _ollama_keepalive_loop() -> None:
+    """Periodically ping Ollama so it never unloads the model between requests.
+
+    Ollama drops the model from memory `keep_alive` after the last request.
+    Real traffic is bursty, so relying on user messages alone to keep it warm
+    means any gap longer than `keep_alive` forces the next user to eat a full
+    model-load cold start (~20s+) — unacceptable for LINE's short-lived reply
+    tokens. Pinging well inside the keep_alive window keeps it always warm.
+    """
+    settings = get_settings()
+    while True:
+        try:
+            await asyncio.sleep(OLLAMA_KEEPALIVE_PING_INTERVAL_SECONDS)
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(
+                    f"{settings.ollama_base_url}/api/generate",
+                    json={
+                        "model": settings.llm_model,
+                        "prompt": "hi /no_think",
+                        "stream": False,
+                        "options": {"num_predict": 1},
+                        "keep_alive": OLLAMA_KEEP_ALIVE,
+                    },
+                )
+            logger.debug("[Keepalive] Ollama ping OK.")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("[Keepalive] Ollama ping failed (non-fatal): %s", exc)
 
 
 @asynccontextmanager
@@ -107,15 +142,17 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────
     await _validate_startup_config()
     await init_supabase()
-    # Preload models in background so they don't block server start
-    _warmup_task = asyncio.create_task(_warmup_models())
-    _warmup_task.add_done_callback(
-        lambda t: logger.error("[Warmup] Unhandled exception: %s", t.exception())
-        if not t.cancelled() and t.exception()
-        else None
-    )
+    # Block startup on warmup — for LINE, a request that arrives before models
+    # are loaded means a reply token that expires before the user ever gets an
+    # answer. A slightly slower deploy is a better trade than a silently
+    # broken first message.
+    await _warmup_models()
+    keepalive_task = asyncio.create_task(_ollama_keepalive_loop())
     yield
     # ── Shutdown ─────────────────────────────────────────────────
+    keepalive_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await keepalive_task
     await close_supabase()
 
 

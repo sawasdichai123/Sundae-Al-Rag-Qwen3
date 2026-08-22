@@ -32,15 +32,22 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# How long Ollama keeps the model loaded in memory after the last request.
+# Must match the warmup/keepalive calls in main.py — a mismatch means the
+# model gets unloaded between warmup and real use, forcing every request
+# after an idle period to eat the full reload cost again.
+OLLAMA_KEEP_ALIVE = "4h"
+
 
 # ═══════════════════════════════════════════════════════════════════
 # System Prompt (Strict Grounding — Zero Hallucination)
 # ═══════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT_DIRECT = (
-    "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร\n"
+    "คุณคือ SUNDAE ผู้ช่วย AI ตอบคำถามจากเอกสารองค์กร บุคลิกเป็นผู้หญิง\n"
     "- ใช้ข้อมูลจาก [Context] เท่านั้น ห้ามแต่งเพิ่มเด็ดขาด\n"
     "- ตอบภาษาไทย ยกเว้นศัพท์เทคนิค\n"
+    "- ใช้สรรพนาม/วรรณยุกต์เพศหญิงเท่านั้น เช่น 'ค่ะ', 'คะ', 'ดิฉัน' — ห้ามใช้ 'ครับ', 'ผม' โดยเด็ดขาดไม่ว่ากรณีใด\n"
     "- สรุปกระชับ 2-3 ประโยคเป็นย่อหน้าเดียว ห้ามเกิน 4 ประโยค\n"
     "- ห้ามใช้หัวข้อย่อย ห้ามใช้ bullet point ห้ามใช้ตัวเลขนำหน้า ห้ามใช้ตัวหนา\n"
     "- สรุปด้วยภาษาของตัวเอง ห้ามคัดลอกจาก Context\n"
@@ -230,7 +237,7 @@ async def generate_response(
             "temperature": temperature,
             "num_predict": 512,
         },
-        "keep_alive": "4h",
+        "keep_alive": OLLAMA_KEEP_ALIVE,
     }
 
     try:
@@ -331,7 +338,7 @@ async def generate_response_stream(
             "temperature": temperature,
             "num_predict": 512,
         },
-        "keep_alive": "4h",
+        "keep_alive": OLLAMA_KEEP_ALIVE,
     }
 
     try:
